@@ -4,7 +4,7 @@ title: PANGEA
 permalink: /
 ---
 
-Make Jelly site have a GitBook look!
+A cross-tissue cellular atlas of human diseases
 
 ## Demo
 
