@@ -1,12 +1,12 @@
+# frozen_string_literal: true
+
 source "https://rubygems.org"
-gemspec
 
-gem "base64"
-gem "csv"
+git_source(:github) { |repo_name| "https://github.com/#{repo_name}" }
+gem "jekyll"
+gem 'jekyll-feed'
+gem 'jekyll-readme-index'
+gem 'jemoji'
+gem 'webrick'
 
-gem "jekyll-github-metadata", ">= 2.15"
-
-gem "jekyll-include-cache", group: :jekyll_plugins
-gem "jekyll-sitemap", group: :jekyll_plugins
-
-gem "html-proofer", "~> 5.0", :group => :development
+# gem "rails"
