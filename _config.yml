@@ -9,6 +9,9 @@ url: https://srkim727.github.io/
 aux_links:
   Install PANGEApy: https://github.com/srkim727/pangeapy
 
+## Nav menu 
+nav_enabled: true
+
 ## Search
 search_enabled: true
 search:
