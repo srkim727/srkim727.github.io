@@ -1,9 +1,11 @@
+## Header
 title: PANGEA
 description: A cross-tissue cellular integration of human diseases
 theme: just-the-docs
 
 url: https://srkim727.github.io/
 
+## Aux links
 aux_links:
   Install PANGEApy: https://github.com/srkim727/pangeapy
 
