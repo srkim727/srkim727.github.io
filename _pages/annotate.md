@@ -1,12 +1,15 @@
 ---
 title: Annotate
-author: Tao He
-date: 2022-02-04
+author: S. Kim
+date: 2025-01-01
 category: Jekyll
 layout: post
 ---
 
 {% raw %}
+
+<!-- Scope this page so we can hide the copy button just here -->
+<div id="annotate-app">
 
 <h2>Annotate .h5ad with Level1 model (ONNX, WebGPU/WASM)</h2>
 <p>
@@ -30,6 +33,11 @@ layout: post
 
 <pre id="log" style="background:#0b1020;color:#e8eaf6;padding:10px;border-radius:6px;max-height:320px;overflow:auto;"></pre>
 <div id="download"></div>
+
+<!-- Hide the GitBook/Jekyll "copy" button inside this page only -->
+<style>
+  #annotate-app .clipboard { display: none !important; }
+</style>
 
 <!-- onnxruntime-web -->
 <script src="https://cdn.jsdelivr.net/npm/onnxruntime-web/dist/ort.min.js"></script>
@@ -67,13 +75,13 @@ layout: post
     }
   });
 
-  // Globals set after "Upload / Load file"
+  // Globals after "Upload / Load file"
   let fileBuf = null;           // Uint8Array of the .h5ad
   let h5file = null;            // h5wasm.File instance
   let varNames = null;          // gene names from file
   let obsNames = null;          // cell IDs from file
-  let shape = null;             // [n_cells, n_genes] in the file
-  let genes = null, classes = null; // from sidecars (model)
+  let shape = null;             // [n_cells, n_genes]
+  let genes = null, classes = null; // from sidecars
 
   // ----- Small HDF5 helpers -----
   function readVarNames(f) {
@@ -110,7 +118,7 @@ layout: post
       const cj = colIdx.get(genesOrder[j]); if (cj===undefined) continue;
       for (let i=0;i<n;i++){
         out[i*D+j] = denseFlat[i*d+cj];
-        if (onRow && j===0 && i % tickEvery === 0) onRow(i, n); // ~1% updates on first column loop
+        if (onRow && j===0 && i % tickEvery === 0) onRow(i, n);
       }
     }
     onRow && onRow(n, n);
@@ -147,25 +155,34 @@ layout: post
   }
   async function pickProviders(){ const eps=[]; if (navigator.gpu) eps.push("webgpu"); eps.push("wasm"); return eps; }
 
-  // ----- STREAMED FILE READ with progress -----
+  // ----- STREAMED FILE READ with Safari-safe fallback -----
   async function readFileWithProgress(file, onProgress) {
-    const total = file.size;
-    const reader = file.stream().getReader();
-    let received = 0;
-    const chunks = [];
-    for (;;) {
-      const {done, value} = await reader.read();
-      if (done) break;
-      chunks.push(value);
-      received += value.byteLength;
-      onProgress && onProgress(received, total);
-      // Let UI paint between chunks
-      await new Promise(r => setTimeout(r, 0));
+    // If File.stream is supported, use it
+    if (file.stream && typeof file.stream === "function") {
+      const total = file.size || 0;
+      const reader = file.stream().getReader();
+      let received = 0;
+      const chunks = [];
+      for (;;) {
+        const {done, value} = await reader.read();
+        if (done) break;
+        chunks.push(value);
+        received += value.byteLength;
+        onProgress && onProgress(received, total);
+        await new Promise(r => setTimeout(r, 0));
+      }
+      const out = new Uint8Array(received);
+      let off = 0; for (const ch of chunks) { out.set(ch, off); off += ch.byteLength; }
+      return out;
     }
-    // Concatenate to a single Uint8Array
-    const out = new Uint8Array(received);
-    let offset = 0;
-    for (const chunk of chunks) { out.set(chunk, offset); offset += chunk.byteLength; }
+    // Fallback: arrayBuffer + simulated ticks
+    const buf = await file.arrayBuffer();
+    const out = new Uint8Array(buf);
+    const total = out.byteLength || 1;
+    for (let i=1;i<=10;i++){
+      onProgress && onProgress((i/10)*total, total);
+      await new Promise(r => setTimeout(r, 10));
+    }
     return out;
   }
 
@@ -186,7 +203,6 @@ layout: post
 
       log(`Reading file (${f.name}) into memory ...`);
       fileBuf = await readFileWithProgress(f, (done, total) => {
-        // map 0..60% to file read
         const pct = 5 + 60 * (done/total);
         setProg(pct);
       });
@@ -203,7 +219,7 @@ layout: post
       obsNames = readObsNames(h5file);
       shape    = readXShape(h5file);
       log(`Cells: ${shape[0]} | Genes in file: ${shape[1]}`);
-      const missing = genes.filter(g => !new Set(varNames).has(g));
+      const missing = genes.filter(g => !(new Set(varNames)).has(g));
       log(`Missing model genes in data: ${missing.length}`);
       setProg(80);
 
@@ -228,8 +244,7 @@ layout: post
       const X = h5file.get("X");
       log(`Extracting features in model gene order ...`);
       const onRow = (i, n) => {
-        // map 85..92% to extraction step
-        const base = 85, span = 7;
+        const base = 85, span = 7;    // 85..92%
         setProg(base + span * (i / n));
       };
 
@@ -287,5 +302,6 @@ layout: post
   };
 </script>
 
-{% endraw %}
+</div> <!-- /#annotate-app -->
 
+{% endraw %}
