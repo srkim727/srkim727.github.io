@@ -1,7 +1,9 @@
 ---
-title: Pyodide Demo
-layout: page          # or `post` if you want it dated and listed with posts
-permalink: /pyodide/  # nice URL like https://srkim727.github.io/pyodide/
+title: Pyodide
+author: Tao He
+date: 2022-01-03
+category: Jekyll
+layout: post
 ---
 
 {% raw %}
