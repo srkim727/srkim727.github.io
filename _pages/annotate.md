@@ -66,9 +66,10 @@ excerpt: ""
   const setUp=v=>{ $upBar.value=v; $upPct.textContent=Math.round(v)+'%'; };
   const setSpd=v=>{ $upSpd.textContent=(v||0).toFixed(2)+' MB/s'; };
   const setAn=v=>{ $anBar.value=v; $anPct.textContent=Math.round(v)+'%'; };
+  const errMsg = e => e?.message || e?.type || (typeof e === 'string' ? e : JSON.stringify(e));
 
-  window.addEventListener('error', e => log('Error: ' + e.message));
-  window.addEventListener('unhandledrejection', e => log('Promise Rejection: ' + (e.reason?.message || e.reason)));
+  window.addEventListener('error', e => log('Error: ' + errMsg(e)));
+  window.addEventListener('unhandledrejection', e => log('Promise Rejection: ' + errMsg(e.reason)));
 
   // ---------- Load onnxruntime-web as classic script (CDN + fallback) ----------
   async function ensureORT() {
@@ -89,31 +90,52 @@ excerpt: ""
     return window.ort;
   }
 
-  // ---------- Load h5wasm (ESM first, then UMD via <script> fallback) ----------
+  // ---------- Load h5wasm (ESM first, then UMD via <script> fallback) + set WASM path ----------
   let _h5wasmNS = null;
   async function ensureH5Wasm() {
     if (_h5wasmNS) return _h5wasmNS;
+
+    const esmUrl = "https://cdn.jsdelivr.net/npm/h5wasm@0.5.0/dist/esm/h5wasm.js";
     try {
-      _h5wasmNS = await import("https://cdn.jsdelivr.net/npm/h5wasm@0.5.0/dist/esm/h5wasm.js");
+      _h5wasmNS = await import(esmUrl);
       return _h5wasmNS;
-    } catch (_) {
-      await new Promise((resolve, reject) => {
+    } catch (esmErr) {
+      console.warn("h5wasm ESM import failed:", esmErr);
+    }
+
+    async function loadUMD(url) {
+      return new Promise((resolve, reject) => {
         const s = document.createElement("script");
-        s.src = "https://cdn.jsdelivr.net/npm/h5wasm@0.5.0/dist/h5wasm.js"; // UMD build
-        s.onload = resolve;
-        s.onerror = () => {
-          const s2 = document.createElement("script");
-          s2.src = "https://unpkg.com/h5wasm@0.5.0/dist/h5wasm.js";
-          s2.onload = resolve;
-          s2.onerror = reject;
-          document.head.appendChild(s2);
-        };
+        s.src = url;
+        s.async = true;
+        s.onload = () => resolve(url);
+        s.onerror = (ev) => reject(new Error(`UMD script failed to load: ${url} (${ev?.type || "error"})`));
         document.head.appendChild(s);
       });
-      if (!window.h5wasm) throw new Error("h5wasm UMD failed to load.");
-      _h5wasmNS = window.h5wasm;
-      return _h5wasmNS;
     }
+
+    let loadedFrom = null;
+    try {
+      loadedFrom = await loadUMD("https://cdn.jsdelivr.net/npm/h5wasm@0.5.0/dist/h5wasm.js");
+    } catch (e1) {
+      console.warn(e1?.message || e1);
+      loadedFrom = await loadUMD("https://unpkg.com/h5wasm@0.5.0/dist/h5wasm.js");
+    }
+
+    if (!window.h5wasm) {
+      throw new Error("h5wasm UMD loaded but window.h5wasm is undefined.");
+    }
+
+    // Point to the CDN dir for .wasm assets
+    const base = loadedFrom.replace(/\/h5wasm\.js(?:\?.*)?$/, "");
+    try {
+      if (window.h5wasm?.setWasmPath) window.h5wasm.setWasmPath(base + "/");
+    } catch (e) {
+      console.warn("setWasmPath failed (continuing):", e);
+    }
+
+    _h5wasmNS = window.h5wasm;
+    return _h5wasmNS;
   }
 
   // ---------- Fetch helpers ----------
@@ -229,7 +251,6 @@ excerpt: ""
       const bytes = await fetchHeadSize(MODEL_URL, 'model.onnx');
       log('model.onnx size: ' + (bytes ? (bytes/1048576).toFixed(2)+' MB' : 'unknown'));
 
-      // Load ORT
       const ort = await ensureORT();
       if (ort.env?.wasm) {
         ort.env.wasm.simd = !$safe.checked;
@@ -248,7 +269,7 @@ excerpt: ""
       log('Dummy inference ok. Output len: ' + (any?.data?.length ?? 'unknown'));
       log('✅ Assets validate successfully.');
     }catch(e){
-      log('🛑 Validate failed: ' + (e.message || e));
+      log('🛑 Validate failed: ' + errMsg(e));
       log('Hint: open these URLs in a new tab to verify:');
       log(' - ' + GENES_URL);
       log(' - ' + CLASSES_URL);
@@ -262,9 +283,10 @@ excerpt: ""
 
     try{
       const h5wasm = await ensureH5Wasm();
+
       const genes = await fetchJson(GENES_URL, 'genes.json');
       const classes = await fetchJson(CLASSES_URL, 'classes.json');
-      window._genes = genes; window._classes = classes; // cache in window for run()
+      window._genes = genes; window._classes = classes; // cache for run()
       log('genes: ' + genes.length + ' | classes: ' + classes.length);
 
       const file = $f.files?.[0];
@@ -276,7 +298,15 @@ excerpt: ""
       setUp(100);
 
       await h5wasm.ready;
-      const hf = new h5wasm.File(fileBuf, "r");
+
+      let hf;
+      try {
+        hf = new h5wasm.File(fileBuf, "r");
+      } catch (openErr) {
+        log("If this is the first visit and it fails here, the h5wasm .wasm asset may be cached/blocked.");
+        log("We set the WASM path to the CDN folder; a hard refresh (Ctrl/Cmd+Shift+R) can help.");
+        throw openErr;
+      }
       window._h5 = hf;
 
       const varNames = readVarNames(hf);
@@ -291,7 +321,8 @@ excerpt: ""
 
       $run.disabled=false;
     }catch(e){
-      log('🛑 Load failed: ' + (e.message || e));
+      log('🛑 Load failed: ' + errMsg(e));
+      console.error(e);
     }
   };
 
@@ -376,7 +407,8 @@ excerpt: ""
       setAn(100);
       log('✅ Done.');
     }catch(e){
-      log('🛑 Run failed: ' + (e.message || e));
+      log('🛑 Run failed: ' + errMsg(e));
+      console.error(e);
     }
   };
 </script>
