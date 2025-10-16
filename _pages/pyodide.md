@@ -222,16 +222,18 @@ print("sum:", int(np.array([1,2,3]).sum()))
   });
 
   // RUN (with staged processing updates)
-  $("runBtn").addEventListener("click", async ()=>{
-    if(!uploaded){ alert("Load a CSV first."); return; }
-    if(!modelReady){ alert("Validate/Load model first."); return; }
-    if(!libsReady){ alert("Boot first."); return; }
-    try{
-      $("procProg").value = 5;  $("procStatus").textContent = "Starting…";
-      log("▶️ Running annotation …");
+<script>
+$("runBtn").addEventListener("click", async ()=>{
+  if(!uploaded){ alert("Load a CSV first."); return; }
+  if(!modelReady){ alert("Validate/Load model first."); return; }
+  if(!libsReady){ alert("Boot first."); return; }
 
-      const code = `
-import numpy as np, pandas as pd, gzip, json, os, zipfile, io, sys
+  $("procProg").value = 5;
+  $("procStatus").textContent = "Starting…";
+  log("▶️ Running annotation …");
+
+  const code = `
+import numpy as np, pandas as pd, gzip, json, os, io, sys
 
 def stage(pct, msg):
     print(f"__STAGE__:{pct}:{msg}")
@@ -245,12 +247,10 @@ def read_any(path):
 
 stage(10, "Loading input")
 X = read_any('/tmp_input')
+# Optional guard:
+# X = X.apply(pd.to_numeric, errors='coerce').fillna(0.0)
 
-stage(20, "Checking model")
-size = os.path.getsize('/tmp_model')
-if size < 1024:
-    raise ValueError(f"Model too small or empty: {size} bytes")
-
+stage(20, "Reading model")
 def load_npz_any(path):
     try:
         return np.load(path, allow_pickle=True)
@@ -260,8 +260,6 @@ def load_npz_any(path):
             return np.load(io.BytesIO(data), allow_pickle=True)
         except Exception as e2:
             raise EOFError(f"Failed to read model as npz. Direct: {e1}; Gzip-fallback: {e2}")
-
-stage(30, "Reading model")
 _npz = load_npz_any('/tmp_model')
 
 stage(40, "Preparing features")
@@ -319,38 +317,47 @@ out.to_csv('/pred.csv', index=False)
 print('DONE', X.shape, len(loaded['classes_']))
 `;
 
-      // Hook into staged prints to update the Processing UI
-      const pyRunner = pyodide.runPythonAsync(code, { stdout: (s)=> {
-        if (typeof s === "string" && s.startsWith("__STAGE__:")){
-          const parts = s.trim().split(":");
-          const pct = Math.max(0, Math.min(100, parseInt(parts[1] || "0", 10)));
+  // Stream progress via stdout/stderr
+  const unhookOut = pyodide.setStdout({
+    batched: (s) => {
+      (s || "").split(/\r?\n/).forEach(line=>{
+        if(!line) return;
+        if(line.startsWith("__STAGE__:")){
+          const parts = line.trim().split(":");
+          const pct = Math.max(0, Math.min(100, parseInt(parts[1]||"0",10)));
           const msg = parts.slice(2).join(":") || "Working…";
           $("procProg").value = pct;
           $("procStatus").textContent = msg;
         } else {
-          log(s);
+          log(line);
         }
-      }});
-
-      await pyRunner;
-      $("procProg").value = 100;
-      $("procStatus").textContent = "Complete";
-
-      const bytes = FS.readFile("/pred.csv");
-      const blob  = new Blob([bytes], { type: "text/csv" });
-      if(resultUrl){ URL.revokeObjectURL(resultUrl); }
-      resultUrl = URL.createObjectURL(blob);
-      $("downloadWrap").style.display = "block";
-      $("downloadLink").href = resultUrl;
-      log("✅ pred.csv ready. Use the link above to download.");
-    }catch(err){
-      $("procStatus").textContent = "❌ Error";
-      log("❌ Run error: " + (err?.message || err));
+      });
     }
   });
+  const unhookErr = pyodide.setStderr({
+    batched: (s) => { s && s.trim() && log("ERR: " + s); }
+  });
 
-  log("Flow → 1) Boot  2) Ping  3) Validate assets  4) Load file  5) Run");
-})();
+  try{
+    await pyodide.runPythonAsync(code);         // <- NO stdout option here
+    $("procProg").value = 100;
+    $("procStatus").textContent = "Complete";
+
+    const bytes = FS.readFile("/pred.csv");
+    const blob  = new Blob([bytes], { type: "text/csv" });
+    if(resultUrl){ URL.revokeObjectURL(resultUrl); }
+    resultUrl = URL.createObjectURL(blob);
+    $("downloadWrap").style.display = "block";
+    $("downloadLink").href = resultUrl;
+    log("✅ pred.csv ready. Use the link above to download.");
+  }catch(err){
+    $("procStatus").textContent = "❌ Error";
+    log("❌ Run error: " + (err?.message || err));
+  }finally{
+    try{ unhookOut && unhookOut(); }catch(_){}
+    try{ unhookErr && unhookErr(); }catch(_){}
+  }
+});
 </script>
 
 {% endraw %}
