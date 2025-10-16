@@ -10,7 +10,7 @@ layout: post
 <!-- Pyodide loader -->
 <script defer src="https://cdn.jsdelivr.net/pyodide/v0.26.3/full/pyodide.js"></script>
 
-<h2>Annotate Cells from CSV/CSV.GZ (Pyodide, CellTypist-style logistic)</h2>
+<h2>aAnnotate Cells from CSV/CSV.GZ (Pyodide, CellTypist-style logistic)</h2>
 <p>
   Model: <code>/assets/models/level1_model_portable.npz</code><br>
   Input: cells × genes; 1e4-normalized + <code>log1p</code><br>
