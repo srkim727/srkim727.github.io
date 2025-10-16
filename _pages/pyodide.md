@@ -16,11 +16,15 @@ layout: post
 </p>
 
 <div style="display:flex;flex-wrap:wrap;gap:10px;align-items:center;">
+  <!-- 1) Choose File -->
   <input type="file" id="csvInput" accept=".csv,.csv.gz,text/csv" />
-  <button id="uploadBtn" disabled>Upload</button>
-  <button id="runBtn" disabled>Run Analysis</button>
+  <!-- 2) Upload -->
+  <button id="uploadBtn" type="button" disabled>Upload</button>
+  <!-- 3) Run -->
+  <button id="runBtn" type="button" disabled>Run Analysis</button>
+  <!-- 4) Download -->
   <a id="downloadLink" download="pred.csv" style="display:none">
-    <button>Download Results</button>
+    <button type="button">Download Results</button>
   </a>
 </div>
 
@@ -30,90 +34,112 @@ layout: post
 <pre id="log" style="background:#0a0f17;color:#e8eef7;padding:10px;border-radius:6px;overflow:auto;height:260px;white-space:pre-wrap;"></pre>
 
 <script>
-const $  = (id) => document.getElementById(id);
-const log = (m) => { const el = $("log"); el.textContent += (m + "\\n"); el.scrollTop = el.scrollHeight; };
+(function(){
+  const $  = (id) => document.getElementById(id);
+  const log = (m) => { const el = $("log"); el.textContent += (m + "\\n"); el.scrollTop = el.scrollHeight; };
 
-let pyodide, FS, csvFile, pyReady=false, modelReady=false, uploaded=false;
+  let pyodide, FS, csvFile;
+  let pyReady=false, modelReady=false, uploaded=false;
 
-function readFileWithProgress(file,onProgress){
-  return new Promise((resolve,reject)=>{
-    const reader=new FileReader(); let last=performance.now(), lastLoaded=0;
-    reader.onprogress=(e)=>{
-      if(e.lengthComputable){
-        const pct=Math.round((e.loaded/e.total)*100);
-        onProgress?.(pct,e.loaded,e.total,(e.loaded-lastLoaded)/((performance.now()-last)/1000));
-        last=performance.now(); lastLoaded=e.loaded;
+  function enableUploadButtonIfFilePresent(){
+    const hasFile = $("csvInput")?.files?.length > 0;
+    $("uploadBtn").disabled = !hasFile;
+    log(hasFile ? "✔️ File selected. Upload enabled." : "ℹ️ No file selected yet.");
+  }
+
+  function readFileWithProgress(file,onProgress){
+    return new Promise((resolve,reject)=>{
+      const reader=new FileReader(); let last=performance.now(), lastLoaded=0;
+      reader.onprogress=(e)=>{
+        if(e.lengthComputable){
+          const pct=Math.round((e.loaded/e.total)*100);
+          onProgress?.(pct,e.loaded,e.total,(e.loaded-lastLoaded)/((performance.now()-last)/1000));
+          last=performance.now(); lastLoaded=e.loaded;
+        }
+      };
+      reader.onload=()=>resolve(new Uint8Array(reader.result));
+      reader.onerror=()=>reject(reader.error);
+      reader.readAsArrayBuffer(file);
+    });
+  }
+
+  async function initPyodideAndModel(){
+    try {
+      log("⏳ Loading Pyodide…");
+      const { loadPyodide } = await import("https://cdn.jsdelivr.net/pyodide/v0.26.3/full/pyodide.js");
+      pyodide = await loadPyodide({ indexURL: "https://cdn.jsdelivr.net/pyodide/v0.26.3/full/" });
+      FS = pyodide.FS;
+      await pyodide.runPythonAsync(`import numpy as np, pandas as pd, gzip, io, json, os`);
+      pyReady = true;
+      log(`✅ Pyodide ${pyodide.version} ready.`);
+    } catch (e) {
+      log("❌ Failed to initialize Pyodide: " + (e?.message || e));
+      return;
+    }
+
+    try {
+      const resp = await fetch("/assets/models/level1_model_portable.npz", { cache: "no-store" });
+      if (!resp.ok) throw new Error(\`HTTP \${resp.status}\`);
+      const buf = new Uint8Array(await resp.arrayBuffer());
+      FS.writeFile("/tmp_model", buf);
+      modelReady = true;
+      log("✅ Loaded model from /assets/models/level1_model_portable.npz");
+    } catch (e) {
+      modelReady = false;
+      log("❌ Model missing at /assets/models/level1_model_portable.npz (required).");
+    }
+
+    // Enable Run button only when uploaded and model are ready
+    $("runBtn").disabled = !(uploaded && modelReady);
+
+    // If a file was already chosen before init finished, keep Upload enabled
+    enableUploadButtonIfFilePresent();
+  }
+
+  // Wait until DOM is fully ready before attaching listeners
+  window.addEventListener("DOMContentLoaded", () => {
+    // Attach both 'change' and 'input' to be extra safe across browsers
+    $("csvInput").addEventListener("change", async (e)=>{
+      const f = e.target.files[0];
+      if(!f){ enableUploadButtonIfFilePresent(); return; }
+      // We only read (upload) when user clicks Upload; here we just enable the button.
+      enableUploadButtonIfFilePresent();
+      log(`📁 Selected ${f.name}`);
+    });
+
+    $("csvInput").addEventListener("input", enableUploadButtonIfFilePresent);
+
+    // Upload: actually read the file and write to FS
+    $("uploadBtn").addEventListener("click", async ()=>{
+      const f = $("csvInput").files?.[0];
+      if(!f){ alert("Please choose a file first."); return; }
+      if(!pyReady){ alert("Pyodide not ready yet."); return; }
+      try {
+        const bytes = await readFileWithProgress(f,(pct,_,__,rate)=>{
+          $("uploadProg").value=pct; $("speedLabel").textContent=`${(rate/1048576).toFixed(2)} MB/s`;
+        });
+        csvFile = { name: f.name, bytes };
+        FS.writeFile('/tmp_input', bytes);
+        uploaded = true;
+        log(`📤 Upload successful: ${f.name} → /tmp_input (${(bytes.length/1e6).toFixed(2)} MB)`);
+        $("runBtn").disabled = !modelReady;
+        if(!modelReady){
+          log("ℹ️ Waiting for model… Run will enable when model loads.");
+        }
+      } catch (err) {
+        log("❌ Upload failed: " + (err?.message || err));
       }
-    };
-    reader.onload=()=>resolve(new Uint8Array(reader.result));
-    reader.onerror=()=>reject(reader.error);
-    reader.readAsArrayBuffer(file);
-  });
-}
+    });
 
-// Button 1: Choose file
-$("csvInput").addEventListener('change', async (e)=>{
-  const f = e.target.files[0];
-  if(!f) return;
-  const bytes = await readFileWithProgress(f,(pct,_,__,rate)=>{
-    $("uploadProg").value=pct; $("speedLabel").textContent=`${(rate/1048576).toFixed(2)} MB/s`;
-  });
-  csvFile = { name: f.name, bytes };
-  log(`📁 Selected ${f.name} (${(bytes.length/1e6).toFixed(2)} MB)`);
-  $("uploadBtn").disabled = false;
-});
+    // Run analysis
+    $("runBtn").addEventListener("click", async ()=>{
+      if(!uploaded){ alert("Please upload a CSV first."); return; }
+      if(!modelReady){ alert("Model not loaded."); return; }
 
-// Initialize Pyodide + model automatically
-(async ()=>{
-  try {
-    log("⏳ Loading Pyodide…");
-    const { loadPyodide } = await import("https://cdn.jsdelivr.net/pyodide/v0.26.3/full/pyodide.js");
-    pyodide = await loadPyodide({ indexURL: "https://cdn.jsdelivr.net/pyodide/v0.26.3/full/" });
-    FS = pyodide.FS;
-    await pyodide.runPythonAsync(`import numpy as np, pandas as pd, gzip, io, json, os`);
-    pyReady = true;
-    log(`✅ Pyodide ${pyodide.version} ready.`);
-  } catch (e) {
-    log("❌ Failed to initialize Pyodide: " + e.message);
-    return;
-  }
+      $("procProg").value = 5;
+      log("▶️ Running annotation…");
 
-  // Load model
-  try {
-    const resp = await fetch("/assets/models/level1_model_portable.npz", { cache: "no-store" });
-    if (!resp.ok) throw new Error(\`HTTP \${resp.status}\`);
-    const buf = new Uint8Array(await resp.arrayBuffer());
-    FS.writeFile("/tmp_model", buf);
-    modelReady = true;
-    log("✅ Loaded model from /assets/models/level1_model_portable.npz");
-  } catch (e) {
-    log("❌ Model missing: /assets/models/level1_model_portable.npz");
-  }
-})();
-
-// Button 2: Upload (write CSV into Pyodide FS)
-$("uploadBtn").addEventListener('click', ()=>{
-  if(!csvFile){ alert("Please choose a file first."); return; }
-  if(!pyReady){ alert("Pyodide not ready yet."); return; }
-  try {
-    FS.writeFile('/tmp_input', csvFile.bytes);
-    uploaded = true;
-    $("runBtn").disabled = !modelReady;
-    log("📤 Upload successful. File written to /tmp_input");
-  } catch (err) {
-    log("❌ Upload failed: " + err.message);
-  }
-});
-
-// Button 3: Run Analysis
-$("runBtn").addEventListener('click', async ()=>{
-  if(!uploaded){ alert("Please upload a CSV first."); return; }
-  if(!modelReady){ alert("Model not loaded."); return; }
-
-  $("procProg").value = 5;
-  log("▶️ Running annotation…");
-
-  const py = `
+      const py = `
 import numpy as np, pandas as pd, gzip, json, os
 def read_any(path):
     try: return pd.read_csv(gzip.open(path,'rt'), index_col=0)
@@ -171,20 +197,27 @@ out = pd.DataFrame({'cell_id': X.index, 'predicted_label': labels, 'conf_score':
 out.to_csv('/pred.csv', index=False)
 print('DONE', X.shape, len(loaded['classes_']))
 `;
+      try {
+        await pyodide.runPythonAsync(py);
+        $("procProg").value = 100;
+        const bytes = FS.readFile('/pred.csv');
+        const blob  = new Blob([bytes], { type: 'text/csv' });
+        const url   = URL.createObjectURL(blob);
+        $("downloadLink").href = url;
+        $("downloadLink").style.display = 'inline';
+        log("✅ Done: pred.csv ready. Click 'Download Results' to save.");
+      } catch (err) {
+        log("❌ ERROR: " + (err?.message || err));
+      }
+    });
 
-  try {
-    await pyodide.runPythonAsync(py);
-    $("procProg").value = 100;
-    const bytes = FS.readFile('/pred.csv');
-    const blob  = new Blob([bytes], { type: 'text/csv' });
-    const url   = URL.createObjectURL(blob);
-    $("downloadLink").href = url;
-    $("downloadLink").style.display = 'inline';
-    log("✅ Done: pred.csv ready. Click 'Download Results' to save.");
-  } catch (err) {
-    log("❌ ERROR: " + (err?.message || String(err)));
-  }
-});
+    // Initial state check (in case browser pre-fills the file input)
+    enableUploadButtonIfFilePresent();
+
+    // Initialize Pyodide & model after listeners are wired
+    initPyodideAndModel();
+  });
+})();
 </script>
 
 {% endraw %}

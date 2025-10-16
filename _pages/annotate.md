@@ -1,9 +1,27 @@
 ---
-title: Annotate (diagnostic)
+title: Annotate (client-side)
 layout: page
 permalink: /annotate/
 excerpt: ""
 ---
+
+<!--
+Make sure you have these files in your repo:
+
+/assets/libs/h5wasm/                <-- put the entire dist/ here
+  h5wasm.js                         <-- UMD build
+  h5wasm.wasm
+  h5wasm.worker.js
+  esm/
+    h5wasm.js                       <-- ESM build (optional but preferred)
+
+And your ONNX model + sidecars:
+
+/assets/models/Level1/
+  model.onnx
+  genes.json
+  classes.json
+-->
 
 <div id="ann-app" style="max-width:900px">
   <h2>Annotate .h5ad (client-side)</h2>
@@ -14,7 +32,6 @@ excerpt: ""
     <button id="validate">Validate assets</button>
     <button id="load">Load file</button>
     <button id="run" disabled>Run</button>
-    <button id="ping" title="Quick test of the log/handlers">Ping</button>
     <label style="display:inline-flex;align-items:center;gap:6px;">
       Batch <input id="batch" type="number" min="2000" step="1000" value="8000" style="width:80px">
     </label>
@@ -41,27 +58,29 @@ excerpt: ""
   <pre id="log" style="background:#0b1020;color:#e8eaf6;padding:10px;border-radius:6px;max-height:280px;overflow:auto;"></pre>
   <div id="download" style="margin-top:6px"></div>
 
+  <!-- Hide GitBook copy button -->
   <style>#ann-app .clipboard{display:none!important}</style>
 </div>
 
 <script type="module">
-  // ---------- BOOT ----------
-  // If you don't see the "⚙️ Script booted" line in the log, the script didn't run.
+  // ---------- Boot + helpers ----------
   const $log = document.getElementById('log');
   const log = m => { $log.textContent += m + "\\n"; $log.scrollTop = $log.scrollHeight; };
   const errMsg = e => e?.message || e?.type || (typeof e === 'string' ? e : JSON.stringify(e));
   log("⚙️ Script booted");
 
-  // ---------- Plain root-relative URLs ----------
+  // Model/sidecar URLs (root-relative)
   const MODEL_URL   = "/assets/models/Level1/model.onnx";
   const GENES_URL   = "/assets/models/Level1/genes.json";
   const CLASSES_URL = "/assets/models/Level1/classes.json";
 
-  // ---------- UI ----------
+  // Serve h5wasm locally (same-origin)
+  const H5WASM_BASE = "/assets/libs/h5wasm";
+
+  // UI
   const $f = document.getElementById('file');
   const $meta = document.getElementById('meta');
   const $dl   = document.getElementById('download');
-
   const $upBar=document.getElementById('upBar'), $upPct=document.getElementById('upPct'), $upSpd=document.getElementById('upSpd');
   const $anBar=document.getElementById('anBar'), $anPct=document.getElementById('anPct');
   const $batch=document.getElementById('batch'), $safe=document.getElementById('safe');
@@ -73,14 +92,13 @@ excerpt: ""
   window.addEventListener('error', e => log('Error: ' + errMsg(e)));
   window.addEventListener('unhandledrejection', e => log('Promise Rejection: ' + errMsg(e.reason)));
 
-  // ---------- Safe binder so missing elements are obvious ----------
   function bind(id, handler){
     const el = document.getElementById(id);
     if (!el) { console.warn("Missing element id:", id); log("⚠️ Missing element id: " + id); return; }
     el.addEventListener('click', (ev)=>{ try{ handler(ev); }catch(e){ log('🛑 '+id+' handler error: '+errMsg(e)); console.error(e);} });
   }
 
-  // ---------- Load onnxruntime-web as classic script (CDN + fallback) ----------
+  // ---------- onnxruntime-web loader (script tag + fallback) ----------
   async function ensureORT() {
     if (window.ort) return window.ort;
     await new Promise((resolve, reject) => {
@@ -99,74 +117,47 @@ excerpt: ""
     return window.ort;
   }
 
-  // ---------- Load h5wasm: try multiple ESM & UMD paths; set WASM path ----------
-  let _h5wasmNS = null;
+  // ---------- h5wasm loader (prefer local ESM, then local UMD) ----------
+  let _h5 = null;
   async function ensureH5Wasm() {
-    if (_h5wasmNS) return _h5wasmNS;
-
-    const esmCandidates = [
-      "https://cdn.jsdelivr.net/npm/h5wasm@0.5.0/dist/esm/h5wasm.js",
-      "https://cdn.jsdelivr.net/npm/h5wasm/dist/esm/h5wasm.js",
-      "https://unpkg.com/h5wasm@0.5.0/dist/esm/h5wasm.js",
-      "https://unpkg.com/h5wasm/dist/esm/h5wasm.js"
-    ];
-    for (const url of esmCandidates) {
-      try {
-        log("Trying h5wasm ESM: " + url);
-        _h5wasmNS = await import(url);
-        log("Loaded h5wasm ESM from: " + url);
-        return _h5wasmNS;
-      } catch (e) {
-        log("ESM failed: " + url + " :: " + errMsg(e));
-      }
+    if (_h5) return _h5;
+    // Local ESM
+    const localEsm = `${H5WASM_BASE}/esm/h5wasm.js`;
+    try {
+      log("Trying h5wasm local ESM: " + localEsm);
+      _h5 = await import(localEsm);
+      log("Loaded h5wasm local ESM.");
+      return _h5;
+    } catch (e) {
+      log("Local ESM failed: " + errMsg(e));
     }
-
-    const umdCandidates = [
-      "https://cdn.jsdelivr.net/npm/h5wasm@0.5.0/dist/h5wasm.js",
-      "https://cdn.jsdelivr.net/npm/h5wasm/dist/h5wasm.js",
-      "https://unpkg.com/h5wasm@0.5.0/dist/h5wasm.js",
-      "https://unpkg.com/h5wasm/dist/h5wasm.js",
-      "https://cdn.jsdelivr.net/npm/h5wasm@0.5.0/dist/h5wasm.umd.js",
-      "https://unpkg.com/h5wasm@0.5.0/dist/h5wasm.umd.js"
-    ];
-    async function loadUMD(url) {
-      return new Promise((resolve, reject) => {
+    // Local UMD
+    const localUmd = `${H5WASM_BASE}/h5wasm.js`;
+    try {
+      log("Trying h5wasm local UMD: " + localUmd);
+      await new Promise((resolve, reject) => {
         const s = document.createElement("script");
-        s.src = url;
+        s.src = localUmd;
         s.async = true;
-        s.onload = () => resolve(url);
-        s.onerror = (ev) => reject(new Error(`UMD script failed to load: ${url} (${ev?.type || "error"})`));
+        s.onload = resolve;
+        s.onerror = ev => reject(new Error(`Local UMD failed: ${localUmd} (${ev?.type || "error"})`));
         document.head.appendChild(s);
       });
-    }
-    for (const url of umdCandidates) {
-      try {
-        log("Trying h5wasm UMD: " + url);
-        const loadedFrom = await loadUMD(url);
-        if (window.h5wasm) {
-          log("Loaded h5wasm UMD from: " + url);
-          const base = url.replace(/\/[^\/]+$/, "/");
-          try {
-            if (window.h5wasm.setWasmPath) {
-              window.h5wasm.setWasmPath(base);
-              log("h5wasm.setWasmPath(" + base + ")");
-            }
-          } catch (e) {
-            log("setWasmPath warning: " + errMsg(e));
-          }
-          _h5wasmNS = window.h5wasm;
-          return _h5wasmNS;
-        } else {
-          log("UMD loaded but window.h5wasm undefined: " + loadedFrom);
-        }
-      } catch (e) {
-        log("UMD failed: " + url + " :: " + errMsg(e));
+      if (!window.h5wasm) throw new Error("window.h5wasm undefined after local UMD.");
+      if (window.h5wasm.setWasmPath) {
+        window.h5wasm.setWasmPath(`${H5WASM_BASE}/`);
+        log("h5wasm.setWasmPath(" + `${H5WASM_BASE}/` + ")");
       }
+      _h5 = window.h5wasm;
+      log("Loaded h5wasm local UMD.");
+      return _h5;
+    } catch (e) {
+      log(errMsg(e));
+      throw new Error("h5wasm not found under " + H5WASM_BASE + " — copy dist/ here.");
     }
-    throw new Error("All h5wasm load attempts failed.");
   }
 
-  // ---------- Fetch helpers ----------
+  // ---------- fetch helpers ----------
   async function fetchJson(url, label){
     const r = await fetch(url, {cache:'no-cache'});
     if (!r.ok) throw new Error(label + ' fetch failed: ' + r.status + ' ' + r.statusText + ' ('+url+')');
@@ -187,7 +178,7 @@ excerpt: ""
     return len ? Number(len) : null;
   }
 
-  // ---------- File read with progress + Safari fallback ----------
+  // ---------- local file read with progress ----------
   async function readFileWithProgress(file, onTick){
     const t0=performance.now();
     if (!$safe.checked && file.stream && typeof file.stream==='function'){
@@ -215,7 +206,7 @@ excerpt: ""
     return new Uint8Array(buf);
   }
 
-  // ---------- h5 helpers ----------
+  // ---------- AnnData helpers ----------
   function readVarNames(h){
     for (const p of ["var/_index","var/index","var/feature_names"]){
       const ds=h.get(p); if (ds?.isDataset){
@@ -264,9 +255,7 @@ excerpt: ""
     return out;
   }
 
-  // ===== Handlers =====
-  bind('ping', ()=>{ log('🏓 Ping OK — handlers are attached.'); });
-
+  // ===== Validate assets =====
   bind('validate', async ()=>{
     try{
       log('Checking genes.json …');
@@ -307,17 +296,18 @@ excerpt: ""
     }
   });
 
+  // ===== Load file =====
   bind('load', async ()=>{
     $dl.innerHTML=''; $log.textContent=''; setUp(0); setSpd(0); setAn(0);
     const runBtn = document.getElementById('run');
     if (runBtn) runBtn.disabled = true;
 
     try{
-      const h5wasm = await ensureH5Wasm();
+      const h5 = await ensureH5Wasm();
 
       const genes = await fetchJson(GENES_URL, 'genes.json');
       const classes = await fetchJson(CLASSES_URL, 'classes.json');
-      window._genes = genes; window._classes = classes; // cache for run()
+      window._genes = genes; window._classes = classes; // for run()
       log('genes: ' + genes.length + ' | classes: ' + classes.length);
 
       const file = $f?.files?.[0];
@@ -328,14 +318,14 @@ excerpt: ""
       const fileBuf = await readFileWithProgress(file, (pct, mbps)=>{ setUp(pct); setSpd(mbps); });
       setUp(100);
 
-      await h5wasm.ready;
+      await h5.ready;
 
       let hf;
       try {
-        hf = new h5wasm.File(fileBuf, "r");
+        hf = new h5.File(fileBuf, "r");
       } catch (openErr) {
         log("If this is the first visit and it fails here, the h5wasm .wasm asset may be cached/blocked.");
-        log("We set the WASM path to the CDN folder; a hard refresh (Ctrl/Cmd+Shift+R) can help.");
+        log("We set the WASM path to " + H5WASM_BASE + "/ ; a hard refresh (Ctrl/Cmd+Shift+R) can help.");
         throw openErr;
       }
       window._h5 = hf;
@@ -357,6 +347,7 @@ excerpt: ""
     }
   });
 
+  // ===== Run annotation =====
   bind('run', async ()=>{
     try{
       setAn(0);
@@ -432,7 +423,7 @@ excerpt: ""
       const csv=[header.join(","), ...rows.map(r=>r.join(","))].join("\\n");
       const blob=new Blob([csv],{type:"text/csv"});
       const url=URL.createObjectURL(blob);
-      const a=Object.assign(document.createElement('a'),{href:url,download:'pred.csv'});
+      const a=Object.assign(document.createElement('a'),{href=url,download:'pred.csv'});
       $dl.innerHTML=''; $dl.appendChild(a); a.click(); URL.revokeObjectURL(url);
       setAn(100);
       log('✅ Done.');
