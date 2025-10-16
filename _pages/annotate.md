@@ -44,7 +44,7 @@ excerpt: ""
 </div>
 
 <script type="module">
-  // ---------- Plain root-relative URLs (no Liquid) ----------
+  // ---------- Plain root-relative URLs ----------
   const MODEL_URL   = "/assets/models/Level1/model.onnx";
   const GENES_URL   = "/assets/models/Level1/genes.json";
   const CLASSES_URL = "/assets/models/Level1/classes.json";
@@ -70,9 +70,6 @@ excerpt: ""
   window.addEventListener('error', e => log('Error: ' + e.message));
   window.addEventListener('unhandledrejection', e => log('Promise Rejection: ' + (e.reason?.message || e.reason)));
 
-  // ---------- State ----------
-  let genes=null, classes=null, fileBuf=null, h5=null, shape=null, varNames=null, obsNames=null;
-
   // ---------- Load onnxruntime-web as classic script (CDN + fallback) ----------
   async function ensureORT() {
     if (window.ort) return window.ort;
@@ -90,6 +87,33 @@ excerpt: ""
       document.head.appendChild(s);
     });
     return window.ort;
+  }
+
+  // ---------- Load h5wasm (ESM first, then UMD via <script> fallback) ----------
+  let _h5wasmNS = null;
+  async function ensureH5Wasm() {
+    if (_h5wasmNS) return _h5wasmNS;
+    try {
+      _h5wasmNS = await import("https://cdn.jsdelivr.net/npm/h5wasm@0.5.0/dist/esm/h5wasm.js");
+      return _h5wasmNS;
+    } catch (_) {
+      await new Promise((resolve, reject) => {
+        const s = document.createElement("script");
+        s.src = "https://cdn.jsdelivr.net/npm/h5wasm@0.5.0/dist/h5wasm.js"; // UMD build
+        s.onload = resolve;
+        s.onerror = () => {
+          const s2 = document.createElement("script");
+          s2.src = "https://unpkg.com/h5wasm@0.5.0/dist/h5wasm.js";
+          s2.onload = resolve;
+          s2.onerror = reject;
+          document.head.appendChild(s2);
+        };
+        document.head.appendChild(s);
+      });
+      if (!window.h5wasm) throw new Error("h5wasm UMD failed to load.");
+      _h5wasmNS = window.h5wasm;
+      return _h5wasmNS;
+    }
   }
 
   // ---------- Fetch helpers ----------
@@ -141,9 +165,7 @@ excerpt: ""
     return new Uint8Array(buf);
   }
 
-  // ---------- h5wasm (lazy import inside handlers) ----------
-  let h5wasm = null;
-
+  // ---------- h5 helpers ----------
   function readVarNames(h){
     for (const p of ["var/_index","var/index","var/feature_names"]){
       const ds=h.get(p); if (ds?.isDataset){
@@ -192,7 +214,7 @@ excerpt: ""
     return out;
   }
 
-  // ---- Validate assets ----
+  // ===== Validate assets =====
   $validate.onclick = async ()=>{
     try{
       log('Checking genes.json …');
@@ -207,7 +229,7 @@ excerpt: ""
       const bytes = await fetchHeadSize(MODEL_URL, 'model.onnx');
       log('model.onnx size: ' + (bytes ? (bytes/1048576).toFixed(2)+' MB' : 'unknown'));
 
-      // ✅ load ORT via classic script
+      // Load ORT
       const ort = await ensureORT();
       if (ort.env?.wasm) {
         ort.env.wasm.simd = !$safe.checked;
@@ -234,35 +256,35 @@ excerpt: ""
     }
   };
 
-  // ---- Load file ----
+  // ===== Load file =====
   $load.onclick = async ()=>{
     $dl.innerHTML=''; $log.textContent=''; setUp(0); setSpd(0); setAn(0); $run.disabled=true;
 
     try{
-      genes   = await fetchJson(GENES_URL, 'genes.json');
-      classes = await fetchJson(CLASSES_URL, 'classes.json');
+      const h5wasm = await ensureH5Wasm();
+      const genes = await fetchJson(GENES_URL, 'genes.json');
+      const classes = await fetchJson(CLASSES_URL, 'classes.json');
+      window._genes = genes; window._classes = classes; // cache in window for run()
       log('genes: ' + genes.length + ' | classes: ' + classes.length);
-
-      if (!h5wasm){
-        h5wasm = await import("https://cdn.jsdelivr.net/npm/h5wasm@0.5.0/dist/esm/h5wasm.js");
-      }
 
       const file = $f.files?.[0];
       if (!file) { log('Pick a .h5ad first.'); return; }
       const mb = (file.size/1048576).toFixed(2);
       $meta.textContent = `Selected: ${file.name} (${mb} MB) | Model genes: ${genes.length} | Classes: ${classes.length}`;
 
-      fileBuf = await readFileWithProgress(file, (pct, mbps)=>{ setUp(pct); setSpd(mbps); });
+      const fileBuf = await readFileWithProgress(file, (pct, mbps)=>{ setUp(pct); setSpd(mbps); });
       setUp(100);
 
       await h5wasm.ready;
       const hf = new h5wasm.File(fileBuf, "r");
-      h5 = hf;
-      varNames = readVarNames(h5);
-      obsNames = readObsNames(h5);
-      shape = readXShape(h5);
-      log(`Cells: ${shape[0]} | Genes(file): ${shape[1]}`);
+      window._h5 = hf;
 
+      const varNames = readVarNames(hf);
+      const obsNames = readObsNames(hf);
+      const shape = readXShape(hf);
+      window._shape = shape; window._varNames = varNames; window._obsNames = obsNames;
+
+      log(`Cells: ${shape[0]} | Genes(file): ${shape[1]}`);
       const vset=new Set(varNames);
       const missing = genes.reduce((k,g)=>k+(vset.has(g)?0:1),0);
       log(`Missing vs model: ${missing}`);
@@ -273,7 +295,7 @@ excerpt: ""
     }
   };
 
-  // ---- Run ----
+  // ===== Run =====
   $run.onclick = async ()=>{
     try{
       setAn(0);
@@ -282,6 +304,17 @@ excerpt: ""
         ort.env.wasm.simd = !$safe.checked;
         ort.env.wasm.numThreads = $safe.checked ? 1 : Math.min((navigator.hardwareConcurrency||4), 8);
         ort.env.wasm.proxy = !$safe.checked;
+      }
+
+      const h5 = window._h5;
+      const genes = window._genes;
+      const classes = window._classes;
+      const shape = window._shape;
+      const varNames = window._varNames;
+      const obsNames = window._obsNames;
+
+      if (!h5 || !genes || !classes || !shape) {
+        log('Load a file first.'); return;
       }
 
       const X = h5.get("X");
