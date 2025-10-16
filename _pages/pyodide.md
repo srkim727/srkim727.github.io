@@ -221,12 +221,136 @@ print("sum:", int(np.array([1,2,3]).sum()))
     }
   });
 
-  // RUN (safer: setStdout / setStderr; optional CSV numeric coercion)
+  // RUN (with staged processing updates)
   $("runBtn").addEventListener("click", async ()=>{
     if(!uploaded){ alert("Load a CSV first."); return; }
     if(!modelReady){ alert("Validate/Load model first."); return; }
     if(!libsReady){ alert("Boot first."); return; }
+    try{
+      $("procProg").value = 5;  $("procStatus").textContent = "Starting…";
+      log("▶️ Running annotation …");
 
-    $("procProg").value = 5;
-    $("procStatus").textContent = "Starting…";
-    log
+      const code = `
+import numpy as np, pandas as pd, gzip, json, os, zipfile, io, sys
+
+def stage(pct, msg):
+    print(f"__STAGE__:{pct}:{msg}")
+    sys.stdout.flush()
+
+def read_any(path):
+    try:
+        return pd.read_csv(gzip.open(path,'rt'), index_col=0)
+    except Exception:
+        return pd.read_csv(path, index_col=0)
+
+stage(10, "Loading input")
+X = read_any('/tmp_input')
+
+stage(20, "Checking model")
+size = os.path.getsize('/tmp_model')
+if size < 1024:
+    raise ValueError(f"Model too small or empty: {size} bytes")
+
+def load_npz_any(path):
+    try:
+        return np.load(path, allow_pickle=True)
+    except Exception as e1:
+        try:
+            with gzip.open(path, 'rb') as fh: data = fh.read()
+            return np.load(io.BytesIO(data), allow_pickle=True)
+        except Exception as e2:
+            raise EOFError(f"Failed to read model as npz. Direct: {e1}; Gzip-fallback: {e2}")
+
+stage(30, "Reading model")
+_npz = load_npz_any('/tmp_model')
+
+stage(40, "Preparing features")
+loaded = {
+    'coef_': _npz['coef_'],
+    'intercept_': _npz['intercept_'],
+    'classes_': _npz['classes_'],
+    'features': _npz['features'] if 'features' in _npz.files else _npz['features_'],
+    'scaler_mean_': _npz['scaler_mean_'],
+    'scaler_scale_': _npz['scaler_scale_'],
+    'with_mean': bool(_npz['with_mean'].flat[0]) if _npz['with_mean'].size else True,
+}
+
+feat_lower = np.char.lower(loaded['features'].astype(str))
+cols_lower = {str(c).lower(): str(c) for c in X.columns.astype(str)}
+present = [cols_lower[g] for g in feat_lower if g in cols_lower]
+if len(present) == 0:
+    raise ValueError('No overlapping features between input and model.')
+
+ordered_cols, keep_mask = [], []
+for g in feat_lower:
+    if g in cols_lower:
+        ordered_cols.append(cols_lower[g]); keep_mask.append(True)
+    else:
+        keep_mask.append(False)
+
+stage(55, "Scaling input")
+coef_keep  = loaded['coef_'][:, keep_mask]
+mean_keep  = loaded['scaler_mean_'][keep_mask]
+scale_keep = loaded['scaler_scale_'][keep_mask]
+X2 = X[ordered_cols].values.astype('float32')
+if loaded['with_mean']:
+    X2 = (X2 - mean_keep) / (scale_keep + 1e-8)
+else:
+    X2 = X2 / (scale_keep + 1e-8)
+X2[X2 > 10] = 10
+
+stage(75, "Computing logits")
+logits = X2 @ coef_keep.T + loaded['intercept_']
+if logits.ndim == 1:
+    logits = np.column_stack([-logits, logits])
+
+stage(85, "Softmax & labels")
+z = logits - logits.max(axis=1, keepdims=True)
+e = np.exp(z); P = e / e.sum(axis=1, keepdims=True)
+idx = np.argmax(P, axis=1)
+labels = loaded['classes_'][idx]
+top = P[np.arange(P.shape[0]), idx]
+part = np.partition(P, -2, axis=1)[:, -2:]
+cert = part[:,1] - part[:,0]
+
+stage(95, "Writing output")
+out = pd.DataFrame({'cell_id': X.index, 'predicted_label': labels, 'conf_score': top, 'cert_score': cert})
+out.to_csv('/pred.csv', index=False)
+print('DONE', X.shape, len(loaded['classes_']))
+`;
+
+      // Hook into staged prints to update the Processing UI
+      const pyRunner = pyodide.runPythonAsync(code, { stdout: (s)=> {
+        if (typeof s === "string" && s.startsWith("__STAGE__:")){
+          const parts = s.trim().split(":");
+          const pct = Math.max(0, Math.min(100, parseInt(parts[1] || "0", 10)));
+          const msg = parts.slice(2).join(":") || "Working…";
+          $("procProg").value = pct;
+          $("procStatus").textContent = msg;
+        } else {
+          log(s);
+        }
+      }});
+
+      await pyRunner;
+      $("procProg").value = 100;
+      $("procStatus").textContent = "Complete";
+
+      const bytes = FS.readFile("/pred.csv");
+      const blob  = new Blob([bytes], { type: "text/csv" });
+      if(resultUrl){ URL.revokeObjectURL(resultUrl); }
+      resultUrl = URL.createObjectURL(blob);
+      $("downloadWrap").style.display = "block";
+      $("downloadLink").href = resultUrl;
+      log("✅ pred.csv ready. Use the link above to download.");
+    }catch(err){
+      $("procStatus").textContent = "❌ Error";
+      log("❌ Run error: " + (err?.message || err));
+    }
+  });
+
+  log("Flow → 1) Boot  2) Ping  3) Validate assets  4) Load file  5) Run");
+})();
+</script>
+
+{% endraw %}
