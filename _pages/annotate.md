@@ -70,9 +70,29 @@ excerpt: ""
   window.addEventListener('error', e => log('Error: ' + e.message));
   window.addEventListener('unhandledrejection', e => log('Promise Rejection: ' + (e.reason?.message || e.reason)));
 
+  // ---------- State ----------
   let genes=null, classes=null, fileBuf=null, h5=null, shape=null, varNames=null, obsNames=null;
-  let ort=null, h5wasm=null, session=null;
 
+  // ---------- Load onnxruntime-web as classic script (CDN + fallback) ----------
+  async function ensureORT() {
+    if (window.ort) return window.ort;
+    await new Promise((resolve, reject) => {
+      const s = document.createElement('script');
+      s.src = "https://cdn.jsdelivr.net/npm/onnxruntime-web/dist/ort.min.js";
+      s.onload = resolve;
+      s.onerror = () => {
+        const s2 = document.createElement('script');
+        s2.src = "https://unpkg.com/onnxruntime-web/dist/ort.min.js";
+        s2.onload = resolve;
+        s2.onerror = reject;
+        document.head.appendChild(s2);
+      };
+      document.head.appendChild(s);
+    });
+    return window.ort;
+  }
+
+  // ---------- Fetch helpers ----------
   async function fetchJson(url, label){
     const r = await fetch(url, {cache:'no-cache'});
     if (!r.ok) throw new Error(label + ' fetch failed: ' + r.status + ' ' + r.statusText + ' ('+url+')');
@@ -93,6 +113,7 @@ excerpt: ""
     return len ? Number(len) : null;
   }
 
+  // ---------- File read with progress + Safari fallback ----------
   async function readFileWithProgress(file, onTick){
     const t0=performance.now();
     if (!$safe.checked && file.stream && typeof file.stream==='function'){
@@ -119,6 +140,9 @@ excerpt: ""
     for (let i=1;i<=10;i++){ onTick && onTick(i*10, avg); await new Promise(r=>setTimeout(r,5)); }
     return new Uint8Array(buf);
   }
+
+  // ---------- h5wasm (lazy import inside handlers) ----------
+  let h5wasm = null;
 
   function readVarNames(h){
     for (const p of ["var/_index","var/index","var/feature_names"]){
@@ -183,13 +207,13 @@ excerpt: ""
       const bytes = await fetchHeadSize(MODEL_URL, 'model.onnx');
       log('model.onnx size: ' + (bytes ? (bytes/1048576).toFixed(2)+' MB' : 'unknown'));
 
-      if (!ort){
-        await import("https://cdn.jsdelivr.net/npm/onnxruntime-web/dist/ort.min.js");
-        ort = window.ort;
+      // ✅ load ORT via classic script
+      const ort = await ensureORT();
+      if (ort.env?.wasm) {
+        ort.env.wasm.simd = !$safe.checked;
+        ort.env.wasm.numThreads = $safe.checked ? 1 : Math.min((navigator.hardwareConcurrency||4), 8);
+        ort.env.wasm.proxy = !$safe.checked;
       }
-      ort.env.wasm.simd = !$safe.checked;
-      ort.env.wasm.numThreads = $safe.checked ? 1 : Math.min((navigator.hardwareConcurrency||4),8);
-      ort.env.wasm.proxy = !$safe.checked;
 
       log('Creating ONNX session (sanity)…');
       const eps = (navigator.gpu && !$safe.checked) ? ["webgpu","wasm"] : ["wasm"];
@@ -232,7 +256,8 @@ excerpt: ""
       setUp(100);
 
       await h5wasm.ready;
-      h5 = new h5wasm.File(fileBuf, "r");
+      const hf = new h5wasm.File(fileBuf, "r");
+      h5 = hf;
       varNames = readVarNames(h5);
       obsNames = readObsNames(h5);
       shape = readXShape(h5);
@@ -252,13 +277,12 @@ excerpt: ""
   $run.onclick = async ()=>{
     try{
       setAn(0);
-      if (!ort){
-        await import("https://cdn.jsdelivr.net/npm/onnxruntime-web/dist/ort.min.js");
-        ort = window.ort;
+      const ort = await ensureORT();
+      if (ort.env?.wasm) {
+        ort.env.wasm.simd = !$safe.checked;
+        ort.env.wasm.numThreads = $safe.checked ? 1 : Math.min((navigator.hardwareConcurrency||4), 8);
+        ort.env.wasm.proxy = !$safe.checked;
       }
-      ort.env.wasm.simd = !$safe.checked;
-      ort.env.wasm.numThreads = $safe.checked ? 1 : Math.min((navigator.hardwareConcurrency||4),8);
-      ort.env.wasm.proxy = !$safe.checked;
 
       const X = h5.get("X");
       const n = shape[0], D = genes.length, C = classes.length;
@@ -279,7 +303,7 @@ excerpt: ""
       setAn(30);
 
       const eps = (navigator.gpu && !$safe.checked) ? ["webgpu","wasm"] : ["wasm"];
-      session = await ort.InferenceSession.create(MODEL_URL, { executionProviders: eps });
+      const session = await ort.InferenceSession.create(MODEL_URL, { executionProviders: eps });
       setAn(40);
 
       const Nbatch = Math.max(2000, Number($batch.value)||8000);
