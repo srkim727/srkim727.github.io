@@ -1,443 +1,356 @@
-/* assets/js/annotate.js */
-(function () {
-  "use strict";
+---
+title: Annotate Cells (Pyodide + Portable CellTypist Model)
+author: Your Name
+date: 2025-10-16
+layout: post
+---
 
-  var $log  = document.getElementById('log');
-  var $boot = document.getElementById('boot');
-  var $validate = document.getElementById('validate');
-  var $load = document.getElementById('load');
-  var $run  = document.getElementById('run');
-  var $ping = document.getElementById('ping');
+{% raw %}
 
-  if (!$log || !$boot) { console.error('annotate.js: missing #log or #boot'); return; }
-  function log(m){ $log.textContent += m + "\n"; $log.scrollTop = $log.scrollHeight; }
-  function errMsg(e){ if (e && e.message) return e.message; if (e && e.type) return e.type; try{return JSON.stringify(e);}catch(_){return String(e);} }
+<!-- Pyodide loader -->
+<script defer src="https://cdn.jsdelivr.net/pyodide/v0.26.3/full/pyodide.js"></script>
 
-  log("🔸 Ready — click **Boot** to initialize.");
+<h2>Annotate Cells from CSV/CSV.GZ (Pyodide, CellTypist-style logistic)</h2>
+<p>
+  Model: <code>/assets/models/level1_model_portable.npz</code><br>
+  Input: cells × genes; 1e4-normalized + <code>log1p</code><br>
+  Output: <code>pred.csv</code>
+</p>
 
-  var ORT = null, H5 = null, booted = false;
+<!-- Five buttons -->
+<div style="display:flex;flex-wrap:wrap;gap:10px;margin-bottom:8px;">
+  <button id="bootBtn" type="button">Boot</button>
+  <button id="pingBtn" type="button" disabled>Ping</button>
+  <button id="validateBtn" type="button" disabled>Validate assets</button>
+  <label for="csvInput" style="display:inline-block;">
+    <input type="file" id="csvInput" accept=".csv,.csv.gz,text/csv" style="display:none;">
+    <button id="loadFileBtn" type="button" disabled>Load file</button>
+  </label>
+  <button id="runBtn" type="button" disabled>Run</button>
+</div>
 
-  var MODEL_URL   = "/assets/models/Level1/model.onnx";
-  var GENES_URL   = "/assets/models/Level1/genes.json";
-  var CLASSES_URL = "/assets/models/Level1/classes.json";
+<!-- Uploading progress -->
+<div style="margin:8px 0 4px 0; font-size:13px; color:#555;">Uploading</div>
+<progress id="uploadProg" max="100" value="0" style="width:100%;"></progress>
+<div id="uploadStatus" style="font-size:12px;color:#777;margin:4px 0 12px 0;">Waiting for file…</div>
 
-  var H5WASM_BASES = [
-    "/assets/libs/h5wasm",
-    "/assets/libs/h5wasm/dist"
-  ];
-  var H5WASM_CDN_BASE = "https://cdn.jsdelivr.net/npm/h5wasm@0.5.0/dist";
+<!-- Processing progress -->
+<div style="margin:8px 0 4px 0; font-size:13px; color:#555;">Processing</div>
+<progress id="procProg" max="100" value="0" style="width:100%;"></progress>
+<div id="procStatus" style="font-size:12px;color:#777;margin:4px 0 8px 0;">Idle</div>
 
-  var $f,$meta,$dl,$upBar,$upPct,$upSpd,$anBar,$anPct,$batch,$safe;
+<p id="downloadWrap" style="display:none;margin-top:8px;">
+  <a id="downloadLink" download="pred.csv">Download pred.csv</a>
+</p>
 
-  function rebind(id, handler){
-    var el = document.getElementById(id);
-    if (!el) { log("⚠️ Missing element #"+id); return null; }
-    var clone = el.cloneNode(true);
-    el.parentNode.replaceChild(clone, el);
-    clone.addEventListener('click', function(ev){ try{handler(ev);}catch(e){log('🛑 '+id+' error: '+errMsg(e));console.error(e);} });
-    return clone;
+<details open style="margin-top:10px;">
+  <summary><strong>Log</strong></summary>
+  <pre id="log" style="
+    background:#0a0f17;
+    color:#e8eef7;
+    padding:6px;
+    border-radius:6px;
+    overflow:auto;
+    height:220px;
+    white-space:pre-wrap;
+    font-size:11px;
+    line-height:1.25;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace;">
+  </pre>
+</details>
+
+<script>
+(function(){
+  // Helpers
+  function $(id){ return document.getElementById(id); }
+  function setDisabled(elOrId, v){ const el = typeof elOrId==="string" ? $(elOrId) : elOrId; if(el) el.disabled = !!v; }
+  function log(m){
+    const el = $("log"); if(!el) return;
+    el.textContent += (m + "\n");
+    const MAX_LINES = 300;
+    const lines = el.textContent.split("\n");
+    if (lines.length > MAX_LINES){ el.textContent = lines.slice(-MAX_LINES).join("\n"); }
+    el.scrollTop = el.scrollHeight;
   }
-
-  function ensureORT(){
-    if (window.ort) return Promise.resolve(window.ort);
-    return new Promise(function(resolve,reject){
-      var s=document.createElement('script');
-      s.src="https://cdn.jsdelivr.net/npm/onnxruntime-web/dist/ort.min.js";
-      s.onload=function(){ resolve(window.ort); };
-      s.onerror=function(){
-        var s2=document.createElement('script');
-        s2.src="https://unpkg.com/onnxruntime-web/dist/ort.min.js";
-        s2.onload=function(){ resolve(window.ort); };
-        s2.onerror=function(ev){ reject(new Error("onnxruntime-web failed ("+(ev&&ev.type||"error")+")")); };
-        document.head.appendChild(s2);
+  function waitForGlobal(fnName, timeoutMs){
+    return new Promise((resolve, reject)=>{
+      const t0 = performance.now();
+      (function check(){
+        if (typeof globalThis[fnName] === "function") return resolve();
+        if (performance.now() - t0 > timeoutMs) return reject(new Error("Timeout waiting for "+fnName));
+        setTimeout(check, 100);
+      })();
+    });
+  }
+  function readFileWithProgress(file){
+    return new Promise((resolve, reject)=>{
+      const reader = new FileReader();
+      let last = performance.now(), lastLoaded = 0;
+      reader.onprogress = (e)=>{
+        if(e.lengthComputable){
+          const pct = Math.round((e.loaded/e.total)*100);
+          $("uploadProg").value = pct;
+          const now = performance.now();
+          const rate = (e.loaded-lastLoaded)/((now-last)/1000); // bytes/s
+          $("uploadStatus").textContent = `Reading: ${pct}% • ${(rate/1048576).toFixed(2)} MB/s`;
+          last = now; lastLoaded = e.loaded;
+        }
       };
-      document.head.appendChild(s);
+      reader.onload  = ()=> resolve(new Uint8Array(reader.result));
+      reader.onerror = ()=> reject(reader.error || new Error("FileReader error"));
+      reader.readAsArrayBuffer(file);
     });
   }
 
-  function probeJs(url){
-    return fetch(url, {cache:"no-cache"}).then(function(r){
-      if (!r.ok) throw new Error("HTTP "+r.status+" "+r.statusText);
-      return r.text().then(function(txt){
-        var head = txt.slice(0,512).toLowerCase();
-        if (head.indexOf("<!doctype")>=0 || head.indexOf("<html")>=0) {
-          throw new Error("Looks like HTML, not JS");
-        }
-        if (txt.length < 50) throw new Error("Suspiciously short JS");
-        return true;
-      });
-    });
-  }
+  // State
+  const MODEL_URL = "/assets/models/level1_model_portable.npz";
+  let pyodide=null, FS=null;
+  let pyReady=false, libsReady=false, modelReady=false, uploaded=false;
+  let resultUrl=null;
 
-  var _h5 = null;
+  // BOOT
+  $("bootBtn").addEventListener("click", async ()=>{
+    try{
+      setDisabled("bootBtn", true);
+      log("⏳ Boot: waiting for pyodide.js …");
+      await waitForGlobal("loadPyodide", 20000);
 
-  function tryLocalBase(base){
-    base = base.replace(/\/+$/,'');
-    var esm = base + "/esm/h5wasm.js";
-    var umd = base + "/h5wasm.js";
+      log("⏳ Boot: initializing Pyodide…");
+      pyodide = await globalThis.loadPyodide({ indexURL: "https://cdn.jsdelivr.net/pyodide/v0.26.3/full/" });
+      FS = pyodide.FS;
+      pyReady = true;
+      log("✅ Pyodide " + pyodide.version + " loaded.");
 
-    return probeJs(esm).then(function(){
-      log("h5wasm: ESM probe OK at "+esm);
-      var abs = location.origin + esm;
-      return import(abs).then(function(ns){
-        log("h5wasm: loaded ESM from "+base);
-        _h5 = ns;
-        return {ns:ns, mode:"esm", base:base};
-      });
-    }).catch(function(){
-      return probeJs(umd).then(function(){
-        log("h5wasm: UMD probe OK at "+umd);
-        return new Promise(function(resolve,reject){
-          var s=document.createElement("script");
-          s.src = umd;
-          s.async = true;
-          s.onload = function(){
-            if (!window.h5wasm) { reject(new Error("window.h5wasm undefined after UMD load")); return; }
-            if (window.h5wasm.setWasmPath) {
-              window.h5wasm.setWasmPath(base + "/");
-              log("h5wasm.setWasmPath("+base+"/)");
-            }
-            log("h5wasm: loaded UMD from "+base);
-            _h5 = window.h5wasm;
-            resolve({ns:window.h5wasm, mode:"umd", base:base});
-          };
-          s.onerror = function(ev){ reject(new Error("UMD script load failed ("+(ev&&ev.type||"error")+")")); };
-          document.head.appendChild(s);
-        });
-      });
-    });
-  }
+      log("⏳ Boot: loading packages (numpy, pandas) …");
+      await pyodide.loadPackage(["numpy","pandas"]);
+      log("✅ Packages loaded.");
 
-  function tryCdnUmd(){
-    var umd = H5WASM_CDN_BASE + "/h5wasm.js";
-    log("h5wasm: falling back to CDN UMD: "+umd);
-    return probeJs(umd).then(function(){
-      return new Promise(function(resolve,reject){
-        var s=document.createElement("script");
-        s.src=umd; s.async=true;
-        s.onload=function(){
-          if (!window.h5wasm) { reject(new Error("window.h5wasm undefined after CDN UMD")); return; }
-          if (window.h5wasm.setWasmPath) {
-            window.h5wasm.setWasmPath(H5WASM_CDN_BASE + "/");
-            log("h5wasm.setWasmPath("+H5WASM_CDN_BASE+"/)");
-          }
-          _h5 = window.h5wasm;
-          log("h5wasm: loaded UMD from CDN");
-          resolve({ns:window.h5wasm, mode:"umd", base:H5WASM_CDN_BASE});
-        };
-        s.onerror=function(ev){ reject(new Error("CDN UMD load failed ("+(ev&&ev.type||"error")+")")); };
-        document.head.appendChild(s);
-      });
-    });
-  }
-
-  function ensureH5Wasm(){
-    if (_h5) return Promise.resolve(_h5);
-    var chain = Promise.reject(new Error("start"));
-    for (var i=0;i<H5WASM_BASES.length;i++){
-      (function(b){ chain = chain.catch(function(){ return tryLocalBase(b); }); })(H5WASM_BASES[i]);
+      log("⏳ Boot: importing numpy/pandas/gzip …");
+      await pyodide.runPythonAsync("import numpy as np, pandas as pd, gzip, io, json, os");
+      libsReady = true;
+      log("✅ Python libs imported.");
+      setDisabled("pingBtn", false);
+      setDisabled("validateBtn", false);
+      setDisabled("loadFileBtn", false);
+    }catch(err){
+      log("❌ Boot failed: " + (err?.message || err));
+      setDisabled("bootBtn", false);
+      return;
     }
-    return chain.catch(function(){ return tryCdnUmd(); })
-                .then(function(hit){ return hit.ns; })
-                .catch(function(e){
-                  throw new Error("h5wasm not found locally or via CDN — "+errMsg(e));
-                });
-  }
+    setDisabled("bootBtn", false);
+  });
 
-  function fetchJson(url, label){
-    return fetch(url, {cache:'no-cache'}).then(function(r){
-      if (!r.ok) throw new Error(label+" fetch failed: "+r.status+" "+r.statusText+" ("+url+")");
-      return r.json();
-    });
-  }
-  function fetchHeadSize(url, label){
-    return fetch(url, {method:'HEAD', cache:'no-cache'}).then(function(h){
-      if (h.ok) {
-        var len = h.headers.get('content-length');
-        if (len) return Number(len);
-      }
-      return fetch(url, {method:'GET', cache:'no-cache'}).then(function(r){
-        if (!r.ok) throw new Error(label+" fetch failed: "+r.status+" "+r.statusText+" ("+url+")");
-        var len2 = r.headers.get('content-length');
-        if (r.body && typeof r.body.cancel==="function") { try{ r.body.cancel(); }catch(_e){} }
-        return len2 ? Number(len2) : null;
-      });
-    });
-  }
-
-  function readFileWithProgress(file, onTick){
-    var t0 = performance.now();
-    var safe = $safe && $safe.checked;
-    if (!safe && file.stream && typeof file.stream === "function"){
-      var reader = file.stream().getReader();
-      var chunks=[], rec=0, lastT=t0, lastB=0;
-      function pump(){
-        return reader.read().then(function(res){
-          if (res.done){
-            return new Blob(chunks).arrayBuffer().then(function(buf){
-              var avg = (rec/1048576)/((performance.now()-t0)/1000||1);
-              if (onTick) onTick(100, avg);
-              return new Uint8Array(buf);
-            });
-          }
-          chunks.push(res.value); rec+=res.value.byteLength;
-          var now=performance.now(), dt=(now-lastT)/1000, dB=rec-lastB;
-          var mbps = dt>0 ? (dB/1048576)/dt : 0;
-          if (onTick) onTick(rec/file.size*100, mbps);
-          lastT=now; lastB=rec; return pump();
-        });
-      }
-      return pump();
-    } else {
-      var t1 = performance.now();
-      return file.arrayBuffer().then(function(buf){
-        var avg = (buf.byteLength/1048576)/((performance.now()-t1)/1000||1);
-        var i=1;
-        function step(){ if (i>10) return Promise.resolve(); if (onTick) onTick(i*10, avg); i++; return new Promise(function(r){setTimeout(r,5);}).then(step); }
-        return step().then(function(){ return new Uint8Array(buf); });
-      });
+  // PING
+  $("pingBtn").addEventListener("click", async ()=>{
+    if(!pyReady){ alert("Boot first."); return; }
+    try{
+      log("🔔 Ping: Python sanity check …");
+      const out = await pyodide.runPythonAsync(`
+import numpy as np, pandas as pd
+print("numpy", np.__version__)
+print("pandas", pd.__version__)
+print("sum:", int(np.array([1,2,3]).sum()))
+"OK"
+      `);
+      log("✅ Ping OK: " + out);
+    }catch(err){
+      log("❌ Ping failed: " + (err?.message || err));
     }
-  }
+  });
 
-  function readVarNames(h){
-    var paths=["var/_index","var/index","var/feature_names"];
-    for (var i=0;i<paths.length;i++){
-      var ds=h.get(paths[i]);
-      if (ds && ds.isDataset){
-        var arr = (typeof ds.toArray==="function") ? ds.toArray() : ds.value;
-        var out=[], k, x;
-        for (k=0;k<arr.length;k++){ x=arr[k]; out.push(typeof x==="string"?x:(x&&x.toString?x.toString():String(x))); }
-        return out;
-      }
+  // VALIDATE MODEL (GET + basic checks)
+  $("validateBtn").addEventListener("click", async ()=>{
+    async function fetchModel(url){
+      const resp = await fetch(url, { cache: "no-store" });
+      if(!resp.ok) throw new Error("HTTP " + resp.status);
+      const buf = new Uint8Array(await resp.arrayBuffer());
+      return { buf, sizeHeader: resp.headers.get("content-length") };
     }
-    throw new Error("Cannot find var index");
-  }
-  function readObsNames(h){
-    var paths=["obs/_index","obs/index","obs/names"];
-    for (var i=0;i<paths.length;i++){
-      var ds=h.get(paths[i]);
-      if (ds && ds.isDataset){
-        var arr = (typeof ds.toArray==="function") ? ds.toArray() : ds.value;
-        var out=[], k, x;
-        for (k=0;k<arr.length;k++){ x=arr[k]; out.push(typeof x==="string"?x:(x&&x.toString?x.toString():String(x))); }
-        return out;
+    try{
+      log("🔎 Validate: GET " + MODEL_URL + " …");
+      let { buf, sizeHeader } = await fetchModel(MODEL_URL);
+
+      const magicOk = (buf.length >= 4 && buf[0]===0x50 && buf[1]===0x4B && buf[2]===0x03 && buf[3]===0x04);
+      if(!magicOk){
+        log("⚠️ Not a ZIP magic; retrying (cache-bust) …");
+        ({ buf, sizeHeader } = await fetchModel(MODEL_URL + "?t=" + Date.now()));
       }
+      if(!(buf.length >= 4 && buf[0]===0x50 && buf[1]===0x4B && buf[2]===0x03 && buf[3]===0x04)){
+        throw new Error("Model is not a valid .npz (ZIP magic missing). Bytes=" + buf.length);
+      }
+
+      FS.writeFile("/tmp_model", buf);
+      modelReady = true;
+      log(`✅ Model written to /tmp_model (${(buf.length/1e6).toFixed(2)} MB)`);
+      $("uploadStatus").textContent = "Waiting for file…";
+      setDisabled("runBtn", !uploaded);
+    }catch(err){
+      modelReady = false;
+      setDisabled("runBtn", true);
+      log("❌ Validate failed: " + (err?.message || err));
     }
-    var n = readXShape(h)[0]; var names=new Array(n); for (var j=0;j<n;j++) names[j]="cell_"+j; return names;
-  }
-  function readXShape(h){
-    var X=h.get("X");
-    if (X && X.isDataset) return X.shape;
-    var s=h.get("X/shape") ? h.get("X/shape").value : [0,0];
-    return [Number(s[0]), Number(s[1])];
-  }
-  function pickDense(denseFlat, shape, varNames, genes){
-    var n=shape[0], d=shape[1], D=genes.length, out=new Float32Array(n*D);
-    var idx={}, i,j;
-    for (i=0;i<varNames.length;i++) idx[varNames[i]]=i;
-    var map=new Array(D); for (j=0;j<D;j++) map[j]= idx.hasOwnProperty(genes[j]) ? idx[genes[j]] : null;
-    for (j=0;j<D;j++){ var cj=map[j]; if (cj===null) continue; var base=0; for (i=0;i<n;i++,base+=d) out[i*D+j]=denseFlat[base+cj]; }
-    return out;
-  }
-  function pickCSR(data, indices, indptr, shape, varNames, genes){
-    var n=shape[0], D=genes.length, out=new Float32Array(n*D), i;
-    var colPos={}, wanted={};
-    for (i=0;i<varNames.length;i++) colPos[varNames[i]]=i;
-    for (i=0;i<D;i++){ var cj = colPos.hasOwnProperty(genes[i]) ? colPos[genes[i]] : null; if (cj!==null) wanted[cj]=i; }
-    for (var r=0;r<n;r++){ var a=indptr[r], b=indptr[r+1]; for (var k=a;k<b;k++){ var cj2=indices[k]; var j=wanted.hasOwnProperty(cj2)?wanted[cj2]:null; if (j!==null) out[r*D+j]=data[k]; } }
-    return out;
-  }
+  });
 
-  function boot(){
-    if (booted) { $log.textContent=""; log("🔁 Rebooting …"); }
-    if ($ping) $ping.disabled=false; if ($validate) $validate.disabled=false; if ($load) $load.disabled=false; if ($run) $run.disabled=false;
+  // LOAD FILE (choose & upload)
+  $("loadFileBtn").addEventListener("click", ()=>{
+    if(!pyReady){ alert("Boot first."); return; }
+    $("csvInput").click();
+  });
 
-    $f=document.getElementById('file'); $meta=document.getElementById('meta'); $dl=document.getElementById('download');
-    $upBar=document.getElementById('upBar'); $upPct=document.getElementById('upPct'); $upSpd=document.getElementById('upSpd');
-    $anBar=document.getElementById('anBar'); $anPct=document.getElementById('anPct'); $batch=document.getElementById('batch'); $safe=document.getElementById('safe');
+  $("csvInput").addEventListener("change", async (e)=>{
+    const f = e.target.files && e.target.files[0];
+    if(!f){ return; }
+    try{
+      log("📁 Selected: " + f.name);
+      $("uploadProg").value = 0;
+      $("uploadStatus").textContent = "Reading…";
+      const bytes = await readFileWithProgress(f);
+      FS.writeFile("/tmp_input", bytes);
+      uploaded = true;
+      $("uploadProg").value = 100;
+      $("uploadStatus").textContent = `✅ Upload complete • ${(bytes.length/1e6).toFixed(2)} MB`;
+      log(`📤 Loaded into FS → /tmp_input (${(bytes.length/1e6).toFixed(2)} MB)`);
+      setDisabled("runBtn", !(uploaded && modelReady));
+      if(!modelReady) log("ℹ️ Validate assets to load model, then Run will enable.");
+    }catch(err){
+      uploaded = false;
+      $("uploadProg").value = 0;
+      $("uploadStatus").textContent = "❌ Upload failed";
+      setDisabled("runBtn", true);
+      log("❌ File load failed: " + (err?.message || err));
+    }
+  });
 
-    function setUp(v){ $upBar.value=v; $upPct.textContent=Math.round(v)+"%"; }
-    function setSpd(v){ $upSpd.textContent=(v||0).toFixed(2)+" MB/s"; }
-    function setAn(v){ $anBar.value=v; $anPct.textContent=Math.round(v)+"%"; }
+  // RUN (with staged processing updates)
+  $("runBtn").addEventListener("click", async ()=>{
+    if(!uploaded){ alert("Load a CSV first."); return; }
+    if(!modelReady){ alert("Validate/Load model first."); return; }
+    if(!libsReady){ alert("Boot first."); return; }
+    try{
+      $("procProg").value = 5;  $("procStatus").textContent = "Starting…";
+      log("▶️ Running annotation …");
 
-    window.addEventListener('error', function(e){ log('Error: '+errMsg(e)); });
-    window.addEventListener('unhandledrejection', function(e){ log('Promise Rejection: '+errMsg(e.reason)); });
+      const code = `
+import numpy as np, pandas as pd, gzip, json, os, zipfile, io, sys
 
-    rebind('ping', function(){ log('🏓 Ping OK — handlers are attached.'); });
+def stage(pct, msg):
+    print(f"__STAGE__:{pct}:{msg}")
+    sys.stdout.flush()
 
-    // ---------- FIXED: use real D (= genes.length) for dummy validation run ----------
-    rebind('validate', function(){
-      log('▶ Validate clicked');
-      var genesLen = 0;
-      fetchJson(GENES_URL,'genes.json').then(function(g){
-        genesLen = g.length;
-        log('OK genes: '+genesLen);
-        return fetchJson(CLASSES_URL,'classes.json');
-      }).then(function(c){
-        log('OK classes: '+c.length);
-        return fetchHeadSize(MODEL_URL,'model.onnx');
-      }).then(function(bytes){
-        log('model.onnx size: '+(bytes?(bytes/1048576).toFixed(2)+' MB':'unknown'));
-        return ensureORT();
-      }).then(function(ortNs){
-        ORT=ortNs;
-        if (ORT && ORT.env && ORT.env.wasm){
-          ORT.env.wasm.simd = !($safe && $safe.checked);
-          ORT.env.wasm.numThreads = ($safe && $safe.checked) ? 1 : Math.min((navigator.hardwareConcurrency||4),8);
-          ORT.env.wasm.proxy = !($safe && $safe.checked);
-        }
-        var eps=(navigator.gpu && !($safe && $safe.checked))?["webgpu","wasm"]:["wasm"];
-        log('Creating ONNX session (sanity)…');
-        return ORT.InferenceSession.create(MODEL_URL,{executionProviders:eps}).then(function(test){
-          // >>> USE CORRECT SHAPE: [1, D]
-          var D = genesLen;
-          var zeros = new ORT.Tensor('float32', new Float32Array(D), [1, D]);
-          var inputs={}; inputs[test.inputNames[0]]=zeros;
-          return test.run(inputs).then(function(out){
-            var any = out[test.outputNames[0]]; 
-            if (!any){ for (var k in out){ if (Object.prototype.hasOwnProperty.call(out,k)){ any=out[k]; break; } }
-            }
-            log('Dummy inference ok. Output len: '+(any&&any.data?any.data.length:'unknown'));
-            log('✅ Assets validate successfully.');
-          });
-        });
-      }).catch(function(e){
-        log('🛑 Validate failed: '+errMsg(e));
-        log('Hint: open these URLs in a new tab to verify:');
-        log(' - '+GENES_URL);
-        log(' - '+CLASSES_URL);
-        log(' - '+MODEL_URL);
-      });
-    });
+def read_any(path):
+    try:
+        return pd.read_csv(gzip.open(path,'rt'), index_col=0)
+    except Exception:
+        return pd.read_csv(path, index_col=0)
 
-    rebind('load', function(){
-      if ($dl) $dl.innerHTML=''; $log.textContent=''; setUp(0); setSpd(0); setAn(0); if ($run) $run.disabled=true;
+stage(10, "Loading input")
+X = read_any('/tmp_input')
 
-      ensureH5Wasm().then(function(ns){
-        H5=ns;
-        return fetchJson(GENES_URL,'genes.json');
-      }).then(function(genes){
-        window._genes=genes; log('genes: '+genes.length);
-        return fetchJson(CLASSES_URL,'classes.json');
-      }).then(function(classes){
-        window._classes=classes; log('classes: '+classes.length);
-        var file = $f && $f.files && $f.files[0];
-        if (!file){ log('Pick a .h5ad first.'); throw new Error("no file"); }
-        var mb=(file.size/1048576).toFixed(2);
-        if ($meta) $meta.textContent="Selected: "+file.name+" ("+mb+" MB) | Model genes: "+window._genes.length+" | Classes: "+window._classes.length;
+stage(20, "Checking model")
+size = os.path.getsize('/tmp_model')
+if size < 1024:
+    raise ValueError(f"Model too small or empty: {size} bytes")
 
-        return readFileWithProgress(file, function(pct,mbps){ setUp(pct); setSpd(mbps); }).then(function(fileBuf){
-          setUp(100);
-          return H5.ready.then(function(){
-            var hf;
-            try { hf=new H5.File(fileBuf,"r"); }
-            catch (openErr){ log("If this fails on first visit, the .wasm may be cached/blocked. Try hard refresh (Ctrl/Cmd+Shift+R)."); throw openErr; }
-            window._h5=hf;
-            var varNames=readVarNames(hf), obsNames=readObsNames(hf), shape=readXShape(hf);
-            window._shape=shape; window._varNames=varNames; window._obsNames=obsNames;
-            log("Cells: "+shape[0]+" | Genes(file): "+shape[1]);
-            var vset={}, i, missing=0;
-            for (i=0;i<varNames.length;i++) vset[varNames[i]]=true;
-            for (i=0;i<window._genes.length;i++) if (!vset[window._genes[i]]) missing++;
-            log("Missing vs model: "+missing);
-            if ($run) $run.disabled=false;
-          });
-        });
-      }).catch(function(e){
-        if (String(e)==="Error: no file") return;
-        log('🛑 Load failed: '+errMsg(e)); console.error(e);
-      });
-    });
+def load_npz_any(path):
+    try:
+        return np.load(path, allow_pickle=True)
+    except Exception as e1:
+        try:
+            with gzip.open(path, 'rb') as fh: data = fh.read()
+            return np.load(io.BytesIO(data), allow_pickle=True)
+        except Exception as e2:
+            raise EOFError(f"Failed to read model as npz. Direct: {e1}; Gzip-fallback: {e2}")
 
-    rebind('run', function(){
-      function setAn(v){ $anBar.value=v; $anPct.textContent=Math.round(v)+"%"; }
-      setAn(0);
-      ensureORT().then(function(ortNs){
-        ORT=ortNs;
-        if (ORT && ORT.env && ORT.env.wasm){
-          ORT.env.wasm.simd = !($safe && $safe.checked);
-          ORT.env.wasm.numThreads = ($safe && $safe.checked) ? 1 : Math.min((navigator.hardwareConcurrency||4),8);
-          ORT.env.wasm.proxy = !($safe && $safe.checked);
-        }
+stage(30, "Reading model")
+_npz = load_npz_any('/tmp_model')
 
-        var h5=window._h5, genes=window._genes, classes=window._classes, shape=window._shape, varNames=window._varNames, obsNames=window._obsNames;
-        if (!h5 || !genes || !classes || !shape) throw new Error("Load a file first.");
+stage(40, "Preparing features")
+loaded = {
+    'coef_': _npz['coef_'],
+    'intercept_': _npz['intercept_'],
+    'classes_': _npz['classes_'],
+    'features': _npz['features'] if 'features' in _npz.files else _npz['features_'],
+    'scaler_mean_': _npz['scaler_mean_'],
+    'scaler_scale_': _npz['scaler_scale_'],
+    'with_mean': bool(_npz['with_mean'].flat[0]) if _npz['with_mean'].size else True,
+}
 
-        var X=h5.get("X");
-        var n=shape[0], D=genes.length, C=classes.length, feats;
-        if (X && X.isDataset){
-          var arr=X.value; var denseF32=(arr instanceof Float32Array)?arr:new Float32Array(arr);
-          feats=pickDense(denseF32, shape, varNames, genes);
+feat_lower = np.char.lower(loaded['features'].astype(str))
+cols_lower = {str(c).lower(): str(c) for c in X.columns.astype(str)}
+present = [cols_lower[g] for g in feat_lower if g in cols_lower]
+if len(present) == 0:
+    raise ValueError('No overlapping features between input and model.')
+
+ordered_cols, keep_mask = [], []
+for g in feat_lower:
+    if g in cols_lower:
+        ordered_cols.append(cols_lower[g]); keep_mask.append(True)
+    else:
+        keep_mask.append(False)
+
+stage(55, "Scaling input")
+coef_keep  = loaded['coef_'][:, keep_mask]
+mean_keep  = loaded['scaler_mean_'][keep_mask]
+scale_keep = loaded['scaler_scale_'][keep_mask]
+X2 = X[ordered_cols].values.astype('float32')
+if loaded['with_mean']:
+    X2 = (X2 - mean_keep) / (scale_keep + 1e-8)
+else:
+    X2 = X2 / (scale_keep + 1e-8)
+X2[X2 > 10] = 10
+
+stage(75, "Computing logits")
+logits = X2 @ coef_keep.T + loaded['intercept_']
+if logits.ndim == 1:
+    logits = np.column_stack([-logits, logits])
+
+stage(85, "Softmax & labels")
+z = logits - logits.max(axis=1, keepdims=True)
+e = np.exp(z); P = e / e.sum(axis=1, keepdims=True)
+idx = np.argmax(P, axis=1)
+labels = loaded['classes_'][idx]
+top = P[np.arange(P.shape[0]), idx]
+part = np.partition(P, -2, axis=1)[:, -2:]
+cert = part[:,1] - part[:,0]
+
+stage(95, "Writing output")
+out = pd.DataFrame({'cell_id': X.index, 'predicted_label': labels, 'conf_score': top, 'cert_score': cert})
+out.to_csv('/pred.csv', index=False)
+print('DONE', X.shape, len(loaded['classes_']))
+`;
+
+      // Hook into staged prints to update the Processing UI
+      const pyRunner = pyodide.runPythonAsync(code, { stdout: (s)=> {
+        if (typeof s === "string" && s.startsWith("__STAGE__:")){
+          const parts = s.trim().split(":");
+          const pct = Math.max(0, Math.min(100, parseInt(parts[1] || "0", 10)));
+          const msg = parts.slice(2).join(":") || "Working…";
+          $("procProg").value = pct;
+          $("procStatus").textContent = msg;
         } else {
-          var data=X.get('data').value, indices=X.get('indices').value, indptr=X.get('indptr').value;
-          var dataF32=(data instanceof Float32Array)?data:new Float32Array(data);
-          var idxI32=(indices instanceof Int32Array)?indices:new Int32Array(indices);
-          var ptrI32=(indptr instanceof Int32Array)?indptr:new Int32Array(indptr);
-          feats=pickCSR(dataF32, idxI32, ptrI32, shape, varNames, genes);
+          log(s);
         }
-        setAn(30);
+      }});
 
-        var eps=(navigator.gpu && !($safe && $safe.checked))?["webgpu","wasm"]:["wasm"];
-        return ORT.InferenceSession.create(MODEL_URL,{executionProviders:eps}).then(function(session){
-          setAn(40);
-          var batchVal=Number($batch && $batch.value); var Nbatch=(batchVal && batchVal>=2000)?batchVal:8000;
-          var probs=new Float32Array(n*C), start=0;
+      await pyRunner;
+      $("procProg").value = 100;
+      $("procStatus").textContent = "Complete";
 
-          function step(){
-            if (start>=n) return Promise.resolve();
-            var end=Math.min(n, start+Nbatch);
-            var view=feats.subarray(start*D, end*D);
-            var t=new ORT.Tensor('float32', view, [end-start, D]);
-            var inputs={}; inputs[session.inputNames[0]]=t;
+      const bytes = FS.readFile("/pred.csv");
+      const blob  = new Blob([bytes], { type: "text/csv" });
+      if(resultUrl){ URL.revokeObjectURL(resultUrl); }
+      resultUrl = URL.createObjectURL(blob);
+      $("downloadWrap").style.display = "block";
+      $("downloadLink").href = resultUrl;
+      log("✅ pred.csv ready. Use the link above to download.");
+    }catch(err){
+      $("procStatus").textContent = "❌ Error";
+      log("❌ Run error: " + (err?.message || err));
+    }
+  });
 
-            return session.run(inputs).then(function(out){
-              var part=null, i,j;
-              if (out.probabilities) {
-                part = out.probabilities.data;
-              } else if (out.logits) {
-                part = new Float32Array((end-start)*C);
-                for (i=0;i<end-start;i++){
-                  var mx=-1e30;
-                  for (j=0;j<C;j++){ var v=out.logits.data[i*C+j]; if (v>mx) mx=v; }
-                  var s=0;
-                  for (j=0;j<C;j++){ var e=Math.exp(out.logits.data[i*C+j]-mx); part[i*C+j]=e; s+=e; }
-                  for (j=0;j<C;j++){ part[i*C+j]/=s; }
-                }
-              } else { throw new Error("ONNX outputs missing probabilities/logits"); }
-              probs.set(part, start*C);
-              setAn(40+50*(end/n));
-              start=end;
-              return new Promise(function(r){ setTimeout(r,0); }).then(step);
-            });
-          }
-
-          return step().then(function(){
-            var header=["cell_id","Level1|predicted_labels","Level1|conf_score","Level1|cert_score"];
-            var lines=new Array(n+1); lines[0]=header.join(",");
-            for (var i=0;i<n;i++){
-              var best=-1,bj=-1,sum=0,base=i*C,j;
-              for (j=0;j<C;j++){ var pv=probs[base+j]; sum+=pv; if (pv>best){best=pv; bj=j;} }
-              lines[i+1]=[obsNames[i], classes[bj], String(best), String(best/(sum||1))].join(",");
-            }
-            var csv=lines.join("\n");
-            var blob=new Blob([csv],{type:"text/csv"});
-            var url=URL.createObjectURL(blob);
-            var a=document.createElement('a'); a.href=url; a.download='pred.csv';
-            $dl.innerHTML=''; $dl.appendChild(a); a.click(); URL.revokeObjectURL(url);
-            setAn(100); log('✅ Done.');
-          });
-        });
-      }).catch(function(e){
-        log('🛑 Run failed: '+errMsg(e)); console.error(e);
-      });
-    });
-
-    log("✅ Boot complete.");
-    log("UA: "+navigator.userAgent);
-    log("WebGPU: "+ (!!navigator.gpu));
-    log("Cores: "+ (navigator.hardwareConcurrency || 'n/a'));
-    booted = true;
-  }
-
-  $boot.addEventListener('click', function(){ try{ boot(); }catch(e){ log('🛑 Boot failed: '+errMsg(e)); console.error(e); } });
+  log("Flow → 1) Boot  2) Ping  3) Validate assets  4) Load file  5) Run");
 })();
+</script>
+
+{% endraw %}
