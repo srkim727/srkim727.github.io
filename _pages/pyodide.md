@@ -7,22 +7,22 @@ layout: post
 
 {% raw %}
 
-<!-- Robust global loader for Pyodide; the JS below waits for it before booting. -->
-<script defer src="https://cdn.jsdelivr.net/pyodide/v0.26.3/full/pyodide.js" id="pyodideScript"></script>
+<!-- Load Pyodide globally; the JS waits for loadPyodide to exist -->
+<script defer src="https://cdn.jsdelivr.net/pyodide/v0.26.3/full/pyodide.js"></script>
 
 <h2>Annotate Cells from CSV/CSV.GZ (Pyodide, CellTypist-style logistic)</h2>
 <p>
   Model path: <code>/assets/models/level1_model_portable.npz</code><br>
-  Input: cells × genes; already 1e4-normalized + <code>log1p</code>.<br>
+  Input: cells × genes; already 1e4-normalized + <code>log1p</code><br>
   Output: <code>pred.csv</code> (<code>cell_id, predicted_label, conf_score, cert_score</code>).
 </p>
 
-<!-- Controls (exactly five buttons, in order) -->
+<!-- Exactly five buttons in order -->
 <div style="display:flex;flex-wrap:wrap;gap:10px;margin-bottom:8px;">
   <button id="bootBtn" type="button">Boot</button>
   <button id="pingBtn" type="button" disabled>Ping</button>
   <button id="validateBtn" type="button" disabled>Validate assets</button>
-  <label for="csvInput" class="buttonlike" style="display:inline-block;">
+  <label for="csvInput" style="display:inline-block;">
     <input type="file" id="csvInput" accept=".csv,.csv.gz,text/csv" style="display:none;">
     <button id="loadFileBtn" type="button" disabled>Load file</button>
   </label>
@@ -39,28 +39,49 @@ layout: post
 
 <details open style="margin-top:10px;">
   <summary><strong>Boot & run log</strong></summary>
-  <pre id="log" style="background:#0a0f17;color:#e8eef7;padding:10px;border-radius:6px;overflow:auto;height:320px;white-space:pre-wrap;"></pre>
+  <pre id="log" style="
+    background:#0a0f17;
+    color:#e8eef7;
+    padding:6px;
+    border-radius:6px;
+    overflow:auto;
+    height:220px;            /* smaller height */
+    white-space:pre-wrap;
+    font-size:11px;          /* compact font */
+    line-height:1.25;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace;">
+  </pre>
 </details>
 
 <script>
 (function(){
-  // --- Helpers ---
+  // Helpers
   function $(id){ return document.getElementById(id); }
-  function log(m){ const el=$("log"); el.textContent += m + "\\n"; el.scrollTop = el.scrollHeight; }
-  function setDisabled(elOrId, v){
-    const el = typeof elOrId==="string" ? $(elOrId) : elOrId;
-    if(el) el.disabled = !!v;
+  function setDisabled(elOrId, v){ const el = typeof elOrId==="string" ? $(elOrId) : elOrId; if(el) el.disabled = !!v; }
+
+  // Compact logger with circular buffer (keep last N lines)
+  function log(m){
+    const el = $("log"); if(!el) return;
+    el.textContent += (m + "\n");
+    const MAX_LINES = 300; // adjust if you want a smaller/larger buffer
+    const lines = el.textContent.split("\n");
+    if (lines.length > MAX_LINES){
+      el.textContent = lines.slice(-MAX_LINES).join("\n");
+    }
+    el.scrollTop = el.scrollHeight;
   }
+
   function waitForGlobal(fnName, timeoutMs){
     return new Promise((resolve, reject)=>{
       const t0 = performance.now();
       (function check(){
         if (typeof globalThis[fnName] === "function") return resolve();
-        if (performance.now() - t0 > timeoutMs) return reject(new Error("Timeout waiting for "+fnName));
+        if (performance.now() - t0 > timeoutMs) return reject(new Error("Timeout waiting for " + fnName));
         setTimeout(check, 100);
       })();
     });
   }
+
   function readFileWithProgress(file){
     return new Promise((resolve, reject)=>{
       const reader = new FileReader();
@@ -81,29 +102,33 @@ layout: post
     });
   }
 
-  // --- State ---
+  // State
   const MODEL_URL = "/assets/models/level1_model_portable.npz";
   let pyodide=null, FS=null;
-  let pyReady=false, libsReady=false, modelReady=false, fileReady=false, uploaded=false;
-  let fileBytes=null, resultUrl=null;
+  let pyReady=false, libsReady=false, modelReady=false, uploaded=false;
+  let resultUrl=null;
 
-  // --- Boot ---
+  // BOOT
   $("bootBtn").addEventListener("click", async ()=>{
     try{
       setDisabled("bootBtn", true);
       log("⏳ Boot: waiting for pyodide.js …");
       await waitForGlobal("loadPyodide", 20000);
+
       log("⏳ Boot: initializing Pyodide…");
       pyodide = await globalThis.loadPyodide({ indexURL: "https://cdn.jsdelivr.net/pyodide/v0.26.3/full/" });
       FS = pyodide.FS;
       pyReady = true;
       log("✅ Pyodide " + pyodide.version + " loaded.");
 
-      log("⏳ Boot: importing numpy/pandas/gzip…");
+      log("⏳ Boot: loading packages (numpy, pandas) …");
+      await pyodide.loadPackage(["numpy","pandas"]);
+      log("✅ Packages loaded.");
+
+      log("⏳ Boot: importing numpy/pandas/gzip …");
       await pyodide.runPythonAsync("import numpy as np, pandas as pd, gzip, io, json, os");
       libsReady = true;
       log("✅ Python libs imported.");
-
       setDisabled("pingBtn", false);
       setDisabled("validateBtn", false);
       setDisabled("loadFileBtn", false);
@@ -115,17 +140,16 @@ layout: post
     setDisabled("bootBtn", false);
   });
 
-  // --- Ping (sanity) ---
+  // PING
   $("pingBtn").addEventListener("click", async ()=>{
     if(!pyReady){ alert("Boot first."); return; }
     try{
-      log("🔔 Ping: running a tiny Python check…");
+      log("🔔 Ping: Python sanity check …");
       const out = await pyodide.runPythonAsync(`
-import numpy as np, pandas as pd, sys
+import numpy as np, pandas as pd
 print("numpy", np.__version__)
 print("pandas", pd.__version__)
-a = np.array([1,2,3]).sum()
-print("sum:", int(a))
+print("sum:", int(np.array([1,2,3]).sum()))
 "OK"
       `);
       log("✅ Ping OK: " + out);
@@ -134,13 +158,13 @@ print("sum:", int(a))
     }
   });
 
-  // --- Validate assets (model) ---
+  // VALIDATE ASSETS (model)
   $("validateBtn").addEventListener("click", async ()=>{
     log("🔎 Validate: checking " + MODEL_URL + " …");
     try{
       let resp = await fetch(MODEL_URL, { method: "HEAD", cache: "no-store" });
       if(!resp.ok){
-        log("ℹ️ HEAD got " + resp.status + ", trying GET…");
+        log("ℹ️ HEAD got " + resp.status + ", trying GET …");
         resp = await fetch(MODEL_URL, { cache: "no-store" });
       }
       if(!resp.ok) throw new Error("HTTP " + resp.status);
@@ -152,7 +176,7 @@ print("sum:", int(a))
       FS.writeFile("/tmp_model", buf);
       modelReady = true;
       log("✅ Model loaded into /tmp_model");
-      setDisabled("runBtn", !(uploaded && modelReady));
+      setDisabled("runBtn", !uploaded);
     }catch(err){
       modelReady = false;
       setDisabled("runBtn", true);
@@ -160,40 +184,37 @@ print("sum:", int(a))
     }
   });
 
-  // --- Load file (choose + read to memory; write to FS) ---
+  // LOAD FILE
   $("loadFileBtn").addEventListener("click", ()=>{
     if(!pyReady){ alert("Boot first."); return; }
     $("csvInput").click();
   });
-
   $("csvInput").addEventListener("change", async (e)=>{
     const f = e.target.files && e.target.files[0];
     if(!f){ return; }
     try{
       log("📁 Selected: " + f.name);
       const bytes = await readFileWithProgress(f);
-      fileBytes = bytes;
-      fileReady = true;
       FS.writeFile("/tmp_input", bytes);
       uploaded = true;
       log("📤 Loaded into FS → /tmp_input (" + (bytes.length/1e6).toFixed(2) + " MB)");
       setDisabled("runBtn", !(uploaded && modelReady));
       if(!modelReady) log("ℹ️ Validate assets to load model, then Run will enable.");
     }catch(err){
-      log("❌ File load failed: " + (err?.message || err));
-      fileReady = false; uploaded = false;
+      uploaded = false;
       setDisabled("runBtn", true);
+      log("❌ File load failed: " + (err?.message || err));
     }
   });
 
-  // --- Run analysis ---
+  // RUN
   $("runBtn").addEventListener("click", async ()=>{
     if(!uploaded){ alert("Load a CSV first."); return; }
     if(!modelReady){ alert("Validate/Load model first."); return; }
     if(!libsReady){ alert("Boot first."); return; }
     try{
       $("procProg").value = 5;
-      log("▶️ Running annotation…");
+      log("▶️ Running annotation …");
       const code = `
 import numpy as np, pandas as pd, gzip, json, os
 
@@ -258,6 +279,7 @@ print('DONE', X.shape, len(loaded['classes_']))
 `;
       await pyodide.runPythonAsync(code);
       $("procProg").value = 100;
+
       const bytes = FS.readFile("/pred.csv");
       const blob  = new Blob([bytes], { type: "text/csv" });
       if(resultUrl){ URL.revokeObjectURL(resultUrl); }
@@ -270,7 +292,6 @@ print('DONE', X.shape, len(loaded['classes_']))
     }
   });
 
-  // Initial hint
   log("Flow → 1) Boot  2) Ping  3) Validate assets  4) Load file  5) Run");
 })();
 </script>
