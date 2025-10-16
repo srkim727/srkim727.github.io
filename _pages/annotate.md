@@ -15,8 +15,6 @@ Make sure you have these files in your repo:
   esm/
     h5wasm.js                       <-- ESM build (optional but preferred)
 
-And your ONNX model + sidecars:
-
 /assets/models/Level1/
   model.onnx
   genes.json
@@ -32,6 +30,7 @@ And your ONNX model + sidecars:
     <button id="validate">Validate assets</button>
     <button id="load">Load file</button>
     <button id="run" disabled>Run</button>
+    <button id="ping" title="Quick test of the log/handlers">Ping</button>
     <label style="display:inline-flex;align-items:center;gap:6px;">
       Batch <input id="batch" type="number" min="2000" step="1000" value="8000" style="width:80px">
     </label>
@@ -63,373 +62,385 @@ And your ONNX model + sidecars:
 </div>
 
 <script type="module">
-  // ---------- Boot + helpers ----------
-  const $log = document.getElementById('log');
-  const log = m => { $log.textContent += m + "\\n"; $log.scrollTop = $log.scrollHeight; };
-  const errMsg = e => e?.message || e?.type || (typeof e === 'string' ? e : JSON.stringify(e));
-  log("⚙️ Script booted");
+  // Top-level error funnel so early crashes still show up in the log pane.
+  try {
+    // ---------- Boot + helpers ----------
+    const $log = document.getElementById('log');
+    const log = m => { $log.textContent += m + "\\n"; $log.scrollTop = $log.scrollHeight; };
+    const errMsg = e => e?.message || e?.type || (typeof e === 'string' ? e : JSON.stringify(e));
+    log("⚙️ Script booted");
 
-  // Model/sidecar URLs (root-relative)
-  const MODEL_URL   = "/assets/models/Level1/model.onnx";
-  const GENES_URL   = "/assets/models/Level1/genes.json";
-  const CLASSES_URL = "/assets/models/Level1/classes.json";
+    // Model/sidecar URLs (root-relative)
+    const MODEL_URL   = "/assets/models/Level1/model.onnx";
+    const GENES_URL   = "/assets/models/Level1/genes.json";
+    const CLASSES_URL = "/assets/models/Level1/classes.json";
 
-  // Serve h5wasm locally (same-origin)
-  const H5WASM_BASE = "/assets/libs/h5wasm";
+    // Serve h5wasm locally (same-origin)
+    const H5WASM_BASE = "/assets/libs/h5wasm";
 
-  // UI
-  const $f = document.getElementById('file');
-  const $meta = document.getElementById('meta');
-  const $dl   = document.getElementById('download');
-  const $upBar=document.getElementById('upBar'), $upPct=document.getElementById('upPct'), $upSpd=document.getElementById('upSpd');
-  const $anBar=document.getElementById('anBar'), $anPct=document.getElementById('anPct');
-  const $batch=document.getElementById('batch'), $safe=document.getElementById('safe');
+    // UI
+    const $f = document.getElementById('file');
+    const $meta = document.getElementById('meta');
+    const $dl   = document.getElementById('download');
+    const $upBar=document.getElementById('upBar'), $upPct=document.getElementById('upPct'), $upSpd=document.getElementById('upSpd');
+    const $anBar=document.getElementById('anBar'), $anPct=document.getElementById('anPct');
+    const $batch=document.getElementById('batch'), $safe=document.getElementById('safe');
 
-  const setUp=v=>{ $upBar.value=v; $upPct.textContent=Math.round(v)+'%'; };
-  const setSpd=v=>{ $upSpd.textContent=(v||0).toFixed(2)+' MB/s'; };
-  const setAn=v=>{ $anBar.value=v; $anPct.textContent=Math.round(v)+'%'; };
+    const setUp=v=>{ $upBar.value=v; $upPct.textContent=Math.round(v)+'%'; };
+    const setSpd=v=>{ $upSpd.textContent=(v||0).toFixed(2)+' MB/s'; };
+    const setAn=v=>{ $anBar.value=v; $anPct.textContent=Math.round(v)+'%'; };
 
-  window.addEventListener('error', e => log('Error: ' + errMsg(e)));
-  window.addEventListener('unhandledrejection', e => log('Promise Rejection: ' + errMsg(e.reason)));
+    window.addEventListener('error', e => log('Error: ' + errMsg(e)));
+    window.addEventListener('unhandledrejection', e => log('Promise Rejection: ' + errMsg(e.reason)));
 
-  function bind(id, handler){
-    const el = document.getElementById(id);
-    if (!el) { console.warn("Missing element id:", id); log("⚠️ Missing element id: " + id); return; }
-    el.addEventListener('click', (ev)=>{ try{ handler(ev); }catch(e){ log('🛑 '+id+' handler error: '+errMsg(e)); console.error(e);} });
-  }
-
-  // ---------- onnxruntime-web loader (script tag + fallback) ----------
-  async function ensureORT() {
-    if (window.ort) return window.ort;
-    await new Promise((resolve, reject) => {
-      const s = document.createElement('script');
-      s.src = "https://cdn.jsdelivr.net/npm/onnxruntime-web/dist/ort.min.js";
-      s.onload = resolve;
-      s.onerror = () => {
-        const s2 = document.createElement('script');
-        s2.src = "https://unpkg.com/onnxruntime-web/dist/ort.min.js";
-        s2.onload = resolve;
-        s2.onerror = reject;
-        document.head.appendChild(s2);
-      };
-      document.head.appendChild(s);
-    });
-    return window.ort;
-  }
-
-  // ---------- h5wasm loader (prefer local ESM, then local UMD) ----------
-  let _h5 = null;
-  async function ensureH5Wasm() {
-    if (_h5) return _h5;
-    // Local ESM
-    const localEsm = `${H5WASM_BASE}/esm/h5wasm.js`;
-    try {
-      log("Trying h5wasm local ESM: " + localEsm);
-      _h5 = await import(localEsm);
-      log("Loaded h5wasm local ESM.");
-      return _h5;
-    } catch (e) {
-      log("Local ESM failed: " + errMsg(e));
+    function bind(id, handler){
+      const el = document.getElementById(id);
+      if (!el) { console.warn("Missing element id:", id); log("⚠️ Missing element id: " + id); return; }
+      el.addEventListener('click', (ev)=>{ 
+        try{ handler(ev); }catch(e){ log('🛑 '+id+' handler error: '+errMsg(e)); console.error(e);}
+      });
     }
-    // Local UMD
-    const localUmd = `${H5WASM_BASE}/h5wasm.js`;
-    try {
-      log("Trying h5wasm local UMD: " + localUmd);
+
+    // ---------- onnxruntime-web loader (script tag + fallback) ----------
+    async function ensureORT() {
+      if (window.ort) return window.ort;
       await new Promise((resolve, reject) => {
-        const s = document.createElement("script");
-        s.src = localUmd;
-        s.async = true;
+        const s = document.createElement('script');
+        s.src = "https://cdn.jsdelivr.net/npm/onnxruntime-web/dist/ort.min.js";
         s.onload = resolve;
-        s.onerror = ev => reject(new Error(`Local UMD failed: ${localUmd} (${ev?.type || "error"})`));
+        s.onerror = () => {
+          const s2 = document.createElement('script');
+          s2.src = "https://unpkg.com/onnxruntime-web/dist/ort.min.js";
+          s2.onload = resolve;
+          s2.onerror = reject;
+          document.head.appendChild(s2);
+        };
         document.head.appendChild(s);
       });
-      if (!window.h5wasm) throw new Error("window.h5wasm undefined after local UMD.");
-      if (window.h5wasm.setWasmPath) {
-        window.h5wasm.setWasmPath(`${H5WASM_BASE}/`);
-        log("h5wasm.setWasmPath(" + `${H5WASM_BASE}/` + ")");
-      }
-      _h5 = window.h5wasm;
-      log("Loaded h5wasm local UMD.");
-      return _h5;
-    } catch (e) {
-      log(errMsg(e));
-      throw new Error("h5wasm not found under " + H5WASM_BASE + " — copy dist/ here.");
+      return window.ort;
     }
-  }
 
-  // ---------- fetch helpers ----------
-  async function fetchJson(url, label){
-    const r = await fetch(url, {cache:'no-cache'});
-    if (!r.ok) throw new Error(label + ' fetch failed: ' + r.status + ' ' + r.statusText + ' ('+url+')');
-    return r.json();
-  }
-  async function fetchHeadSize(url, label){
-    try{
-      const h = await fetch(url, {method:'HEAD', cache:'no-cache'});
-      if (h.ok){
-        const len = h.headers.get('content-length');
-        return len ? Number(len) : null;
+    // ---------- h5wasm loader (prefer local ESM, then local UMD) ----------
+    let _h5 = null;
+    async function ensureH5Wasm() {
+      if (_h5) return _h5;
+      // Local ESM
+      const localEsm = `${H5WASM_BASE}/esm/h5wasm.js`;
+      try {
+        log("Trying h5wasm local ESM: " + localEsm);
+        _h5 = await import(localEsm);
+        log("Loaded h5wasm local ESM.");
+        return _h5;
+      } catch (e) {
+        log("Local ESM failed: " + errMsg(e));
       }
-    }catch(_e){}
-    const r = await fetch(url, {method:'GET', cache:'no-cache'});
-    if (!r.ok) throw new Error(label + ' fetch failed: ' + r.status + ' ' + r.statusText + ' ('+url+')');
-    const len = r.headers.get('content-length');
-    r.body?.cancel?.();
-    return len ? Number(len) : null;
-  }
+      // Local UMD
+      const localUmd = `${H5WASM_BASE}/h5wasm.js`;
+      try {
+        log("Trying h5wasm local UMD: " + localUmd);
+        await new Promise((resolve, reject) => {
+          const s = document.createElement("script");
+          s.src = localUmd;
+          s.async = true;
+          s.onload = resolve;
+          s.onerror = ev => reject(new Error(`Local UMD failed: ${localUmd} (${ev?.type || "error"})`));
+          document.head.appendChild(s);
+        });
+        if (!window.h5wasm) throw new Error("window.h5wasm undefined after local UMD.");
+        if (window.h5wasm.setWasmPath) {
+          window.h5wasm.setWasmPath(`${H5WASM_BASE}/`);
+          log("h5wasm.setWasmPath(" + `${H5WASM_BASE}/` + ")");
+        }
+        _h5 = window.h5wasm;
+        log("Loaded h5wasm local UMD.");
+        return _h5;
+      } catch (e) {
+        log(errMsg(e));
+        throw new Error("h5wasm not found under " + H5WASM_BASE + " — copy dist/ here.");
+      }
+    }
 
-  // ---------- local file read with progress ----------
-  async function readFileWithProgress(file, onTick){
-    const t0=performance.now();
-    if (!$safe.checked && file.stream && typeof file.stream==='function'){
-      const reader=file.stream().getReader();
-      const chunks=[]; let rec=0, lastT=t0, lastB=0;
-      for(;;){
-        const {done, value}=await reader.read();
-        const now=performance.now();
-        if (done) break;
-        chunks.push(value); rec+=value.byteLength;
-        const dt=(now-lastT)/1000, dB=rec-lastB;
-        const mbps = dt>0 ? (dB/1048576)/dt : 0;
-        onTick && onTick(rec/file.size*100, mbps);
-        lastT=now; lastB=rec;
+    // ---------- fetch helpers ----------
+    async function fetchJson(url, label){
+      const r = await fetch(url, {cache:'no-cache'});
+      if (!r.ok) throw new Error(label + ' fetch failed: ' + r.status + ' ' + r.statusText + ' ('+url+')');
+      return r.json();
+    }
+    async function fetchHeadSize(url, label){
+      try{
+        const h = await fetch(url, {method:'HEAD', cache:'no-cache'});
+        if (h.ok){
+          const len = h.headers.get('content-length');
+          return len ? Number(len) : null;
+        }
+      }catch(_e){}
+      const r = await fetch(url, {method:'GET', cache:'no-cache'});
+      if (!r.ok) throw new Error(label + ' fetch failed: ' + r.status + ' ' + r.statusText + ' ('+url+')');
+      const len = r.headers.get('content-length');
+      r.body?.cancel?.();
+      return len ? Number(len) : null;
+    }
+
+    // ---------- local file read with progress ----------
+    async function readFileWithProgress(file, onTick){
+      const t0=performance.now();
+      if (!$safe.checked && file.stream && typeof file.stream==='function'){
+        const reader=file.stream().getReader();
+        const chunks=[]; let rec=0, lastT=t0, lastB=0;
+        for(;;){
+          const {done, value}=await reader.read();
+          const now=performance.now();
+          if (done) break;
+          chunks.push(value); rec+=value.byteLength;
+          const dt=(now-lastT)/1000, dB=rec-lastB;
+          const mbps = dt>0 ? (dB/1048576)/dt : 0;
+          onTick && onTick(rec/file.size*100, mbps);
+          lastT=now; lastB=rec;
+        }
+        const buf = await new Blob(chunks).arrayBuffer();
+        const avg = (rec/1048576) / ((performance.now()-t0)/1000 || 1);
+        onTick && onTick(100, avg);
+        return new Uint8Array(buf);
       }
-      const buf = await new Blob(chunks).arrayBuffer();
-      const avg = (rec/1048576) / ((performance.now()-t0)/1000 || 1);
-      onTick && onTick(100, avg);
+      const t1=performance.now();
+      const buf = await file.arrayBuffer();
+      const avg = (buf.byteLength/1048576)/((performance.now()-t1)/1000 || 1);
+      for (let i=1;i<=10;i++){ onTick && onTick(i*10, avg); await new Promise(r=>setTimeout(r,5)); }
       return new Uint8Array(buf);
     }
-    const t1=performance.now();
-    const buf = await file.arrayBuffer();
-    const avg = (buf.byteLength/1048576)/((performance.now()-t1)/1000 || 1);
-    for (let i=1;i<=10;i++){ onTick && onTick(i*10, avg); await new Promise(r=>setTimeout(r,5)); }
-    return new Uint8Array(buf);
-  }
 
-  // ---------- AnnData helpers ----------
-  function readVarNames(h){
-    for (const p of ["var/_index","var/index","var/feature_names"]){
-      const ds=h.get(p); if (ds?.isDataset){
-        const arr=ds.toArray?.() ?? ds.value;
-        return Array.from(arr, x=> typeof x==="string" ? x : (x?.toString?.() ?? String(x)));
+    // ---------- AnnData helpers ----------
+    function readVarNames(h){
+      for (const p of ["var/_index","var/index","var/feature_names"]){
+        const ds=h.get(p); if (ds?.isDataset){
+          const arr=ds.toArray?.() ?? ds.value;
+          return Array.from(arr, x=> typeof x==="string" ? x : (x?.toString?.() ?? String(x)));
+        }
       }
+      throw new Error("Cannot find var index");
     }
-    throw new Error("Cannot find var index");
-  }
-  function readObsNames(h){
-    for (const p of ["obs/_index","obs/index","obs/names"]){
-      const ds=h.get(p); if (ds?.isDataset){
-        const arr=ds.toArray?.() ?? ds.value;
-        return Array.from(arr, x=> typeof x==="string" ? x : (x?.toString?.() ?? String(x)));
+    function readObsNames(h){
+      for (const p of ["obs/_index","obs/index","obs/names"]){
+        const ds=h.get(p); if (ds?.isDataset){
+          const arr=ds.toArray?.() ?? ds.value;
+          return Array.from(arr, x=> typeof x==="string" ? x : (x?.toString?.() ?? String(x)));
+        }
       }
+      const n = readXShape(h)[0];
+      return Array.from({length:n},(_,i)=>"cell_"+i);
     }
-    const n = readXShape(h)[0];
-    return Array.from({length:n},(_,i)=>"cell_"+i);
-  }
-  function readXShape(h){
-    const X=h.get("X");
-    if (X?.isDataset) return X.shape;
-    const s=h.get("X/shape")?.value;
-    return [Number(s[0]), Number(s[1])];
-  }
-  function pickDense(denseFlat, shape, varNames, genes){
-    const [n,d]=shape, D=genes.length;
-    const out=new Float32Array(n*D);
-    const idx=new Map(varNames.map((g,i)=>[g,i]));
-    const map = genes.map(g=>idx.get(g));
-    for (let j=0;j<D;j++){
-      const cj=map[j]; if (cj==null) continue;
-      for (let i=0,base=0;i<n;i++,base+=d) out[i*D+j]=denseFlat[base+cj];
+    function readXShape(h){
+      const X=h.get("X");
+      if (X?.isDataset) return X.shape;
+      const s=h.get("X/shape")?.value;
+      return [Number(s[0]), Number(s[1])];
     }
-    return out;
-  }
-  function pickCSR(data, indices, indptr, shape, varNames, genes){
-    const [n,d]=shape, D=genes.length;
-    const out=new Float32Array(n*D);
-    const colPos=new Map(varNames.map((g,i)=>[g,i]));
-    const wanted=new Map(); genes.forEach((g,j)=>{ const cj=colPos.get(g); if (cj!=null) wanted.set(cj,j); });
-    for (let i=0;i<n;i++){
-      const a=indptr[i], b=indptr[i+1];
-      for (let k=a;k<b;k++){ const cj=indices[k], j=wanted.get(cj); if (j!=null) out[i*D+j]=data[k]; }
+    function pickDense(denseFlat, shape, varNames, genes){
+      const [n,d]=shape, D=genes.length;
+      const out=new Float32Array(n*D);
+      const idx=new Map(varNames.map((g,i)=>[g,i]));
+      const map = genes.map(g=>idx.get(g));
+      for (let j=0;j<D;j++){
+        const cj=map[j]; if (cj==null) continue;
+        for (let i=0,base=0;i<n;i++,base+=d) out[i*D+j]=denseFlat[base+cj];
+      }
+      return out;
     }
-    return out;
-  }
-
-  // ===== Validate assets =====
-  bind('validate', async ()=>{
-    try{
-      log('Checking genes.json …');
-      const g = await fetchJson(GENES_URL, 'genes.json');
-      log('OK genes: ' + g.length);
-
-      log('Checking classes.json …');
-      const c = await fetchJson(CLASSES_URL, 'classes.json');
-      log('OK classes: ' + c.length);
-
-      log('Checking model.onnx …');
-      const bytes = await fetchHeadSize(MODEL_URL, 'model.onnx');
-      log('model.onnx size: ' + (bytes ? (bytes/1048576).toFixed(2)+' MB' : 'unknown'));
-
-      const ort = await ensureORT();
-      if (ort.env?.wasm) {
-        ort.env.wasm.simd = !$safe.checked;
-        ort.env.wasm.numThreads = $safe.checked ? 1 : Math.min((navigator.hardwareConcurrency||4), 8);
-        ort.env.wasm.proxy = !$safe.checked;
-      }
-
-      log('Creating ONNX session (sanity)…');
-      const eps = (navigator.gpu && !$safe.checked) ? ["webgpu","wasm"] : ["wasm"];
-      const test = await ort.InferenceSession.create(MODEL_URL, { executionProviders: eps });
-
-      const D = g.length;
-      const zeros = new ort.Tensor('float32', new Float32Array(D), [1, D]);
-      const out = await test.run({ [test.inputNames[0]]: zeros });
-      const any = out[test.outputNames[0]] || Object.values(out)[0];
-      log('Dummy inference ok. Output len: ' + (any?.data?.length ?? 'unknown'));
-      log('✅ Assets validate successfully.');
-    }catch(e){
-      log('🛑 Validate failed: ' + errMsg(e));
-      log('Hint: open these URLs in a new tab to verify:');
-      log(' - ' + GENES_URL);
-      log(' - ' + CLASSES_URL);
-      log(' - ' + MODEL_URL);
-    }
-  });
-
-  // ===== Load file =====
-  bind('load', async ()=>{
-    $dl.innerHTML=''; $log.textContent=''; setUp(0); setSpd(0); setAn(0);
-    const runBtn = document.getElementById('run');
-    if (runBtn) runBtn.disabled = true;
-
-    try{
-      const h5 = await ensureH5Wasm();
-
-      const genes = await fetchJson(GENES_URL, 'genes.json');
-      const classes = await fetchJson(CLASSES_URL, 'classes.json');
-      window._genes = genes; window._classes = classes; // for run()
-      log('genes: ' + genes.length + ' | classes: ' + classes.length);
-
-      const file = $f?.files?.[0];
-      if (!file) { log('Pick a .h5ad first.'); return; }
-      const mb = (file.size/1048576).toFixed(2);
-      $meta.textContent = `Selected: ${file.name} (${mb} MB) | Model genes: ${genes.length} | Classes: ${classes.length}`;
-
-      const fileBuf = await readFileWithProgress(file, (pct, mbps)=>{ setUp(pct); setSpd(mbps); });
-      setUp(100);
-
-      await h5.ready;
-
-      let hf;
-      try {
-        hf = new h5.File(fileBuf, "r");
-      } catch (openErr) {
-        log("If this is the first visit and it fails here, the h5wasm .wasm asset may be cached/blocked.");
-        log("We set the WASM path to " + H5WASM_BASE + "/ ; a hard refresh (Ctrl/Cmd+Shift+R) can help.");
-        throw openErr;
-      }
-      window._h5 = hf;
-
-      const varNames = readVarNames(hf);
-      const obsNames = readObsNames(hf);
-      const shape = readXShape(hf);
-      window._shape = shape; window._varNames = varNames; window._obsNames = obsNames;
-
-      log(`Cells: ${shape[0]} | Genes(file): ${shape[1]}`);
-      const vset=new Set(varNames);
-      const missing = genes.reduce((k,g)=>k+(vset.has(g)?0:1),0);
-      log(`Missing vs model: ${missing}`);
-
-      if (runBtn) runBtn.disabled=false;
-    }catch(e){
-      log('🛑 Load failed: ' + errMsg(e));
-      console.error(e);
-    }
-  });
-
-  // ===== Run annotation =====
-  bind('run', async ()=>{
-    try{
-      setAn(0);
-      const ort = await ensureORT();
-      if (ort.env?.wasm) {
-        ort.env.wasm.simd = !$safe.checked;
-        ort.env.wasm.numThreads = $safe.checked ? 1 : Math.min((navigator.hardwareConcurrency||4), 8);
-        ort.env.wasm.proxy = !$safe.checked;
-      }
-
-      const h5 = window._h5;
-      const genes = window._genes;
-      const classes = window._classes;
-      const shape = window._shape;
-      const varNames = window._varNames;
-      const obsNames = window._obsNames;
-
-      if (!h5 || !genes || !classes || !shape) {
-        log('Load a file first.'); return;
-      }
-
-      const X = h5.get("X");
-      const n = shape[0], D = genes.length, C = classes.length;
-      let feats;
-      if (X.isDataset){
-        const arr = X.value;
-        const denseF32 = (arr instanceof Float32Array) ? arr : new Float32Array(arr);
-        feats = pickDense(denseF32, shape, varNames, genes);
-      } else {
-        const data = X.get('data').value;
-        const indices = X.get('indices').value;
-        const indptr = X.get('indptr').value;
-        const dataF32 = (data instanceof Float32Array) ? data : new Float32Array(data);
-        const idxI32  = (indices instanceof Int32Array) ? indices : new Int32Array(indices);
-        const ptrI32  = (indptr  instanceof Int32Array) ? indptr  : new Int32Array(indptr);
-        feats = pickCSR(dataF32, idxI32, ptrI32, shape, varNames, genes);
-      }
-      setAn(30);
-
-      const eps = (navigator.gpu && !$safe.checked) ? ["webgpu","wasm"] : ["wasm"];
-      const session = await ort.InferenceSession.create(MODEL_URL, { executionProviders: eps });
-      setAn(40);
-
-      const Nbatch = Math.max(2000, Number($batch.value)||8000);
-      const probs = new Float32Array(n*C);
-      for (let start=0; start<n; start+=Nbatch){
-        const end = Math.min(n, start+Nbatch);
-        const view = feats.subarray(start*D, end*D);
-        const t = new ort.Tensor('float32', view, [end-start, D]);
-        const out = await session.run({ [session.inputNames[0]]: t });
-        let part;
-        if (out.probabilities) part = out.probabilities.data;
-        else if (out.logits){
-          part = new Float32Array((end-start)*C);
-          for (let i=0;i<end-start;i++){
-            let mx=-1e30; for(let j=0;j<C;j++) mx=Math.max(mx, out.logits.data[i*C+j]);
-            let s=0; for(let j=0;j<C;j++){ const e=Math.exp(out.logits.data[i*C+j]-mx); part[i*C+j]=e; s+=e; }
-            for (let j=0;j<C;j++) part[i*C+j]/=s;
-          }
-        } else { throw new Error("ONNX outputs missing probabilities/logits"); }
-        probs.set(part, start*C);
-        setAn(40 + 50*(end/n));
-        await new Promise(r=>setTimeout(r,0));
-      }
-
-      const header = ["cell_id","Level1|predicted_labels","Level1|conf_score","Level1|cert_score"];
-      const rows = new Array(n);
+    function pickCSR(data, indices, indptr, shape, varNames, genes){
+      const [n,d]=shape, D=genes.length;
+      const out=new Float32Array(n*D);
+      const colPos=new Map(varNames.map((g,i)=>[g,i]));
+      const wanted=new Map(); genes.forEach((g,j)=>{ const cj=colPos.get(g); if (cj!=null) wanted.set(cj,j); });
       for (let i=0;i<n;i++){
-        let best=-1, bj=-1, sum=0, base=i*C;
-        for (let j=0;j<C;j++){ const v=probs[base+j]; sum+=v; if (v>best){best=v; bj=j;} }
-        rows[i] = [obsNames[i], classes[bj], String(best), String(best/(sum||1))];
+        const a=indptr[i], b=indptr[i+1];
+        for (let k=a;k<b;k++){ const cj=indices[k], j=wanted.get(cj); if (j!=null) out[i*D+j]=data[k]; }
       }
-      const csv=[header.join(","), ...rows.map(r=>r.join(","))].join("\\n");
-      const blob=new Blob([csv],{type:"text/csv"});
-      const url=URL.createObjectURL(blob);
-      const a=Object.assign(document.createElement('a'),{href=url,download:'pred.csv'});
-      $dl.innerHTML=''; $dl.appendChild(a); a.click(); URL.revokeObjectURL(url);
-      setAn(100);
-      log('✅ Done.');
-    }catch(e){
-      log('🛑 Run failed: ' + errMsg(e));
-      console.error(e);
+      return out;
     }
-  });
+
+    // ===== Handlers =====
+    bind('ping', ()=>{ log('🏓 Ping OK — handlers are attached.'); });
+
+    bind('validate', async ()=>{
+      log('▶ Validate clicked');
+      try{
+        log('Checking genes.json …');
+        const g = await fetchJson(GENES_URL, 'genes.json');
+        log('OK genes: ' + g.length);
+
+        log('Checking classes.json …');
+        const c = await fetchJson(CLASSES_URL, 'classes.json');
+        log('OK classes: ' + c.length);
+
+        log('Checking model.onnx …');
+        const bytes = await fetchHeadSize(MODEL_URL, 'model.onnx');
+        log('model.onnx size: ' + (bytes ? (bytes/1048576).toFixed(2)+' MB' : 'unknown'));
+
+        const ort = await ensureORT();
+        if (ort.env?.wasm) {
+          ort.env.wasm.simd = !$safe.checked;
+          ort.env.wasm.numThreads = $safe.checked ? 1 : Math.min((navigator.hardwareConcurrency||4), 8);
+          ort.env.wasm.proxy = !$safe.checked;
+        }
+
+        log('Creating ONNX session (sanity)…');
+        const eps = (navigator.gpu && !$safe.checked) ? ["webgpu","wasm"] : ["wasm"];
+        const test = await ort.InferenceSession.create(MODEL_URL, { executionProviders: eps });
+
+        const D = g.length;
+        const zeros = new ort.Tensor('float32', new Float32Array(D), [1, D]);
+        const out = await test.run({ [test.inputNames[0]]: zeros });
+        const any = out[test.outputNames[0]] || Object.values(out)[0];
+        log('Dummy inference ok. Output len: ' + (any?.data?.length ?? 'unknown'));
+        log('✅ Assets validate successfully.');
+      }catch(e){
+        log('🛑 Validate failed: ' + errMsg(e));
+        log('Hint: open these URLs in a new tab to verify:');
+        log(' - ' + GENES_URL);
+        log(' - ' + CLASSES_URL);
+        log(' - ' + MODEL_URL);
+      }
+    });
+
+    bind('load', async ()=>{
+      $dl.innerHTML=''; $log.textContent=''; setUp(0); setSpd(0); setAn(0);
+      const runBtn = document.getElementById('run');
+      if (runBtn) runBtn.disabled = true;
+
+      try{
+        const h5 = await ensureH5Wasm();
+
+        const genes = await fetchJson(GENES_URL, 'genes.json');
+        const classes = await fetchJson(CLASSES_URL, 'classes.json');
+        window._genes = genes; window._classes = classes; // for run()
+        log('genes: ' + genes.length + ' | classes: ' + classes.length);
+
+        const file = $f?.files?.[0];
+        if (!file) { log('Pick a .h5ad first.'); return; }
+        const mb = (file.size/1048576).toFixed(2);
+        $meta.textContent = `Selected: ${file.name} (${mb} MB) | Model genes: ${genes.length} | Classes: ${classes.length}`;
+
+        const fileBuf = await readFileWithProgress(file, (pct, mbps)=>{ setUp(pct); setSpd(mbps); });
+        setUp(100);
+
+        await h5.ready;
+
+        let hf;
+        try {
+          hf = new h5.File(fileBuf, "r");
+        } catch (openErr) {
+          log("If this is the first visit and it fails here, the h5wasm .wasm asset may be cached/blocked.");
+          log("We set the WASM path to " + H5WASM_BASE + "/ ; a hard refresh (Ctrl/Cmd+Shift+R) can help.");
+          throw openErr;
+        }
+        window._h5 = hf;
+
+        const varNames = readVarNames(hf);
+        const obsNames = readObsNames(hf);
+        const shape = readXShape(hf);
+        window._shape = shape; window._varNames = varNames; window._obsNames = obsNames;
+
+        log(`Cells: ${shape[0]} | Genes(file): ${shape[1]}`);
+        const vset=new Set(varNames);
+        const missing = genes.reduce((k,g)=>k+(vset.has(g)?0:1),0);
+        log(`Missing vs model: ${missing}`);
+
+        if (runBtn) runBtn.disabled=false;
+      }catch(e){
+        log('🛑 Load failed: ' + errMsg(e));
+        console.error(e);
+      }
+    });
+
+    bind('run', async ()=>{
+      try{
+        setAn(0);
+        const ort = await ensureORT();
+        if (ort.env?.wasm) {
+          ort.env.wasm.simd = !$safe.checked;
+          ort.env.wasm.numThreads = $safe.checked ? 1 : Math.min((navigator.hardwareConcurrency||4), 8);
+          ort.env.wasm.proxy = !$safe.checked;
+        }
+
+        const h5 = window._h5;
+        const genes = window._genes;
+        const classes = window._classes;
+        const shape = window._shape;
+        const varNames = window._varNames;
+        const obsNames = window._obsNames;
+
+        if (!h5 || !genes || !classes || !shape) {
+          log('Load a file first.'); return;
+        }
+
+        const X = h5.get("X");
+        const n = shape[0], D = genes.length, C = classes.length;
+        let feats;
+        if (X.isDataset){
+          const arr = X.value;
+          const denseF32 = (arr instanceof Float32Array) ? arr : new Float32Array(arr);
+          feats = pickDense(denseF32, shape, varNames, genes);
+        } else {
+          const data = X.get('data').value;
+          const indices = X.get('indices').value;
+          const indptr = X.get('indptr').value;
+          const dataF32 = (data instanceof Float32Array) ? data : new Float32Array(data);
+          const idxI32  = (indices instanceof Int32Array) ? indices : new Int32Array(indices);
+          const ptrI32  = (indptr  instanceof Int32Array) ? indptr  : new Int32Array(indptr);
+          feats = pickCSR(dataF32, idxI32, ptrI32, shape, varNames, genes);
+        }
+        setAn(30);
+
+        const eps = (navigator.gpu && !$safe.checked) ? ["webgpu","wasm"] : ["wasm"];
+        const session = await ort.InferenceSession.create(MODEL_URL, { executionProviders: eps });
+        setAn(40);
+
+        const Nbatch = Math.max(2000, Number($batch.value)||8000);
+        const probs = new Float32Array(n*C);
+        for (let start=0; start<n; start+=Nbatch){
+          const end = Math.min(n, start+Nbatch);
+          const view = feats.subarray(start*D, end*D);
+          const t = new ort.Tensor('float32', view, [end-start, D]);
+          const out = await session.run({ [session.inputNames[0]]: t });
+          let part;
+          if (out.probabilities) part = out.probabilities.data;
+          else if (out.logits){
+            part = new Float32Array((end-start)*C);
+            for (let i=0;i<end-start;i++){
+              let mx=-1e30; for(let j=0;j<C;j++) mx=Math.max(mx, out.logits.data[i*C+j]);
+              let s=0; for(let j=0;j<C;j++){ const e=Math.exp(out.logits.data[i*C+j]-mx); part[i*C+j]=e; s+=e; }
+              for (let j=0;j<C;j++) part[i*C+j]/=s;
+            }
+          } else { throw new Error("ONNX outputs missing probabilities/logits"); }
+          probs.set(part, start*C);
+          setAn(40 + 50*(end/n));
+          await new Promise(r=>setTimeout(r,0));
+        }
+
+        const header = ["cell_id","Level1|predicted_labels","Level1|conf_score","Level1|cert_score"];
+        const rows = new Array(n);
+        for (let i=0;i<n;i++){
+          let best=-1, bj=-1, sum=0, base=i*C;
+          for (let j=0;j<C;j++){ const v=probs[base+j]; sum+=v; if (v>best){best=v; bj=j;} }
+          rows[i] = [obsNames[i], classes[bj], String(best), String(best/(sum||1))];
+        }
+        const csv=[header.join(","), ...rows.map(r=>r.join(","))].join("\\n");
+        const blob=new Blob([csv],{type:"text/csv"});
+        const url=URL.createObjectURL(blob);
+        const a=Object.assign(document.createElement('a'),{href=url,download:'pred.csv'});
+        $dl.innerHTML=''; $dl.appendChild(a); a.click(); URL.revokeObjectURL(url);
+        setAn(100);
+        log('✅ Done.');
+      }catch(e){
+        log('🛑 Run failed: ' + errMsg(e));
+        console.error(e);
+      }
+    });
+
+    log("✅ Handlers attached");
+  } catch (fatal) {
+    const pane = document.getElementById('log');
+    if (pane) { pane.textContent += "🛑 Fatal script error: " + (fatal?.message || fatal) + "\\n"; }
+    console.error("Fatal script error:", fatal);
+  }
 </script>
