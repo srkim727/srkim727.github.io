@@ -17,7 +17,7 @@ layout: post
   Output: <code>pred.csv</code>
 </p>
 
-<!-- Five buttons -->
+<!-- Five buttons (in order) -->
 <div style="display:flex;flex-wrap:wrap;gap:10px;margin-bottom:8px;">
   <button id="bootBtn" type="button">Boot</button>
   <button id="pingBtn" type="button" disabled>Ping</button>
@@ -61,15 +61,15 @@ layout: post
 
 <script>
 (function(){
-  // Helpers
+  // ---- Helpers ----
   function $(id){ return document.getElementById(id); }
   function setDisabled(elOrId, v){ const el = typeof elOrId==="string" ? $(elOrId) : elOrId; if(el) el.disabled = !!v; }
   function log(m){
     const el = $("log"); if(!el) return;
-    el.textContent += (m + "\n");
-    const MAX_LINES = 300;
-    const lines = el.textContent.split("\n");
-    if (lines.length > MAX_LINES){ el.textContent = lines.slice(-MAX_LINES).join("\n"); }
+    el.textContent += (m + "\\n");
+    const MAX_LINES = 300; // circular buffer
+    const lines = el.textContent.split("\\n");
+    if (lines.length > MAX_LINES){ el.textContent = lines.slice(-MAX_LINES).join("\\n"); }
     el.scrollTop = el.scrollHeight;
   }
   function waitForGlobal(fnName, timeoutMs){
@@ -91,8 +91,8 @@ layout: post
           const pct = Math.round((e.loaded/e.total)*100);
           $("uploadProg").value = pct;
           const now = performance.now();
-          const rate = (e.loaded-lastLoaded)/((now-last)/1000); // bytes/s
-          $("uploadStatus").textContent = `Reading: ${pct}% • ${(rate/1048576).toFixed(2)} MB/s`;
+          const rate = (e.loaded-lastLoaded)/((now-last)/1000);
+          $("uploadStatus").textContent = \`Reading: \${pct}% • \${(rate/1048576).toFixed(2)} MB/s\`;
           last = now; lastLoaded = e.loaded;
         }
       };
@@ -102,13 +102,13 @@ layout: post
     });
   }
 
-  // State
+  // ---- State ----
   const MODEL_URL = "/assets/models/level1_model_portable.npz";
   let pyodide=null, FS=null;
   let pyReady=false, libsReady=false, modelReady=false, uploaded=false;
   let resultUrl=null;
 
-  // BOOT
+  // ---- Boot ----
   $("bootBtn").addEventListener("click", async ()=>{
     try{
       setDisabled("bootBtn", true);
@@ -140,7 +140,7 @@ layout: post
     setDisabled("bootBtn", false);
   });
 
-  // PING
+  // ---- Ping ----
   $("pingBtn").addEventListener("click", async ()=>{
     if(!pyReady){ alert("Boot first."); return; }
     try{
@@ -158,7 +158,7 @@ print("sum:", int(np.array([1,2,3]).sum()))
     }
   });
 
-  // VALIDATE MODEL (GET + basic checks)
+  // ---- Validate assets (GET + magic check, writes /tmp_model) ----
   $("validateBtn").addEventListener("click", async ()=>{
     async function fetchModel(url){
       const resp = await fetch(url, { cache: "no-store" });
@@ -169,7 +169,6 @@ print("sum:", int(np.array([1,2,3]).sum()))
     try{
       log("🔎 Validate: GET " + MODEL_URL + " …");
       let { buf, sizeHeader } = await fetchModel(MODEL_URL);
-
       const magicOk = (buf.length >= 4 && buf[0]===0x50 && buf[1]===0x4B && buf[2]===0x03 && buf[3]===0x04);
       if(!magicOk){
         log("⚠️ Not a ZIP magic; retrying (cache-bust) …");
@@ -181,7 +180,7 @@ print("sum:", int(np.array([1,2,3]).sum()))
 
       FS.writeFile("/tmp_model", buf);
       modelReady = true;
-      log(`✅ Model written to /tmp_model (${(buf.length/1e6).toFixed(2)} MB)`);
+      log(\`✅ Model written to /tmp_model (\${(buf.length/1e6).toFixed(2)} MB)\`);
       $("uploadStatus").textContent = "Waiting for file…";
       setDisabled("runBtn", !uploaded);
     }catch(err){
@@ -191,7 +190,7 @@ print("sum:", int(np.array([1,2,3]).sum()))
     }
   });
 
-  // LOAD FILE (choose & upload)
+  // ---- Load file ----
   $("loadFileBtn").addEventListener("click", ()=>{
     if(!pyReady){ alert("Boot first."); return; }
     $("csvInput").click();
@@ -208,8 +207,8 @@ print("sum:", int(np.array([1,2,3]).sum()))
       FS.writeFile("/tmp_input", bytes);
       uploaded = true;
       $("uploadProg").value = 100;
-      $("uploadStatus").textContent = `✅ Upload complete • ${(bytes.length/1e6).toFixed(2)} MB`;
-      log(`📤 Loaded into FS → /tmp_input (${(bytes.length/1e6).toFixed(2)} MB)`);
+      $("uploadStatus").textContent = \`✅ Upload complete • \${(bytes.length/1e6).toFixed(2)} MB\`;
+      log(\`📤 Loaded into FS → /tmp_input (\${(bytes.length/1e6).toFixed(2)} MB)\`);
       setDisabled("runBtn", !(uploaded && modelReady));
       if(!modelReady) log("ℹ️ Validate assets to load model, then Run will enable.");
     }catch(err){
@@ -221,17 +220,18 @@ print("sum:", int(np.array([1,2,3]).sum()))
     }
   });
 
-  // RUN (with staged processing updates)
+  // ---- Run (Pyodide 0.26: use setStdout / setStderr) ----
   $("runBtn").addEventListener("click", async ()=>{
     if(!uploaded){ alert("Load a CSV first."); return; }
     if(!modelReady){ alert("Validate/Load model first."); return; }
     if(!libsReady){ alert("Boot first."); return; }
-    try{
-      $("procProg").value = 5;  $("procStatus").textContent = "Starting…";
-      log("▶️ Running annotation …");
 
-      const code = `
-import numpy as np, pandas as pd, gzip, json, os, zipfile, io, sys
+    $("procProg").value = 5;
+    $("procStatus").textContent = "Starting…";
+    log("▶️ Running annotation …");
+
+    const code = `
+import numpy as np, pandas as pd, gzip, json, os, io, sys
 
 def stage(pct, msg):
     print(f"__STAGE__:{pct}:{msg}")
@@ -246,11 +246,7 @@ def read_any(path):
 stage(10, "Loading input")
 X = read_any('/tmp_input')
 
-stage(20, "Checking model")
-size = os.path.getsize('/tmp_model')
-if size < 1024:
-    raise ValueError(f"Model too small or empty: {size} bytes")
-
+stage(20, "Reading model")
 def load_npz_any(path):
     try:
         return np.load(path, allow_pickle=True)
@@ -260,8 +256,6 @@ def load_npz_any(path):
             return np.load(io.BytesIO(data), allow_pickle=True)
         except Exception as e2:
             raise EOFError(f"Failed to read model as npz. Direct: {e1}; Gzip-fallback: {e2}")
-
-stage(30, "Reading model")
 _npz = load_npz_any('/tmp_model')
 
 stage(40, "Preparing features")
@@ -319,20 +313,29 @@ out.to_csv('/pred.csv', index=False)
 print('DONE', X.shape, len(loaded['classes_']))
 `;
 
-      // Hook into staged prints to update the Processing UI
-      const pyRunner = pyodide.runPythonAsync(code, { stdout: (s)=> {
-        if (typeof s === "string" && s.startsWith("__STAGE__:")){
-          const parts = s.trim().split(":");
-          const pct = Math.max(0, Math.min(100, parseInt(parts[1] || "0", 10)));
-          const msg = parts.slice(2).join(":") || "Working…";
-          $("procProg").value = pct;
-          $("procStatus").textContent = msg;
-        } else {
-          log(s);
-        }
-      }});
+    // Capture staged progress via stdout
+    const unhookOut = pyodide.setStdout({
+      batched: (s) => {
+        (s || "").split(/\\r?\\n/).forEach(line=>{
+          if(!line) return;
+          if(line.startsWith("__STAGE__:")){
+            const parts = line.trim().split(":");
+            const pct = Math.max(0, Math.min(100, parseInt(parts[1]||"0",10)));
+            const msg = parts.slice(2).join(":") || "Working…";
+            $("procProg").value = pct;
+            $("procStatus").textContent = msg;
+          } else {
+            log(line);
+          }
+        });
+      }
+    });
+    const unhookErr = pyodide.setStderr({
+      batched: (s) => { s && s.trim() && log("ERR: " + s); }
+    });
 
-      await pyRunner;
+    try{
+      await pyodide.runPythonAsync(code);
       $("procProg").value = 100;
       $("procStatus").textContent = "Complete";
 
@@ -346,6 +349,9 @@ print('DONE', X.shape, len(loaded['classes_']))
     }catch(err){
       $("procStatus").textContent = "❌ Error";
       log("❌ Run error: " + (err?.message || err));
+    }finally{
+      try{ unhookOut && unhookOut(); }catch(_){}
+      try{ unhookErr && unhookErr(); }catch(_){}
     }
   });
 
