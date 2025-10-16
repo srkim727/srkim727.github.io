@@ -1,10 +1,10 @@
 ---
-title: Annotate
-layout: post
+title: Annotate (diagnostic)
+layout: page
 permalink: /annotate/
+excerpt: ""
 ---
 
-{% raw %u}
 <div id="ann-app" style="max-width:900px">
   <h2>Annotate .h5ad (client-side)</h2>
   <p>Input <code>.h5ad</code> must have <code>X</code> = 1e4-normalized + log1p.</p>
@@ -44,7 +44,7 @@ permalink: /annotate/
 </div>
 
 <script type="module">
-  // ---------- FIX A: plain root-relative URLs (no Liquid) ----------
+  // ---------- Plain root-relative URLs (no Liquid) ----------
   const MODEL_URL   = "/assets/models/Level1/model.onnx";
   const GENES_URL   = "/assets/models/Level1/genes.json";
   const CLASSES_URL = "/assets/models/Level1/classes.json";
@@ -62,34 +62,17 @@ permalink: /annotate/
   const $anBar=document.getElementById('anBar'), $anPct=document.getElementById('anPct');
   const $batch=document.getElementById('batch'), $safe=document.getElementById('safe');
 
-  const log = m => { $log.textContent += m + "\\n"; $log.scrollTop = $log.scrollHeight; };
+  const log = m => { $log.textContent += m + "\n"; $log.scrollTop = $log.scrollHeight; };
   const setUp=v=>{ $upBar.value=v; $upPct.textContent=Math.round(v)+'%'; };
   const setSpd=v=>{ $upSpd.textContent=(v||0).toFixed(2)+' MB/s'; };
   const setAn=v=>{ $anBar.value=v; $anPct.textContent=Math.round(v)+'%'; };
 
-  // Show ANY runtime error on the page
   window.addEventListener('error', e => log('Error: ' + e.message));
   window.addEventListener('unhandledrejection', e => log('Promise Rejection: ' + (e.reason?.message || e.reason)));
 
-  // ---------- State ----------
   let genes=null, classes=null, fileBuf=null, h5=null, shape=null, varNames=null, obsNames=null;
   let ort=null, h5wasm=null, session=null;
 
-  // ---------- CDN fallback loader ----------
-  async function importWithFallback(url1, url2, isModule=true){
-    try {
-      return isModule ? await import(url1) : await new Promise((res, rej)=>{
-        const s=document.createElement('script'); s.src=url1; s.onload=()=>res(); s.onerror=rej; document.head.appendChild(s);
-      });
-    } catch {
-      if (isModule) return import(url2);
-      await new Promise((res, rej)=>{
-        const s=document.createElement('script'); s.src=url2; s.onload=res; s.onerror=rej; document.head.appendChild(s);
-      });
-    }
-  }
-
-  // ---------- Fetch helpers ----------
   async function fetchJson(url, label){
     const r = await fetch(url, {cache:'no-cache'});
     if (!r.ok) throw new Error(label + ' fetch failed: ' + r.status + ' ' + r.statusText + ' ('+url+')');
@@ -110,7 +93,6 @@ permalink: /annotate/
     return len ? Number(len) : null;
   }
 
-  // ---------- File read with progress + Safari fallback ----------
   async function readFileWithProgress(file, onTick){
     const t0=performance.now();
     if (!$safe.checked && file.stream && typeof file.stream==='function'){
@@ -131,7 +113,6 @@ permalink: /annotate/
       onTick && onTick(100, avg);
       return new Uint8Array(buf);
     }
-    // Safe fallback
     const t1=performance.now();
     const buf = await file.arrayBuffer();
     const avg = (buf.byteLength/1048576)/((performance.now()-t1)/1000 || 1);
@@ -139,7 +120,6 @@ permalink: /annotate/
     return new Uint8Array(buf);
   }
 
-  // ---------- HDF5 helpers ----------
   function readVarNames(h){
     for (const p of ["var/_index","var/index","var/feature_names"]){
       const ds=h.get(p); if (ds?.isDataset){
@@ -188,7 +168,7 @@ permalink: /annotate/
     return out;
   }
 
-  // ===== Validate assets =====
+  // ---- Validate assets ----
   $validate.onclick = async ()=>{
     try{
       log('Checking genes.json …');
@@ -203,7 +183,6 @@ permalink: /annotate/
       const bytes = await fetchHeadSize(MODEL_URL, 'model.onnx');
       log('model.onnx size: ' + (bytes ? (bytes/1048576).toFixed(2)+' MB' : 'unknown'));
 
-      // Try loading ORT + creating a tiny session (zeros)
       if (!ort){
         await import("https://cdn.jsdelivr.net/npm/onnxruntime-web/dist/ort.min.js");
         ort = window.ort;
@@ -231,7 +210,7 @@ permalink: /annotate/
     }
   };
 
-  // ===== Load file =====
+  // ---- Load file ----
   $load.onclick = async ()=>{
     $dl.innerHTML=''; $log.textContent=''; setUp(0); setSpd(0); setAn(0); $run.disabled=true;
 
@@ -269,7 +248,7 @@ permalink: /annotate/
     }
   };
 
-  // ===== Run =====
+  // ---- Run ----
   $run.onclick = async ()=>{
     try{
       setAn(0);
@@ -332,7 +311,7 @@ permalink: /annotate/
         for (let j=0;j<C;j++){ const v=probs[base+j]; sum+=v; if (v>best){best=v; bj=j;} }
         rows[i] = [obsNames[i], classes[bj], String(best), String(best/(sum||1))];
       }
-      const csv=[header.join(","), ...rows.map(r=>r.join(","))].join("\\n");
+      const csv=[header.join(","), ...rows.map(r=>r.join(","))].join("\n");
       const blob=new Blob([csv],{type:"text/csv"});
       const url=URL.createObjectURL(blob);
       const a=Object.assign(document.createElement('a'),{href:url,download:'pred.csv'});
@@ -344,4 +323,3 @@ permalink: /annotate/
     }
   };
 </script>
-{% endraw %}
