@@ -21,7 +21,6 @@
   var GENES_URL   = "/assets/models/Level1/genes.json";
   var CLASSES_URL = "/assets/models/Level1/classes.json";
 
-  // We’ll try both layouts locally, then CDN UMD as last resort.
   var H5WASM_BASES = [
     "/assets/libs/h5wasm",
     "/assets/libs/h5wasm/dist"
@@ -39,7 +38,6 @@
     return clone;
   }
 
-  // ---- onnxruntime-web loader ----
   function ensureORT(){
     if (window.ort) return Promise.resolve(window.ort);
     return new Promise(function(resolve,reject){
@@ -57,24 +55,20 @@
     });
   }
 
-  // ---- tiny probe to verify a URL is real JS (not HTML 404) before import ----
   function probeJs(url){
     return fetch(url, {cache:"no-cache"}).then(function(r){
       if (!r.ok) throw new Error("HTTP "+r.status+" "+r.statusText);
-      var ct = r.headers.get("content-type") || "";
       return r.text().then(function(txt){
         var head = txt.slice(0,512).toLowerCase();
         if (head.indexOf("<!doctype")>=0 || head.indexOf("<html")>=0) {
           throw new Error("Looks like HTML, not JS");
         }
-        // quick sanity: ensure file ends with something (avoid truncated)
         if (txt.length < 50) throw new Error("Suspiciously short JS");
         return true;
       });
     });
   }
 
-  // ---- h5wasm loader (local ESM, local UMD, then CDN UMD) ----
   var _h5 = null;
 
   function tryLocalBase(base){
@@ -82,19 +76,15 @@
     var esm = base + "/esm/h5wasm.js";
     var umd = base + "/h5wasm.js";
 
-    // 1) ESM (only if probe passes)
     return probeJs(esm).then(function(){
       log("h5wasm: ESM probe OK at "+esm);
-      // force absolute URL for import()
       var abs = location.origin + esm;
       return import(abs).then(function(ns){
         log("h5wasm: loaded ESM from "+base);
         _h5 = ns;
         return {ns:ns, mode:"esm", base:base};
       });
-    }).catch(function(esme){
-      log("h5wasm ESM failed ("+base+"): "+errMsg(esme));
-      // 2) UMD (only if probe passes)
+    }).catch(function(){
       return probeJs(umd).then(function(){
         log("h5wasm: UMD probe OK at "+umd);
         return new Promise(function(resolve,reject){
@@ -114,9 +104,6 @@
           s.onerror = function(ev){ reject(new Error("UMD script load failed ("+(ev&&ev.type||"error")+")")); };
           document.head.appendChild(s);
         });
-      }).catch(function(umde){
-        log("h5wasm UMD failed ("+base+"): "+errMsg(umde));
-        throw umde;
       });
     });
   }
@@ -146,7 +133,6 @@
 
   function ensureH5Wasm(){
     if (_h5) return Promise.resolve(_h5);
-    // Try local bases in sequence, then CDN
     var chain = Promise.reject(new Error("start"));
     for (var i=0;i<H5WASM_BASES.length;i++){
       (function(b){ chain = chain.catch(function(){ return tryLocalBase(b); }); })(H5WASM_BASES[i]);
@@ -158,7 +144,6 @@
                 });
   }
 
-  // ---- fetch helpers ----
   function fetchJson(url, label){
     return fetch(url, {cache:'no-cache'}).then(function(r){
       if (!r.ok) throw new Error(label+" fetch failed: "+r.status+" "+r.statusText+" ("+url+")");
@@ -180,7 +165,6 @@
     });
   }
 
-  // ---- local file read with progress ----
   function readFileWithProgress(file, onTick){
     var t0 = performance.now();
     var safe = $safe && $safe.checked;
@@ -215,7 +199,6 @@
     }
   }
 
-  // ---- AnnData helpers ----
   function readVarNames(h){
     var paths=["var/_index","var/index","var/feature_names"];
     for (var i=0;i<paths.length;i++){
@@ -265,7 +248,6 @@
     return out;
   }
 
-  // ---------- Boot ----------
   function boot(){
     if (booted) { $log.textContent=""; log("🔁 Rebooting …"); }
     if ($ping) $ping.disabled=false; if ($validate) $validate.disabled=false; if ($load) $load.disabled=false; if ($run) $run.disabled=false;
@@ -283,10 +265,13 @@
 
     rebind('ping', function(){ log('🏓 Ping OK — handlers are attached.'); });
 
+    // ---------- FIXED: use real D (= genes.length) for dummy validation run ----------
     rebind('validate', function(){
       log('▶ Validate clicked');
+      var genesLen = 0;
       fetchJson(GENES_URL,'genes.json').then(function(g){
-        log('OK genes: '+g.length);
+        genesLen = g.length;
+        log('OK genes: '+genesLen);
         return fetchJson(CLASSES_URL,'classes.json');
       }).then(function(c){
         log('OK classes: '+c.length);
@@ -304,10 +289,13 @@
         var eps=(navigator.gpu && !($safe && $safe.checked))?["webgpu","wasm"]:["wasm"];
         log('Creating ONNX session (sanity)…');
         return ORT.InferenceSession.create(MODEL_URL,{executionProviders:eps}).then(function(test){
-          var zeros=new ORT.Tensor('float32', new Float32Array(1), [1,1]);
+          // >>> USE CORRECT SHAPE: [1, D]
+          var D = genesLen;
+          var zeros = new ORT.Tensor('float32', new Float32Array(D), [1, D]);
           var inputs={}; inputs[test.inputNames[0]]=zeros;
           return test.run(inputs).then(function(out){
-            var any = out[test.outputNames[0]]; if (!any){ for (var k in out){ if (Object.prototype.hasOwnProperty.call(out,k)){ any=out[k]; break; } }
+            var any = out[test.outputNames[0]]; 
+            if (!any){ for (var k in out){ if (Object.prototype.hasOwnProperty.call(out,k)){ any=out[k]; break; } }
             }
             log('Dummy inference ok. Output len: '+(any&&any.data?any.data.length:'unknown'));
             log('✅ Assets validate successfully.');
