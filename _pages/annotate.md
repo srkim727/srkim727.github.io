@@ -3,7 +3,8 @@ title: Annotate
 layout: post
 permalink: /annotate/
 ---
-{% raw %}
+
+{% raw %u}
 <div id="ann-app" style="max-width:900px">
   <h2>Annotate .h5ad (client-side)</h2>
   <p>Input <code>.h5ad</code> must have <code>X</code> = 1e4-normalized + log1p.</p>
@@ -43,12 +44,12 @@ permalink: /annotate/
 </div>
 
 <script type="module">
-  // ---- Config (adjust paths if needed) ----
-  const MODEL_URL   = "{{ '/assets/models/Level1/model.onnx'   | relative_url }}";
-  const GENES_URL   = "{{ '/assets/models/Level1/genes.json'   | relative_url }}";
-  const CLASSES_URL = "{{ '/assets/models/Level1/classes.json' | relative_url }}";
+  // ---------- FIX A: plain root-relative URLs (no Liquid) ----------
+  const MODEL_URL   = "/assets/models/Level1/model.onnx";
+  const GENES_URL   = "/assets/models/Level1/genes.json";
+  const CLASSES_URL = "/assets/models/Level1/classes.json";
 
-  // ---- UI refs ----
+  // ---------- UI ----------
   const $f = document.getElementById('file');
   const $validate = document.getElementById('validate');
   const $load = document.getElementById('load');
@@ -70,11 +71,11 @@ permalink: /annotate/
   window.addEventListener('error', e => log('Error: ' + e.message));
   window.addEventListener('unhandledrejection', e => log('Promise Rejection: ' + (e.reason?.message || e.reason)));
 
-  // ---- State ----
+  // ---------- State ----------
   let genes=null, classes=null, fileBuf=null, h5=null, shape=null, varNames=null, obsNames=null;
   let ort=null, h5wasm=null, session=null;
 
-  // ---- CDN fallback loader ----
+  // ---------- CDN fallback loader ----------
   async function importWithFallback(url1, url2, isModule=true){
     try {
       return isModule ? await import(url1) : await new Promise((res, rej)=>{
@@ -88,14 +89,13 @@ permalink: /annotate/
     }
   }
 
-  // ---- Networking helpers (with clear errors) ----
+  // ---------- Fetch helpers ----------
   async function fetchJson(url, label){
     const r = await fetch(url, {cache:'no-cache'});
     if (!r.ok) throw new Error(label + ' fetch failed: ' + r.status + ' ' + r.statusText + ' ('+url+')');
     return r.json();
   }
   async function fetchHeadSize(url, label){
-    // Try HEAD first; if denied, fallback to GET without body read
     try{
       const h = await fetch(url, {method:'HEAD', cache:'no-cache'});
       if (h.ok){
@@ -106,12 +106,11 @@ permalink: /annotate/
     const r = await fetch(url, {method:'GET', cache:'no-cache'});
     if (!r.ok) throw new Error(label + ' fetch failed: ' + r.status + ' ' + r.statusText + ' ('+url+')');
     const len = r.headers.get('content-length');
-    // we won't read the body to keep it quick
     r.body?.cancel?.();
     return len ? Number(len) : null;
   }
 
-  // ---- File read with progress + Safari fallback ----
+  // ---------- File read with progress + Safari fallback ----------
   async function readFileWithProgress(file, onTick){
     const t0=performance.now();
     if (!$safe.checked && file.stream && typeof file.stream==='function'){
@@ -140,7 +139,7 @@ permalink: /annotate/
     return new Uint8Array(buf);
   }
 
-  // ---- HDF5 helpers ----
+  // ---------- HDF5 helpers ----------
   function readVarNames(h){
     for (const p of ["var/_index","var/index","var/feature_names"]){
       const ds=h.get(p); if (ds?.isDataset){
@@ -202,12 +201,11 @@ permalink: /annotate/
 
       log('Checking model.onnx …');
       const bytes = await fetchHeadSize(MODEL_URL, 'model.onnx');
-      log('model.onnx size: ' + (bytes ? (bytes/1048576).toFixed(2)+' MB' : 'unknown (server did not return length)'));
+      log('model.onnx size: ' + (bytes ? (bytes/1048576).toFixed(2)+' MB' : 'unknown'));
 
-      // Try loading ORT + creating a tiny session (zeros) to be sure
+      // Try loading ORT + creating a tiny session (zeros)
       if (!ort){
-        await importWithFallback("https://cdn.jsdelivr.net/npm/onnxruntime-web/dist/ort.min.js",
-                                 "https://unpkg.com/onnxruntime-web/dist/ort.min.js", false);
+        await import("https://cdn.jsdelivr.net/npm/onnxruntime-web/dist/ort.min.js");
         ort = window.ort;
       }
       ort.env.wasm.simd = !$safe.checked;
@@ -216,41 +214,34 @@ permalink: /annotate/
 
       log('Creating ONNX session (sanity)…');
       const eps = (navigator.gpu && !$safe.checked) ? ["webgpu","wasm"] : ["wasm"];
-      const testSession = await ort.InferenceSession.create(MODEL_URL, { executionProviders: eps });
+      const test = await ort.InferenceSession.create(MODEL_URL, { executionProviders: eps });
 
-      // Make a minimal dummy run with zeros: shape (1, D) using D from genes.json we fetched
       const D = g.length;
-      const inpName = testSession.inputNames[0];
-      const outNames = testSession.outputNames;
       const zeros = new ort.Tensor('float32', new Float32Array(D), [1, D]);
-      const out = await testSession.run({ [inpName]: zeros });
-      const outKey = outNames.find(n => n.includes('prob') || n.includes('logit')) || Object.keys(out)[0];
-      const flat = out[outKey]?.data;
-      log('Dummy inference ok. Output len: ' + (flat?.length ?? 'unknown'));
+      const out = await test.run({ [test.inputNames[0]]: zeros });
+      const any = out[test.outputNames[0]] || Object.values(out)[0];
+      log('Dummy inference ok. Output len: ' + (any?.data?.length ?? 'unknown'));
       log('✅ Assets validate successfully.');
     }catch(e){
       log('🛑 Validate failed: ' + (e.message || e));
-      log('Hint: open each URL directly in a new tab to verify it loads:');
+      log('Hint: open these URLs in a new tab to verify:');
       log(' - ' + GENES_URL);
       log(' - ' + CLASSES_URL);
       log(' - ' + MODEL_URL);
     }
   };
 
-  // ===== Load file (read + parse headers) =====
+  // ===== Load file =====
   $load.onclick = async ()=>{
     $dl.innerHTML=''; $log.textContent=''; setUp(0); setSpd(0); setAn(0); $run.disabled=true;
 
     try{
-      // sidecars first (so we know D)
       genes   = await fetchJson(GENES_URL, 'genes.json');
       classes = await fetchJson(CLASSES_URL, 'classes.json');
       log('genes: ' + genes.length + ' | classes: ' + classes.length);
 
-      // libs (lazy)
       if (!h5wasm){
-        h5wasm = await importWithFallback("https://cdn.jsdelivr.net/npm/h5wasm@0.5.0/dist/esm/h5wasm.js",
-                                          "https://unpkg.com/h5wasm@0.5.0/dist/esm/h5wasm.js", true);
+        h5wasm = await import("https://cdn.jsdelivr.net/npm/h5wasm@0.5.0/dist/esm/h5wasm.js");
       }
 
       const file = $f.files?.[0];
@@ -258,7 +249,6 @@ permalink: /annotate/
       const mb = (file.size/1048576).toFixed(2);
       $meta.textContent = `Selected: ${file.name} (${mb} MB) | Model genes: ${genes.length} | Classes: ${classes.length}`;
 
-      // read file
       fileBuf = await readFileWithProgress(file, (pct, mbps)=>{ setUp(pct); setSpd(mbps); });
       setUp(100);
 
@@ -279,20 +269,18 @@ permalink: /annotate/
     }
   };
 
-  // ===== Run (extract → onnx → csv) =====
+  // ===== Run =====
   $run.onclick = async ()=>{
     try{
       setAn(0);
       if (!ort){
-        await importWithFallback("https://cdn.jsdelivr.net/npm/onnxruntime-web/dist/ort.min.js",
-                                 "https://unpkg.com/onnxruntime-web/dist/ort.min.js", false);
+        await import("https://cdn.jsdelivr.net/npm/onnxruntime-web/dist/ort.min.js");
         ort = window.ort;
       }
       ort.env.wasm.simd = !$safe.checked;
       ort.env.wasm.numThreads = $safe.checked ? 1 : Math.min((navigator.hardwareConcurrency||4),8);
       ort.env.wasm.proxy = !$safe.checked;
 
-      // features
       const X = h5.get("X");
       const n = shape[0], D = genes.length, C = classes.length;
       let feats;
@@ -311,12 +299,10 @@ permalink: /annotate/
       }
       setAn(30);
 
-      // session
       const eps = (navigator.gpu && !$safe.checked) ? ["webgpu","wasm"] : ["wasm"];
       session = await ort.InferenceSession.create(MODEL_URL, { executionProviders: eps });
       setAn(40);
 
-      // chunked inference
       const Nbatch = Math.max(2000, Number($batch.value)||8000);
       const probs = new Float32Array(n*C);
       for (let start=0; start<n; start+=Nbatch){
@@ -339,7 +325,6 @@ permalink: /annotate/
         await new Promise(r=>setTimeout(r,0));
       }
 
-      // csv
       const header = ["cell_id","Level1|predicted_labels","Level1|conf_score","Level1|cert_score"];
       const rows = new Array(n);
       for (let i=0;i<n;i++){
