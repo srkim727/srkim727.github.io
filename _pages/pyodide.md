@@ -7,81 +7,94 @@ layout: post
 
 {% raw %}
 
+<!-- Robust global loader for Pyodide; the JS below waits for it before booting. -->
+<script defer src="https://cdn.jsdelivr.net/pyodide/v0.26.3/full/pyodide.js" id="pyodideScript"></script>
+
 <h2>Annotate Cells from CSV/CSV.GZ (Pyodide, CellTypist-style logistic)</h2>
 <p>
-  Model is expected at <code>/assets/models/level1_model_portable.npz</code>.<br>
-  Input must be cells × genes (1e4-normalized + <code>log1p</code>). Output is <code>pred.csv</code>.
+  Model path: <code>/assets/models/level1_model_portable.npz</code><br>
+  Input: cells × genes; already 1e4-normalized + <code>log1p</code>.<br>
+  Output: <code>pred.csv</code> (<code>cell_id, predicted_label, conf_score, cert_score</code>).
 </p>
 
-<!-- Utility controls -->
+<!-- Controls (exactly five buttons, in order) -->
 <div style="display:flex;flex-wrap:wrap;gap:10px;margin-bottom:8px;">
-  <button id="bootBtn" type="button">Boot environment</button>
-  <button id="validateBtn" type="button">Validate assets</button>
-</div>
-
-<!-- Main flow -->
-<div style="display:flex;flex-wrap:wrap;gap:10px;align-items:center;">
-  <!-- 1) Choose file -->
-  <input type="file" id="csvInput" accept=".csv,.csv.gz,text/csv" />
-  <!-- 2) Upload -->
-  <button id="uploadBtn" type="button" disabled>Upload</button>
-  <!-- 3) Run -->
-  <button id="runBtn" type="button" disabled>Run analysis</button>
-  <!-- 4) Download -->
-  <button id="downloadBtn" type="button" disabled>Download</button>
+  <button id="bootBtn" type="button">Boot</button>
+  <button id="pingBtn" type="button" disabled>Ping</button>
+  <button id="validateBtn" type="button" disabled>Validate assets</button>
+  <label for="csvInput" class="buttonlike" style="display:inline-block;">
+    <input type="file" id="csvInput" accept=".csv,.csv.gz,text/csv" style="display:none;">
+    <button id="loadFileBtn" type="button" disabled>Load file</button>
+  </label>
+  <button id="runBtn" type="button" disabled>Run</button>
 </div>
 
 <progress id="uploadProg" max="100" value="0" style="width:100%;margin-top:8px;"></progress>
 <div id="speedLabel" style="font-size:12px;color:#888;margin-bottom:8px;">0 MB/s</div>
 <progress id="procProg" max="100" value="0" style="width:100%;"></progress>
 
+<p id="downloadWrap" style="display:none;margin-top:8px;">
+  <a id="downloadLink" download="pred.csv">Download pred.csv</a>
+</p>
+
 <details open style="margin-top:10px;">
   <summary><strong>Boot & run log</strong></summary>
-  <pre id="log" style="background:#0a0f17;color:#e8eef7;padding:10px;border-radius:6px;overflow:auto;height:300px;white-space:pre-wrap;"></pre>
+  <pre id="log" style="background:#0a0f17;color:#e8eef7;padding:10px;border-radius:6px;overflow:auto;height:320px;white-space:pre-wrap;"></pre>
 </details>
 
 <script>
 (function(){
-  // --- Minimal DOM helpers ---
+  // --- Helpers ---
   function $(id){ return document.getElementById(id); }
-  function log(msg){ try{ var el=$("log"); el.textContent += msg + "\\n"; el.scrollTop = el.scrollHeight; }catch(_){} }
-  function setDisabled(id, v){ var el=$(id); if(el) el.disabled = !!v; }
-
-  // --- State ---
-  var pyodide=null, FS=null;
-  var pyReady=false, libsReady=false, modelReady=false, uploaded=false;
-  var csvFile=null, resultUrl=null;
-  var MODEL_URL = "/assets/models/level1_model_portable.npz";
-
-  // --- File reader with progress ---
-  function readFileWithProgress(file, onProgress){
-    return new Promise(function(resolve, reject){
-      var reader = new FileReader(), last = performance.now(), lastLoaded = 0;
-      reader.onprogress = function(e){
-        try{
-          if(e.lengthComputable){
-            var pct = Math.round((e.loaded/e.total)*100);
-            $("uploadProg").value = pct;
-            var now = performance.now();
-            var rate = (e.loaded-lastLoaded)/((now-last)/1000); // bytes/s
-            $("speedLabel").textContent = (rate/1048576).toFixed(2) + " MB/s";
-            last = now; lastLoaded = e.loaded;
-          }
-        }catch(err){ log("progress error: " + err); }
+  function log(m){ const el=$("log"); el.textContent += m + "\\n"; el.scrollTop = el.scrollHeight; }
+  function setDisabled(elOrId, v){
+    const el = typeof elOrId==="string" ? $(elOrId) : elOrId;
+    if(el) el.disabled = !!v;
+  }
+  function waitForGlobal(fnName, timeoutMs){
+    return new Promise((resolve, reject)=>{
+      const t0 = performance.now();
+      (function check(){
+        if (typeof globalThis[fnName] === "function") return resolve();
+        if (performance.now() - t0 > timeoutMs) return reject(new Error("Timeout waiting for "+fnName));
+        setTimeout(check, 100);
+      })();
+    });
+  }
+  function readFileWithProgress(file){
+    return new Promise((resolve, reject)=>{
+      const reader = new FileReader();
+      let last = performance.now(), lastLoaded = 0;
+      reader.onprogress = (e)=>{
+        if(e.lengthComputable){
+          const pct = Math.round((e.loaded/e.total)*100);
+          $("uploadProg").value = pct;
+          const now = performance.now();
+          const rate = (e.loaded-lastLoaded)/((now-last)/1000); // bytes/s
+          $("speedLabel").textContent = (rate/1048576).toFixed(2) + " MB/s";
+          last = now; lastLoaded = e.loaded;
+        }
       };
-      reader.onload = function(){ resolve(new Uint8Array(reader.result)); };
-      reader.onerror = function(){ reject(reader.error || new Error("FileReader error")); };
+      reader.onload  = ()=> resolve(new Uint8Array(reader.result));
+      reader.onerror = ()=> reject(reader.error || new Error("FileReader error"));
       reader.readAsArrayBuffer(file);
     });
   }
 
-  // --- Boot (Pyodide + numpy/pandas) ---
-  async function bootEnv(){
+  // --- State ---
+  const MODEL_URL = "/assets/models/level1_model_portable.npz";
+  let pyodide=null, FS=null;
+  let pyReady=false, libsReady=false, modelReady=false, fileReady=false, uploaded=false;
+  let fileBytes=null, resultUrl=null;
+
+  // --- Boot ---
+  $("bootBtn").addEventListener("click", async ()=>{
     try{
       setDisabled("bootBtn", true);
-      log("⏳ Boot: loading Pyodide…");
-      const { loadPyodide } = await import("https://cdn.jsdelivr.net/pyodide/v0.26.3/full/pyodide.js");
-      pyodide = await loadPyodide({ indexURL: "https://cdn.jsdelivr.net/pyodide/v0.26.3/full/" });
+      log("⏳ Boot: waiting for pyodide.js …");
+      await waitForGlobal("loadPyodide", 20000);
+      log("⏳ Boot: initializing Pyodide…");
+      pyodide = await globalThis.loadPyodide({ indexURL: "https://cdn.jsdelivr.net/pyodide/v0.26.3/full/" });
       FS = pyodide.FS;
       pyReady = true;
       log("✅ Pyodide " + pyodide.version + " loaded.");
@@ -90,91 +103,94 @@ layout: post
       await pyodide.runPythonAsync("import numpy as np, pandas as pd, gzip, io, json, os");
       libsReady = true;
       log("✅ Python libs imported.");
-    }catch(err){
-      log("❌ Boot failed: " + (err && err.message ? err.message : err));
-    }finally{
-      setDisabled("bootBtn", false);
-      // Refresh run-button state
-      setDisabled("runBtn", !(uploaded && modelReady));
-    }
-  }
 
-  // --- Validate assets (model existence + size) ---
-  async function validateAssets(){
-    log("🔎 Validating model at " + MODEL_URL + " …");
+      setDisabled("pingBtn", false);
+      setDisabled("validateBtn", false);
+      setDisabled("loadFileBtn", false);
+    }catch(err){
+      log("❌ Boot failed: " + (err?.message || err));
+      setDisabled("bootBtn", false);
+      return;
+    }
+    setDisabled("bootBtn", false);
+  });
+
+  // --- Ping (sanity) ---
+  $("pingBtn").addEventListener("click", async ()=>{
+    if(!pyReady){ alert("Boot first."); return; }
     try{
-      // Prefer HEAD, fall back to GET if HEAD blocked
+      log("🔔 Ping: running a tiny Python check…");
+      const out = await pyodide.runPythonAsync(`
+import numpy as np, pandas as pd, sys
+print("numpy", np.__version__)
+print("pandas", pd.__version__)
+a = np.array([1,2,3]).sum()
+print("sum:", int(a))
+"OK"
+      `);
+      log("✅ Ping OK: " + out);
+    }catch(err){
+      log("❌ Ping failed: " + (err?.message || err));
+    }
+  });
+
+  // --- Validate assets (model) ---
+  $("validateBtn").addEventListener("click", async ()=>{
+    log("🔎 Validate: checking " + MODEL_URL + " …");
+    try{
       let resp = await fetch(MODEL_URL, { method: "HEAD", cache: "no-store" });
       if(!resp.ok){
         log("ℹ️ HEAD got " + resp.status + ", trying GET…");
         resp = await fetch(MODEL_URL, { cache: "no-store" });
       }
-      if(!resp.ok){
-        log("❌ Model fetch failed: HTTP " + resp.status);
-        modelReady = false; setDisabled("runBtn", true);
-        return;
-      }
-      const len = resp.headers.get("content-length");
-      log("✅ Model reachable. " + (len ? ("Size: " + (Number(len)/1e6).toFixed(2) + " MB") : "Size unknown"));
-      // If Pyodide is ready, also load it into FS for the run step
-      if(pyReady){
-        const buf = new Uint8Array(await resp.arrayBuffer());
-        FS.writeFile("/tmp_model", buf);
-        modelReady = true;
-        log("✅ Model loaded into /tmp_model");
-        setDisabled("runBtn", !uploaded);
-      }else{
-        log("ℹ️ Pyodide not booted yet; will load model into FS after boot.");
-      }
+      if(!resp.ok) throw new Error("HTTP " + resp.status);
+      const size = resp.headers.get("content-length");
+      log("✅ Model reachable" + (size ? (" (" + (Number(size)/1e6).toFixed(2) + " MB)") : "") + ".");
+
+      if(!pyReady){ log("ℹ️ Boot first to load model into FS."); return; }
+      const buf = new Uint8Array(await resp.arrayBuffer());
+      FS.writeFile("/tmp_model", buf);
+      modelReady = true;
+      log("✅ Model loaded into /tmp_model");
+      setDisabled("runBtn", !(uploaded && modelReady));
     }catch(err){
-      log("❌ Validate error: " + (err && err.message ? err.message : err));
-      modelReady = false; setDisabled("runBtn", true);
+      modelReady = false;
+      setDisabled("runBtn", true);
+      log("❌ Validate failed: " + (err?.message || err));
     }
-  }
+  });
 
-  // --- Choose file -> enable Upload ---
-  function onChooseFile(e){
-    try{
-      var f = e.target.files && e.target.files[0];
-      if(f){
-        log("📁 Selected: " + f.name);
-        setDisabled("uploadBtn", false);
-        // Reset downstream state
-        uploaded = false;
-        setDisabled("runBtn", true);
-        setDisabled("downloadBtn", true);
-        if(resultUrl){ URL.revokeObjectURL(resultUrl); resultUrl = null; }
-      }else{
-        setDisabled("uploadBtn", true);
-      }
-    }catch(err){ log("choose-file error: " + err); }
-  }
+  // --- Load file (choose + read to memory; write to FS) ---
+  $("loadFileBtn").addEventListener("click", ()=>{
+    if(!pyReady){ alert("Boot first."); return; }
+    $("csvInput").click();
+  });
 
-  // --- Upload -> write to FS ---
-  async function onUpload(){
+  $("csvInput").addEventListener("change", async (e)=>{
+    const f = e.target.files && e.target.files[0];
+    if(!f){ return; }
     try{
-      var input = $("csvInput");
-      if(!input || !input.files || !input.files[0]){ alert("Choose a file first."); return; }
-      if(!pyReady){ alert("Boot the environment first."); return; }
-      var f = input.files[0];
+      log("📁 Selected: " + f.name);
       const bytes = await readFileWithProgress(f);
-      csvFile = { name: f.name, bytes: bytes };
+      fileBytes = bytes;
+      fileReady = true;
       FS.writeFile("/tmp_input", bytes);
       uploaded = true;
-      log("📤 Upload OK → /tmp_input (" + (bytes.length/1e6).toFixed(2) + " MB)");
-      setDisabled("runBtn", !modelReady);
-      if(!modelReady) log("ℹ️ Model not loaded yet. Click ‘Validate assets’ or ‘Boot environment’ first.");
+      log("📤 Loaded into FS → /tmp_input (" + (bytes.length/1e6).toFixed(2) + " MB)");
+      setDisabled("runBtn", !(uploaded && modelReady));
+      if(!modelReady) log("ℹ️ Validate assets to load model, then Run will enable.");
     }catch(err){
-      log("❌ Upload failed: " + (err && err.message ? err.message : err));
+      log("❌ File load failed: " + (err?.message || err));
+      fileReady = false; uploaded = false;
+      setDisabled("runBtn", true);
     }
-  }
+  });
 
   // --- Run analysis ---
-  async function onRun(){
-    if(!uploaded){ alert("Upload a CSV first."); return; }
+  $("runBtn").addEventListener("click", async ()=>{
+    if(!uploaded){ alert("Load a CSV first."); return; }
     if(!modelReady){ alert("Validate/Load model first."); return; }
-    if(!libsReady){ alert("Boot environment first."); return; }
-
+    if(!libsReady){ alert("Boot first."); return; }
     try{
       $("procProg").value = 5;
       log("▶️ Running annotation…");
@@ -246,45 +262,16 @@ print('DONE', X.shape, len(loaded['classes_']))
       const blob  = new Blob([bytes], { type: "text/csv" });
       if(resultUrl){ URL.revokeObjectURL(resultUrl); }
       resultUrl = URL.createObjectURL(blob);
-      setDisabled("downloadBtn", false);
-      log("✅ pred.csv is ready.");
+      $("downloadWrap").style.display = "block";
+      $("downloadLink").href = resultUrl;
+      log("✅ pred.csv ready. Use the link above to download.");
     }catch(err){
-      log("❌ Run error: " + (err && err.message ? err.message : err));
+      log("❌ Run error: " + (err?.message || err));
     }
-  }
-
-  // --- Download ---
-  function onDownload(){
-    try{
-      if(!resultUrl){ alert("No results yet."); return; }
-      var a = document.createElement("a");
-      a.href = resultUrl;
-      a.download = "pred.csv";
-      document.body.appendChild(a);
-      a.click();
-      a.remove();
-      log("⬇️ Download triggered.");
-    }catch(err){
-      log("download error: " + err);
-    }
-  }
-
-  // --- Wire all handlers after DOM ready ---
-  window.addEventListener("DOMContentLoaded", function(){
-    $("csvInput").addEventListener("change", onChooseFile);
-    $("uploadBtn").addEventListener("click", onUpload);
-    $("runBtn").addEventListener("click", onRun);
-    $("downloadBtn").addEventListener("click", onDownload);
-    $("bootBtn").addEventListener("click", bootEnv);
-    $("validateBtn").addEventListener("click", async function(){
-      // load into FS if Pyodide is already up, otherwise just check reachability
-      await validateAssets();
-      // If model reached but Pyodide wasn’t booted, load it after boot too
-      if(!pyReady) log("ℹ️ After Boot, press ‘Validate assets’ again to load into FS.");
-    });
-
-    log("Page loaded. 1) Boot environment → 2) Validate assets → 3) Choose file → 4) Upload → 5) Run → 6) Download");
   });
+
+  // Initial hint
+  log("Flow → 1) Boot  2) Ping  3) Validate assets  4) Load file  5) Run");
 })();
 </script>
 
