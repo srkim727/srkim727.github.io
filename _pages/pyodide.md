@@ -10,7 +10,7 @@ layout: post
 <!-- Load Pyodide from the official CDN -->
 <script defer src="https://cdn.jsdelivr.net/pyodide/v0.26.3/full/pyodide.js"></script>
 
-<h2>bAnnotate Cells from CSV/CSV.GZ (Pyodide, CellTypist-style logistic)</h2>
+<h2>cAnnotate Cells from CSV/CSV.GZ (Pyodide, CellTypist-style logistic)</h2>
 <p>
   Model: <code>/assets/models/level1_model_portable.npz</code><br>
   Input: cells × genes; 1e4-normalized + <code>log1p</code><br>
@@ -312,4 +312,55 @@ part = np.partition(P, -2, axis=1)[:, -2:]
 cert = part[:,1] - part[:,0]
 
 stage(95, "Writing output")
-out = pd.DataFrame({'cell_id':_
+out = pd.DataFrame({'cell_id': X.index, 'predicted_label': labels, 'conf_score': top, 'cert_score': cert})
+out.to_csv('/pred.csv', index=False)
+print('DONE', X.shape, len(loaded['classes_']))
+`;
+
+    // Capture staged progress via stdout/stderr (Pyodide 0.26.x)
+    const unhookOut = pyodide.setStdout({
+      batched: (s) => {
+        (s || "").split(/\r?\n/).forEach(line=>{
+          if(!line) return;
+          if(line.startsWith("__STAGE__:")){
+            const parts = line.trim().split(":");
+            const pct = Math.max(0, Math.min(100, parseInt(parts[1]||"0",10)));
+            const msg = parts.slice(2).join(":") || "Working…";
+            $("procProg").value = pct;
+            $("procStatus").textContent = msg;
+          } else {
+            log(line);
+          }
+        });
+      }
+    });
+    const unhookErr = pyodide.setStderr({
+      batched: (s) => { s && s.trim() && log("ERR: " + s); }
+    });
+
+    try{
+      await pyodide.runPythonAsync(code); // IMPORTANT: no stdout option here
+      $("procProg").value = 100;
+      $("procStatus").textContent = "Complete";
+
+      const bytes = FS.readFile("/pred.csv");
+      const blob  = new Blob([bytes], { type: "text/csv" });
+      if(resultUrl){ URL.revokeObjectURL(resultUrl); }
+      resultUrl = URL.createObjectURL(blob);
+      $("downloadWrap").style.display = "block";
+      $("downloadLink").href = resultUrl;
+      log("✅ pred.csv ready. Use the link above to download.");
+    }catch(err){
+      $("procStatus").textContent = "❌ Error";
+      log("❌ Run error: " + (err?.message || err));
+    }finally{
+      try{ unhookOut && unhookOut(); }catch(_){}
+      try{ unhookErr && unhookErr(); }catch(_){}
+    }
+  });
+
+  log("Flow → 1) Boot  2) Ping  3) Validate assets  4) Load file  5) Run");
+})();
+</script>
+
+{% endraw %}
