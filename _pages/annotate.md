@@ -3,7 +3,6 @@ title: Annotate
 layout: post
 permalink: /annotate/
 ---
-
 {% raw %}
 <div id="ann-app" style="max-width:900px">
   <h2>Annotate .h5ad (client-side)</h2>
@@ -11,13 +10,14 @@ permalink: /annotate/
 
   <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
     <input type="file" id="file" accept=".h5ad">
+    <button id="validate">Validate assets</button>
     <button id="load">Load file</button>
     <button id="run" disabled>Run</button>
     <label style="display:inline-flex;align-items:center;gap:6px;">
       Batch <input id="batch" type="number" min="2000" step="1000" value="8000" style="width:80px">
     </label>
     <label style="display:inline-flex;align-items:center;gap:6px;">
-      Safe mode <input id="safe" type="checkbox">
+      Safe mode <input id="safe" type="checkbox" checked>
     </label>
   </div>
 
@@ -36,39 +36,45 @@ permalink: /annotate/
     <span id="anPct" style="font-variant-numeric:tabular-nums">0%</span>
   </div>
 
-  <div id="status" style="margin:6px 0; font-size:.95em;"></div>
+  <pre id="log" style="background:#0b1020;color:#e8eaf6;padding:10px;border-radius:6px;max-height:280px;overflow:auto;"></pre>
   <div id="download" style="margin-top:6px"></div>
 
   <style>#ann-app .clipboard{display:none!important}</style>
 </div>
 
 <script type="module">
-  // ======= Config =======
+  // ---- Config (adjust paths if needed) ----
   const MODEL_URL   = "{{ '/assets/models/Level1/model.onnx'   | relative_url }}";
   const GENES_URL   = "{{ '/assets/models/Level1/genes.json'   | relative_url }}";
   const CLASSES_URL = "{{ '/assets/models/Level1/classes.json' | relative_url }}";
 
-  // ======= UI refs =======
-  const $f=document.getElementById('file'), $load=document.getElementById('load'), $run=document.getElementById('run');
-  const $meta=document.getElementById('meta'), $status=document.getElementById('status'), $dl=document.getElementById('download');
+  // ---- UI refs ----
+  const $f = document.getElementById('file');
+  const $validate = document.getElementById('validate');
+  const $load = document.getElementById('load');
+  const $run  = document.getElementById('run');
+  const $meta = document.getElementById('meta');
+  const $dl   = document.getElementById('download');
+  const $log  = document.getElementById('log');
+
   const $upBar=document.getElementById('upBar'), $upPct=document.getElementById('upPct'), $upSpd=document.getElementById('upSpd');
   const $anBar=document.getElementById('anBar'), $anPct=document.getElementById('anPct');
   const $batch=document.getElementById('batch'), $safe=document.getElementById('safe');
 
+  const log = m => { $log.textContent += m + "\\n"; $log.scrollTop = $log.scrollHeight; };
   const setUp=v=>{ $upBar.value=v; $upPct.textContent=Math.round(v)+'%'; };
   const setSpd=v=>{ $upSpd.textContent=(v||0).toFixed(2)+' MB/s'; };
   const setAn=v=>{ $anBar.value=v; $anPct.textContent=Math.round(v)+'%'; };
-  const say=t=>{ $status.textContent=t; };
 
-  // Show ANY runtime error on the page (not only in console)
-  window.addEventListener('error', e => say('Error: ' + e.message));
-  window.addEventListener('unhandledrejection', e => say('Promise Rejection: ' + (e.reason?.message || e.reason)));
+  // Show ANY runtime error on the page
+  window.addEventListener('error', e => log('Error: ' + e.message));
+  window.addEventListener('unhandledrejection', e => log('Promise Rejection: ' + (e.reason?.message || e.reason)));
 
-  // ======= State =======
+  // ---- State ----
   let genes=null, classes=null, fileBuf=null, h5=null, shape=null, varNames=null, obsNames=null;
-  let ort=null, h5wasm=null;
+  let ort=null, h5wasm=null, session=null;
 
-  // ======= CDN fallback loader =======
+  // ---- CDN fallback loader ----
   async function importWithFallback(url1, url2, isModule=true){
     try {
       return isModule ? await import(url1) : await new Promise((res, rej)=>{
@@ -82,7 +88,30 @@ permalink: /annotate/
     }
   }
 
-  // ======= File read (with speed + Safari fallback) =======
+  // ---- Networking helpers (with clear errors) ----
+  async function fetchJson(url, label){
+    const r = await fetch(url, {cache:'no-cache'});
+    if (!r.ok) throw new Error(label + ' fetch failed: ' + r.status + ' ' + r.statusText + ' ('+url+')');
+    return r.json();
+  }
+  async function fetchHeadSize(url, label){
+    // Try HEAD first; if denied, fallback to GET without body read
+    try{
+      const h = await fetch(url, {method:'HEAD', cache:'no-cache'});
+      if (h.ok){
+        const len = h.headers.get('content-length');
+        return len ? Number(len) : null;
+      }
+    }catch(_e){}
+    const r = await fetch(url, {method:'GET', cache:'no-cache'});
+    if (!r.ok) throw new Error(label + ' fetch failed: ' + r.status + ' ' + r.statusText + ' ('+url+')');
+    const len = r.headers.get('content-length');
+    // we won't read the body to keep it quick
+    r.body?.cancel?.();
+    return len ? Number(len) : null;
+  }
+
+  // ---- File read with progress + Safari fallback ----
   async function readFileWithProgress(file, onTick){
     const t0=performance.now();
     if (!$safe.checked && file.stream && typeof file.stream==='function'){
@@ -111,7 +140,7 @@ permalink: /annotate/
     return new Uint8Array(buf);
   }
 
-  // ======= HDF5 helpers =======
+  // ---- HDF5 helpers ----
   function readVarNames(h){
     for (const p of ["var/_index","var/index","var/feature_names"]){
       const ds=h.get(p); if (ds?.isDataset){
@@ -160,129 +189,174 @@ permalink: /annotate/
     return out;
   }
 
-  // ======= Load file =======
-  $load.onclick = async ()=>{
-    $dl.innerHTML=''; $status.textContent=''; setUp(0); setSpd(0); setAn(0); $run.disabled=true;
+  // ===== Validate assets =====
+  $validate.onclick = async ()=>{
+    try{
+      log('Checking genes.json …');
+      const g = await fetchJson(GENES_URL, 'genes.json');
+      log('OK genes: ' + g.length);
 
-    const file=$f.files?.[0];
-    if (!file){ say('Pick a .h5ad first.'); return; }
+      log('Checking classes.json …');
+      const c = await fetchJson(CLASSES_URL, 'classes.json');
+      log('OK classes: ' + c.length);
 
-    // sidecars (small)
-    const [g,c]=await Promise.all([fetch(GENES_URL).then(r=>r.json()), fetch(CLASSES_URL).then(r=>r.json())]);
-    genes=g; classes=c;
+      log('Checking model.onnx …');
+      const bytes = await fetchHeadSize(MODEL_URL, 'model.onnx');
+      log('model.onnx size: ' + (bytes ? (bytes/1048576).toFixed(2)+' MB' : 'unknown (server did not return length)'));
 
-    // libs (lazy, with fallback CDNs)
-    if (!h5wasm){
-      try {
-        h5wasm = await importWithFallback("https://cdn.jsdelivr.net/npm/h5wasm@0.5.0/dist/esm/h5wasm.js",
-                                          "https://unpkg.com/h5wasm@0.5.0/dist/esm/h5wasm.js", true);
-      } catch (e) { say("Failed to load h5wasm"); throw e; }
-    }
-    if (!ort){
-      try {
+      // Try loading ORT + creating a tiny session (zeros) to be sure
+      if (!ort){
         await importWithFallback("https://cdn.jsdelivr.net/npm/onnxruntime-web/dist/ort.min.js",
                                  "https://unpkg.com/onnxruntime-web/dist/ort.min.js", false);
         ort = window.ort;
-      } catch (e) { say("Failed to load onnxruntime-web"); throw e; }
-      // safer defaults; boost if not in safe mode
+      }
       ort.env.wasm.simd = !$safe.checked;
       ort.env.wasm.numThreads = $safe.checked ? 1 : Math.min((navigator.hardwareConcurrency||4),8);
       ort.env.wasm.proxy = !$safe.checked;
+
+      log('Creating ONNX session (sanity)…');
+      const eps = (navigator.gpu && !$safe.checked) ? ["webgpu","wasm"] : ["wasm"];
+      const testSession = await ort.InferenceSession.create(MODEL_URL, { executionProviders: eps });
+
+      // Make a minimal dummy run with zeros: shape (1, D) using D from genes.json we fetched
+      const D = g.length;
+      const inpName = testSession.inputNames[0];
+      const outNames = testSession.outputNames;
+      const zeros = new ort.Tensor('float32', new Float32Array(D), [1, D]);
+      const out = await testSession.run({ [inpName]: zeros });
+      const outKey = outNames.find(n => n.includes('prob') || n.includes('logit')) || Object.keys(out)[0];
+      const flat = out[outKey]?.data;
+      log('Dummy inference ok. Output len: ' + (flat?.length ?? 'unknown'));
+      log('✅ Assets validate successfully.');
+    }catch(e){
+      log('🛑 Validate failed: ' + (e.message || e));
+      log('Hint: open each URL directly in a new tab to verify it loads:');
+      log(' - ' + GENES_URL);
+      log(' - ' + CLASSES_URL);
+      log(' - ' + MODEL_URL);
     }
-
-    $meta.textContent = `Selected: ${file.name} (${(file.size/1048576).toFixed(2)} MB) | Model genes: ${genes.length} | Classes: ${classes.length}`;
-
-    // Read
-    say('Reading file …');
-    fileBuf = await readFileWithProgress(file, (pct, mbps)=>{ setUp(pct); setSpd(mbps); });
-    setUp(100);
-
-    // Open HDF5
-    await h5wasm.ready;
-    h5 = new h5wasm.File(fileBuf, "r");
-    varNames = readVarNames(h5);
-    obsNames = readObsNames(h5);
-    shape = readXShape(h5);
-
-    const vset=new Set(varNames);
-    const missing = genes.reduce((k,g)=>k+(vset.has(g)?0:1),0);
-    say(`Cells: ${shape[0]} | Genes(file): ${shape[1]} | Missing vs model: ${missing}`);
-    $run.disabled=false;
   };
 
-  // ======= Run =======
+  // ===== Load file (read + parse headers) =====
+  $load.onclick = async ()=>{
+    $dl.innerHTML=''; $log.textContent=''; setUp(0); setSpd(0); setAn(0); $run.disabled=true;
+
+    try{
+      // sidecars first (so we know D)
+      genes   = await fetchJson(GENES_URL, 'genes.json');
+      classes = await fetchJson(CLASSES_URL, 'classes.json');
+      log('genes: ' + genes.length + ' | classes: ' + classes.length);
+
+      // libs (lazy)
+      if (!h5wasm){
+        h5wasm = await importWithFallback("https://cdn.jsdelivr.net/npm/h5wasm@0.5.0/dist/esm/h5wasm.js",
+                                          "https://unpkg.com/h5wasm@0.5.0/dist/esm/h5wasm.js", true);
+      }
+
+      const file = $f.files?.[0];
+      if (!file) { log('Pick a .h5ad first.'); return; }
+      const mb = (file.size/1048576).toFixed(2);
+      $meta.textContent = `Selected: ${file.name} (${mb} MB) | Model genes: ${genes.length} | Classes: ${classes.length}`;
+
+      // read file
+      fileBuf = await readFileWithProgress(file, (pct, mbps)=>{ setUp(pct); setSpd(mbps); });
+      setUp(100);
+
+      await h5wasm.ready;
+      h5 = new h5wasm.File(fileBuf, "r");
+      varNames = readVarNames(h5);
+      obsNames = readObsNames(h5);
+      shape = readXShape(h5);
+      log(`Cells: ${shape[0]} | Genes(file): ${shape[1]}`);
+
+      const vset=new Set(varNames);
+      const missing = genes.reduce((k,g)=>k+(vset.has(g)?0:1),0);
+      log(`Missing vs model: ${missing}`);
+
+      $run.disabled=false;
+    }catch(e){
+      log('🛑 Load failed: ' + (e.message || e));
+    }
+  };
+
+  // ===== Run (extract → onnx → csv) =====
   $run.onclick = async ()=>{
-    if (!h5 || !genes || !classes || !shape){ say('Load a file first.'); return; }
-    $run.disabled=true; setAn(0); say('Preparing…');
+    try{
+      setAn(0);
+      if (!ort){
+        await importWithFallback("https://cdn.jsdelivr.net/npm/onnxruntime-web/dist/ort.min.js",
+                                 "https://unpkg.com/onnxruntime-web/dist/ort.min.js", false);
+        ort = window.ort;
+      }
+      ort.env.wasm.simd = !$safe.checked;
+      ort.env.wasm.numThreads = $safe.checked ? 1 : Math.min((navigator.hardwareConcurrency||4),8);
+      ort.env.wasm.proxy = !$safe.checked;
 
-    const X = h5.get("X");
-    const n = shape[0], D = genes.length, C = classes.length;
+      // features
+      const X = h5.get("X");
+      const n = shape[0], D = genes.length, C = classes.length;
+      let feats;
+      if (X.isDataset){
+        const arr = X.value;
+        const denseF32 = (arr instanceof Float32Array) ? arr : new Float32Array(arr);
+        feats = pickDense(denseF32, shape, varNames, genes);
+      } else {
+        const data = X.get('data').value;
+        const indices = X.get('indices').value;
+        const indptr = X.get('indptr').value;
+        const dataF32 = (data instanceof Float32Array) ? data : new Float32Array(data);
+        const idxI32  = (indices instanceof Int32Array) ? indices : new Int32Array(indices);
+        const ptrI32  = (indptr  instanceof Int32Array) ? indptr  : new Int32Array(indptr);
+        feats = pickCSR(dataF32, idxI32, ptrI32, shape, varNames, genes);
+      }
+      setAn(30);
 
-    // Features
-    say('Extracting features …');
-    let feats;
-    if (X.isDataset){
-      const arr = X.value;
-      const denseF32 = (arr instanceof Float32Array) ? arr : new Float32Array(arr);
-      feats = pickDense(denseF32, shape, varNames, genes);
-    } else {
-      const data = X.get('data').value;
-      const indices = X.get('indices').value;
-      const indptr = X.get('indptr').value;
-      const dataF32 = (data instanceof Float32Array) ? data : new Float32Array(data);
-      const idxI32  = (indices instanceof Int32Array) ? indices : new Int32Array(indices);
-      const ptrI32  = (indptr  instanceof Int32Array) ? indptr  : new Int32Array(indptr);
-      feats = pickCSR(dataF32, idxI32, ptrI32, shape, varNames, genes);
+      // session
+      const eps = (navigator.gpu && !$safe.checked) ? ["webgpu","wasm"] : ["wasm"];
+      session = await ort.InferenceSession.create(MODEL_URL, { executionProviders: eps });
+      setAn(40);
+
+      // chunked inference
+      const Nbatch = Math.max(2000, Number($batch.value)||8000);
+      const probs = new Float32Array(n*C);
+      for (let start=0; start<n; start+=Nbatch){
+        const end = Math.min(n, start+Nbatch);
+        const view = feats.subarray(start*D, end*D);
+        const t = new ort.Tensor('float32', view, [end-start, D]);
+        const out = await session.run({ [session.inputNames[0]]: t });
+        let part;
+        if (out.probabilities) part = out.probabilities.data;
+        else if (out.logits){
+          part = new Float32Array((end-start)*C);
+          for (let i=0;i<end-start;i++){
+            let mx=-1e30; for(let j=0;j<C;j++) mx=Math.max(mx, out.logits.data[i*C+j]);
+            let s=0; for(let j=0;j<C;j++){ const e=Math.exp(out.logits.data[i*C+j]-mx); part[i*C+j]=e; s+=e; }
+            for (let j=0;j<C;j++) part[i*C+j]/=s;
+          }
+        } else { throw new Error("ONNX outputs missing probabilities/logits"); }
+        probs.set(part, start*C);
+        setAn(40 + 50*(end/n));
+        await new Promise(r=>setTimeout(r,0));
+      }
+
+      // csv
+      const header = ["cell_id","Level1|predicted_labels","Level1|conf_score","Level1|cert_score"];
+      const rows = new Array(n);
+      for (let i=0;i<n;i++){
+        let best=-1, bj=-1, sum=0, base=i*C;
+        for (let j=0;j<C;j++){ const v=probs[base+j]; sum+=v; if (v>best){best=v; bj=j;} }
+        rows[i] = [obsNames[i], classes[bj], String(best), String(best/(sum||1))];
+      }
+      const csv=[header.join(","), ...rows.map(r=>r.join(","))].join("\\n");
+      const blob=new Blob([csv],{type:"text/csv"});
+      const url=URL.createObjectURL(blob);
+      const a=Object.assign(document.createElement('a'),{href:url,download:'pred.csv'});
+      $dl.innerHTML=''; $dl.appendChild(a); a.click(); URL.revokeObjectURL(url);
+      setAn(100);
+      log('✅ Done.');
+    }catch(e){
+      log('🛑 Run failed: ' + (e.message || e));
     }
-    setAn(30);
-
-    // Session
-    say(`Creating session (${navigator.gpu && !$safe.checked ? 'WebGPU' : 'WASM'}) …`);
-    const eps = (navigator.gpu && !$safe.checked) ? ["webgpu","wasm"] : ["wasm"];
-    const session = await ort.InferenceSession.create(MODEL_URL, { executionProviders: eps });
-    setAn(40);
-
-    // Inference (chunked)
-    const Nbatch = Math.max(2000, Number($batch.value)||8000);
-    const probs = new Float32Array(n*C);
-    for (let start=0; start<n; start+=Nbatch){
-      const end = Math.min(n, start+Nbatch);
-      const view = feats.subarray(start*D, end*D);
-      const t = new ort.Tensor('float32', view, [end-start, D]);
-      const out = await session.run({ [session.inputNames[0]]: t });
-      let part;
-      if (out.probabilities) part = out.probabilities.data;
-      else if (out.logits){
-        part = new Float32Array((end-start)*C);
-        for (let i=0;i<end-start;i++){
-          let mx=-1e30; for(let j=0;j<C;j++) mx=Math.max(mx, out.logits.data[i*C+j]);
-          let s=0; for(let j=0;j<C;j++){ const e=Math.exp(out.logits.data[i*C+j]-mx); part[i*C+j]=e; s+=e; }
-          for (let j=0;j<C;j++) part[i*C+j]/=s;
-        }
-      } else { throw new Error("ONNX outputs missing probabilities/logits"); }
-      probs.set(part, start*C);
-      setAn(40 + 50*(end/n)); // up to 90%
-      await new Promise(r=>setTimeout(r,0));
-    }
-
-    // CSV
-    say('Writing CSV …');
-    const header = ["cell_id","Level1|predicted_labels","Level1|conf_score","Level1|cert_score"];
-    const rows = new Array(n);
-    for (let i=0;i<n;i++){
-      let best=-1, bj=-1, sum=0;
-      const base=i*C;
-      for (let j=0;j<C;j++){ const v=probs[base+j]; sum+=v; if (v>best){best=v; bj=j;} }
-      rows[i] = [obsNames[i], classes[bj], String(best), String(best/(sum||1))];
-    }
-    const csv=[header.join(","), ...rows.map(r=>r.join(","))].join("\n");
-    const blob=new Blob([csv],{type:"text/csv"});
-    const url=URL.createObjectURL(blob);
-    const a=Object.assign(document.createElement('a'),{href:url,download:'pred.csv'});
-    $dl.innerHTML=''; $dl.appendChild(a); a.click(); URL.revokeObjectURL(url);
-
-    setAn(100); say('Done.');
-    $run.disabled=false;
   };
 </script>
 {% endraw %}
