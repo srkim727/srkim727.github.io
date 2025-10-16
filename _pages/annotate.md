@@ -90,19 +90,37 @@ excerpt: ""
     return window.ort;
   }
 
-  // ---------- Load h5wasm (ESM first, then UMD via <script> fallback) + set WASM path ----------
+  // ---------- Load h5wasm: try multiple ESM & UMD paths; set WASM path ----------
   let _h5wasmNS = null;
   async function ensureH5Wasm() {
     if (_h5wasmNS) return _h5wasmNS;
 
-    const esmUrl = "https://cdn.jsdelivr.net/npm/h5wasm@0.5.0/dist/esm/h5wasm.js";
-    try {
-      _h5wasmNS = await import(esmUrl);
-      return _h5wasmNS;
-    } catch (esmErr) {
-      console.warn("h5wasm ESM import failed:", esmErr);
+    const esmCandidates = [
+      "https://cdn.jsdelivr.net/npm/h5wasm@0.5.0/dist/esm/h5wasm.js",
+      "https://cdn.jsdelivr.net/npm/h5wasm/dist/esm/h5wasm.js",
+      "https://unpkg.com/h5wasm@0.5.0/dist/esm/h5wasm.js",
+      "https://unpkg.com/h5wasm/dist/esm/h5wasm.js"
+    ];
+    for (const url of esmCandidates) {
+      try {
+        log("Trying h5wasm ESM: " + url);
+        _h5wasmNS = await import(url);
+        log("Loaded h5wasm ESM from: " + url);
+        return _h5wasmNS;
+      } catch (e) {
+        log("ESM failed: " + url + " :: " + errMsg(e));
+      }
     }
 
+    // UMD with <script>
+    const umdCandidates = [
+      "https://cdn.jsdelivr.net/npm/h5wasm@0.5.0/dist/h5wasm.js",
+      "https://cdn.jsdelivr.net/npm/h5wasm/dist/h5wasm.js",
+      "https://unpkg.com/h5wasm@0.5.0/dist/h5wasm.js",
+      "https://unpkg.com/h5wasm/dist/h5wasm.js",
+      "https://cdn.jsdelivr.net/npm/h5wasm@0.5.0/dist/h5wasm.umd.js",
+      "https://unpkg.com/h5wasm@0.5.0/dist/h5wasm.umd.js"
+    ];
     async function loadUMD(url) {
       return new Promise((resolve, reject) => {
         const s = document.createElement("script");
@@ -113,29 +131,31 @@ excerpt: ""
         document.head.appendChild(s);
       });
     }
-
     let loadedFrom = null;
-    try {
-      loadedFrom = await loadUMD("https://cdn.jsdelivr.net/npm/h5wasm@0.5.0/dist/h5wasm.js");
-    } catch (e1) {
-      console.warn(e1?.message || e1);
-      loadedFrom = await loadUMD("https://unpkg.com/h5wasm@0.5.0/dist/h5wasm.js");
+    for (const url of umdCandidates) {
+      try {
+        log("Trying h5wasm UMD: " + url);
+        loadedFrom = await loadUMD(url);
+        if (window.h5wasm) {
+          log("Loaded h5wasm UMD from: " + url);
+          // Point WASM path to same directory as loaded script
+          const base = url.replace(/\/[^\/]+$/, "/");
+          try {
+            if (window.h5wasm.setWasmPath) {
+              window.h5wasm.setWasmPath(base);
+              log("h5wasm.setWasmPath(" + base + ")");
+            }
+          } catch (e) {
+            log("setWasmPath warning: " + errMsg(e));
+          }
+          _h5wasmNS = window.h5wasm;
+          return _h5wasmNS;
+        }
+      } catch (e) {
+        log("UMD failed: " + url + " :: " + errMsg(e));
+      }
     }
-
-    if (!window.h5wasm) {
-      throw new Error("h5wasm UMD loaded but window.h5wasm is undefined.");
-    }
-
-    // Point to the CDN dir for .wasm assets
-    const base = loadedFrom.replace(/\/h5wasm\.js(?:\?.*)?$/, "");
-    try {
-      if (window.h5wasm?.setWasmPath) window.h5wasm.setWasmPath(base + "/");
-    } catch (e) {
-      console.warn("setWasmPath failed (continuing):", e);
-    }
-
-    _h5wasmNS = window.h5wasm;
-    return _h5wasmNS;
+    throw new Error("All h5wasm load attempts failed.");
   }
 
   // ---------- Fetch helpers ----------
@@ -199,7 +219,7 @@ excerpt: ""
   }
   function readObsNames(h){
     for (const p of ["obs/_index","obs/index","obs/names"]){
-      const ds=h.get(p); if (ds?.isDataset){
+    const ds=h.get(p); if (ds?.isDataset){
         const arr=ds.toArray?.() ?? ds.value;
         return Array.from(arr, x=> typeof x==="string" ? x : (x?.toString?.() ?? String(x)));
       }
@@ -402,7 +422,7 @@ excerpt: ""
       const csv=[header.join(","), ...rows.map(r=>r.join(","))].join("\n");
       const blob=new Blob([csv],{type:"text/csv"});
       const url=URL.createObjectURL(blob);
-      const a=Object.assign(document.createElement('a'),{href:url,download:'pred.csv'});
+      const a=Object.assign(document.createElement('a'),{href=url,download:'pred.csv'});
       $dl.innerHTML=''; $dl.appendChild(a); a.click(); URL.revokeObjectURL(url);
       setAn(100);
       log('✅ Done.');

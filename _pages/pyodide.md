@@ -1,5 +1,5 @@
 ---
-title: Annotate Cells in the Browser (Pyodide + Portable CellTypist Model)
+title: Annotate Cells in the Browser (Pyodide + Fixed Portable Model)
 author: Your Name
 date: 2025-10-16
 category: Jekyll
@@ -11,16 +11,12 @@ layout: post
 <h2>Annotate Cells from CSV/CSV.GZ (Pyodide, CellTypist-style logistic)</h2>
 <p>
   Input: <code>sample.csv</code> or <code>sample.csv.gz</code> (cells × genes; already 1e4-normalized + <code>log1p</code>).<br>
-  Output: <code>pred.csv</code> with columns <code>cell_id, predicted_label, conf_score, cert_score</code>.<br>
-  The model is auto-loaded from <code>/assets/models/level1_model_portable.npz</code>.
+  Output: <code>pred.csv</code> with <code>cell_id, predicted_label, conf_score, cert_score</code>.<br>
+  The logistic model is auto-loaded from <code>/assets/models/level1_model_portable.npz</code>.
 </p>
 
 <div style="display:flex;flex-wrap:wrap;gap:10px;align-items:center;">
-  <input type="file" id="csvInput"  accept=".csv,.csv.gz,text/csv" />
-  <!-- Optional: reference centroids for nearest-centroid fallback (genes × celltypes) -->
-  <input type="file" id="refInput"  accept=".csv,.csv.gz,text/csv" />
-  <!-- Optional: manual model upload fallback -->
-  <input type="file" id="modelInput" accept=".npz,.json,.json.gz,.npz.gz" />
+  <input type="file" id="csvInput" accept=".csv,.csv.gz,text/csv" />
   <button id="initBtn">Initialize Pyodide</button>
   <button id="inspectBtn" disabled>Inspect CSV</button>
   <button id="runBtn" disabled>Run Annotation</button>
@@ -36,9 +32,9 @@ layout: post
 const $  = (id) => document.getElementById(id);
 const log = (m) => { const el = $("log"); el.textContent += (m + "\n"); el.scrollTop = el.scrollHeight; };
 
-let pyodide, FS, csvFile, refFile, modelFile, pyReady=false;
+let pyodide, FS, csvFile, pyReady=false, modelReady=false;
 
-// file reader with speed
+// read file with progress/speed display
 function readFileWithProgress(file,onProgress){
   return new Promise((resolve,reject)=>{
     const reader=new FileReader(); let last=performance.now(), lastLoaded=0;
@@ -62,19 +58,7 @@ $("csvInput").addEventListener('change',async(e)=>{
   });
   csvFile={name:f.name,bytes};
   log(`Loaded ${f.name} (${(bytes.length/1e6).toFixed(2)} MB)`);
-  $("inspectBtn").disabled=!pyReady; $("runBtn").disabled=!pyReady;
-});
-
-$("refInput").addEventListener('change',async(e)=>{
-  const f=e.target.files[0]; if(!f) return;
-  const bytes=await readFileWithProgress(f,()=>{});
-  refFile={name:f.name,bytes}; log(`Loaded reference ${f.name}`);
-});
-
-$("modelInput").addEventListener('change',async(e)=>{
-  const f=e.target.files[0]; if(!f) return;
-  const bytes=await readFileWithProgress(f,()=>{});
-  modelFile={name:f.name,bytes}; log(`Loaded model ${f.name} (manual override)`);
+  $("inspectBtn").disabled=!pyReady; $("runBtn").disabled=!pyReady || !modelReady;
 });
 
 $("initBtn").addEventListener('click', async () => {
@@ -83,22 +67,23 @@ $("initBtn").addEventListener('click', async () => {
   pyodide = await loadPyodide({ indexURL: "https://cdn.jsdelivr.net/pyodide/v0.26.3/full/" });
   FS = pyodide.FS; log(`Pyodide ${pyodide.version} ready.`);
   await pyodide.runPythonAsync(`import numpy as np, pandas as pd, gzip, io, json, os`);
-  pyReady = true; $("inspectBtn").disabled = !csvFile; $("runBtn").disabled = !csvFile;
-
-  // Auto-load portable model from your site assets
+  pyReady = true;
+  $("inspectBtn").disabled = !csvFile;
+  // Auto-load model (required)
   try {
     const url = "/assets/models/level1_model_portable.npz";
     const resp = await fetch(url, { cache: "no-store" });
-    if (resp.ok) {
-      const buf = new Uint8Array(await resp.arrayBuffer());
-      FS.writeFile("/tmp_model", buf);
-      log("Preloaded model from /assets/models/level1_model_portable.npz");
-    } else {
-      log("No preloaded model found at /assets/models/level1_model_portable.npz (optional).");
-    }
+    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+    const buf = new Uint8Array(await resp.arrayBuffer());
+    FS.writeFile("/tmp_model", buf);
+    modelReady = true;
+    log("Loaded model from /assets/models/level1_model_portable.npz");
   } catch (e) {
-    log("Model preload skipped (fetch error).");
+    modelReady = false;
+    log("❌ Could not load required model from /assets/models/level1_model_portable.npz");
+    alert("Model file missing: /assets/models/level1_model_portable.npz");
   }
+  $("runBtn").disabled = !csvFile || !modelReady;
 });
 
 $("inspectBtn").addEventListener('click', async ()=>{
@@ -117,11 +102,10 @@ print('shape', df.shape)
 });
 
 $("runBtn").addEventListener('click', async ()=>{
-  if(!csvFile) { alert("Select a CSV first."); return; }
+  if(!csvFile){ alert("Select a CSV first."); return; }
+  if(!modelReady){ alert("Model not loaded. Check /assets/models/level1_model_portable.npz"); return; }
   $("procProg").value = 5;
   FS.writeFile('/tmp_input', csvFile.bytes);
-  if(refFile)   FS.writeFile('/tmp_ref',   refFile.bytes);
-  if(modelFile) FS.writeFile('/tmp_model', modelFile.bytes); // manual override if provided
 
   const py = `
 import numpy as np, pandas as pd, gzip, json, os
@@ -130,120 +114,63 @@ def read_any(path):
     try: return pd.read_csv(gzip.open(path,'rt'), index_col=0)
     except Exception: return pd.read_csv(path, index_col=0)
 
+# Load input
 X = read_any('/tmp_input')
 
-# Priority: logistic model > centroid reference > marker fallback
-use_model = os.path.exists('/tmp_model')
-out = None
+# Load model (NPZ required)
+_npz = np.load('/tmp_model', allow_pickle=True)
+loaded = {
+    'coef_': _npz['coef_'],
+    'intercept_': _npz['intercept_'],
+    'classes_': _npz['classes_'],
+    'features': _npz['features'] if 'features' in _npz.files else _npz['features_'],
+    'scaler_mean_': _npz['scaler_mean_'],
+    'scaler_scale_': _npz['scaler_scale_'],
+    'with_mean': bool(_npz['with_mean'].flat[0]) if _npz['with_mean'].size else True,
+}
 
-if use_model:
-    loaded = None
-    try:
-        _npz = np.load('/tmp_model', allow_pickle=True)
-        loaded = {
-            'coef_': _npz['coef_'],
-            'intercept_': _npz['intercept_'],
-            'classes_': _npz['classes_'],
-            'features': _npz['features'] if 'features' in _npz.files else _npz['features_'],
-            'scaler_mean_': _npz['scaler_mean_'],
-            'scaler_scale_': _npz['scaler_scale_'],
-            'with_mean': bool(_npz['with_mean'].flat[0]) if _npz['with_mean'].size else True,
-        }
-    except Exception:
-        try:
-            import gzip as _gz
-            try:
-                data = json.loads(_gz.open('/tmp_model','rt').read())
-            except Exception:
-                data = json.loads(open('/tmp_model','r').read())
-            loaded = {
-                'coef_': np.array(data['coef_']),
-                'intercept_': np.array(data['intercept_']),
-                'classes_': np.array(data['classes_']),
-                'features': np.array(data['features']),
-                'scaler_mean_': np.array(data['scaler_mean_']),
-                'scaler_scale_': np.array(data['scaler_scale_']),
-                'with_mean': bool(data.get('with_mean', True)),
-            }
-        except Exception:
-            loaded = None
+# Intersect (case-insensitive) and reorder to model feature order
+feat_lower = np.char.lower(loaded['features'].astype(str))
+cols_lower = {c.lower(): c for c in X.columns.astype(str)}
+present = [cols_lower[g] for g in feat_lower if g in cols_lower]
+if len(present) == 0:
+    raise ValueError('No overlapping features between input and model.')
+ordered_cols, keep_mask = [], []
+for g in feat_lower:
+    if g in cols_lower:
+        ordered_cols.append(cols_lower[g]); keep_mask.append(True)
+    else:
+        keep_mask.append(False)
 
-    if loaded is not None:
-        feat_lower = np.char.lower(loaded['features'].astype(str))
-        cols_lower = {c.lower(): c for c in X.columns.astype(str)}
-        present = [cols_lower[g] for g in feat_lower if g in cols_lower]
-        if len(present) == 0:
-            raise ValueError('No overlapping features between input and model.')
-        ordered_cols, keep_mask = [], []
-        for g in feat_lower:
-            if g in cols_lower:
-                ordered_cols.append(cols_lower[g]); keep_mask.append(True)
-            else:
-                keep_mask.append(False)
-        coef_keep  = loaded['coef_'][:, keep_mask]
-        mean_keep  = loaded['scaler_mean_'][keep_mask]
-        scale_keep = loaded['scaler_scale_'][keep_mask]
-        X2 = X[ordered_cols].values.astype('float32')
-        X2 = (X2 - mean_keep) / (scale_keep + 1e-8) if loaded['with_mean'] else X2 / (scale_keep + 1e-8)
-        X2[X2 > 10] = 10
-        logits = X2 @ coef_keep.T + loaded['intercept_']
-        if logits.ndim == 1:
-            logits = np.column_stack([-logits, logits])
-        z = logits - logits.max(axis=1, keepdims=True)
-        e = np.exp(z); P = e / e.sum(axis=1, keepdims=True)
-        idx = np.argmax(P, axis=1)
-        labels = loaded['classes_'][idx]
-        top = P[np.arange(P.shape[0]), idx]
-        part = np.partition(P, -2, axis=1)[:, -2:]
-        cert = part[:,1] - part[:,0]
-        out = pd.DataFrame({'cell_id': X.index, 'predicted_label': labels, 'conf_score': top, 'cert_score': cert})
+coef_keep  = loaded['coef_'][:, keep_mask]
+mean_keep  = loaded['scaler_mean_'][keep_mask]
+scale_keep = loaded['scaler_scale_'][keep_mask]
 
-if out is None and os.path.exists('/tmp_ref'):
-    ref = read_any('/tmp_ref')  # genes × celltypes
-    genes_lower = [g.lower() for g in X.columns]
-    ref.index = [g.lower() for g in ref.index]
-    common = set(genes_lower).intersection(ref.index)
-    ref = ref.loc[list(common)]
-    X = X[[c for c in X.columns if c.lower() in common]]
-    order = [next(c for c in X.columns if c.lower()==g) for g in ref.index]
-    X = X[order]
-    A = X.values.astype('float32'); C = ref.values.astype('float32')
-    A /= np.linalg.norm(A, axis=1, keepdims=True) + 1e-8
-    C /= np.linalg.norm(C, axis=0, keepdims=True) + 1e-8
-    sims = A @ C
-    idx = np.argmax(sims, axis=1)
-    ct  = ref.columns.values
-    pred = [ct[i] for i in idx]
-    z = sims - sims.max(axis=1, keepdims=True)
-    e = np.exp(z); P = e / e.sum(axis=1, keepdims=True)
-    top = P[np.arange(P.shape[0]), idx]
-    part = np.partition(P, -2, axis=1)[:, -2:]
-    cert = part[:,1] - part[:,0]
-    out = pd.DataFrame({'cell_id': X.index, 'predicted_label': pred, 'conf_score': top, 'cert_score': cert})
+X2 = X[ordered_cols].values.astype('float32')
 
-if out is None:
-    markers = {
-      'T_cells_NK': ['CD3D','CD3E','TRAC','NKG7','KLRD1','GNLY'],
-      'B_cells':    ['MS4A1','CD79A','CD74','CD37','BANK1'],
-      'Myeloid':    ['LYZ','S100A8','S100A9','FCGR3A','LST1'],
-      'Epithelial': ['EPCAM','KRT8','KRT18','KRT19'],
-      'Endothelial':['PECAM1','VWF','KDR','CLDN5'],
-      'Fibroblasts':['COL1A1','COL1A2','DCN','LUM']
-    }
-    scores, names = [], []
-    for k, glist in markers.items():
-        found = [c for c in glist if c in X.columns]
-        s = X[found].mean(axis=1) if found else np.full((X.shape[0],), -10.0)
-        scores.append(np.asarray(s)); names.append(k)
-    S = np.vstack(scores).T
-    idx = np.argmax(S, axis=1)
-    pred = [names[i] for i in idx]
-    z = S - S.max(axis=1, keepdims=True); e = np.exp(z); P = e / e.sum(axis=1, keepdims=True)
-    top = P[np.arange(P.shape[0]), idx]
-    part = np.partition(P, -2, axis=1)[:, -2:]
-    cert = part[:,1] - part[:,0]
-    out = pd.DataFrame({'cell_id': X.index, 'predicted_label': pred, 'conf_score': top, 'cert_score': cert})
+# CellTypist-style scaling
+if loaded['with_mean']:
+    X2 = (X2 - mean_keep) / (scale_keep + 1e-8)
+else:
+    X2 = X2 / (scale_keep + 1e-8)
 
+# Stability clip (CellTypist does similar)
+X2[X2 > 10] = 10
+
+# Logistic inference
+logits = X2 @ coef_keep.T + loaded['intercept_']
+if logits.ndim == 1:
+    logits = np.column_stack([-logits, logits])
+
+z = logits - logits.max(axis=1, keepdims=True)
+e = np.exp(z); P = e / e.sum(axis=1, keepdims=True)
+idx = np.argmax(P, axis=1)
+labels = loaded['classes_'][idx]
+top = P[np.arange(P.shape[0]), idx]
+part = np.partition(P, -2, axis=1)[:, -2:]
+cert = part[:,1] - part[:,0]
+
+out = pd.DataFrame({'cell_id': X.index, 'predicted_label': labels, 'conf_score': top, 'cert_score': cert})
 out.to_csv('/pred.csv', index=False)
 `;
   try {
@@ -254,7 +181,7 @@ out.to_csv('/pred.csv', index=False)
     const url   = URL.createObjectURL(blob);
     $("downloadLink").href = url;
     $("downloadLink").style.display = 'inline';
-    log("Done: pred.csv ready.");
+    log("✅ Done: pred.csv ready.");
   } catch (err) {
     log("ERROR: " + (err?.message || String(err)));
   }
