@@ -7,10 +7,10 @@ layout: post
 
 {% raw %}
 
-<!-- Pyodide loader -->
+<!-- Load Pyodide from the official CDN -->
 <script defer src="https://cdn.jsdelivr.net/pyodide/v0.26.3/full/pyodide.js"></script>
 
-<h2>aAnnotate Cells from CSV/CSV.GZ (Pyodide, CellTypist-style logistic)</h2>
+<h2>bAnnotate Cells from CSV/CSV.GZ (Pyodide, CellTypist-style logistic)</h2>
 <p>
   Model: <code>/assets/models/level1_model_portable.npz</code><br>
   Input: cells × genes; 1e4-normalized + <code>log1p</code><br>
@@ -61,7 +61,7 @@ layout: post
 
 <script>
 (function(){
-  // Helpers
+  // ---------- Helpers ----------
   function $(id){ return document.getElementById(id); }
   function setDisabled(elOrId, v){ const el = typeof elOrId==="string" ? $(elOrId) : elOrId; if(el) el.disabled = !!v; }
   function log(m){
@@ -102,13 +102,13 @@ layout: post
     });
   }
 
-  // State
+  // ---------- State ----------
   const MODEL_URL = "/assets/models/level1_model_portable.npz";
   let pyodide=null, FS=null;
   let pyReady=false, libsReady=false, modelReady=false, uploaded=false;
   let resultUrl=null;
 
-  // BOOT
+  // ---------- BOOT ----------
   $("bootBtn").addEventListener("click", async ()=>{
     try{
       setDisabled("bootBtn", true);
@@ -140,7 +140,7 @@ layout: post
     setDisabled("bootBtn", false);
   });
 
-  // PING
+  // ---------- PING ----------
   $("pingBtn").addEventListener("click", async ()=>{
     if(!pyReady){ alert("Boot first."); return; }
     try{
@@ -158,7 +158,7 @@ print("sum:", int(np.array([1,2,3]).sum()))
     }
   });
 
-  // VALIDATE MODEL (GET + basic checks)
+  // ---------- VALIDATE MODEL ----------
   $("validateBtn").addEventListener("click", async ()=>{
     async function fetchModel(url){
       const resp = await fetch(url, { cache: "no-store" });
@@ -168,12 +168,13 @@ print("sum:", int(np.array([1,2,3]).sum()))
     }
     try{
       log("🔎 Validate: GET " + MODEL_URL + " …");
-      let { buf, sizeHeader } = await fetchModel(MODEL_URL);
+      let { buf } = await fetchModel(MODEL_URL);
 
+      // NPZ magic check (ZIP local file header)
       const magicOk = (buf.length >= 4 && buf[0]===0x50 && buf[1]===0x4B && buf[2]===0x03 && buf[3]===0x04);
       if(!magicOk){
         log("⚠️ Not a ZIP magic; retrying (cache-bust) …");
-        ({ buf, sizeHeader } = await fetchModel(MODEL_URL + "?t=" + Date.now()));
+        ({ buf } = await fetchModel(MODEL_URL + "?t=" + Date.now()));
       }
       if(!(buf.length >= 4 && buf[0]===0x50 && buf[1]===0x4B && buf[2]===0x03 && buf[3]===0x04)){
         throw new Error("Model is not a valid .npz (ZIP magic missing). Bytes=" + buf.length);
@@ -191,7 +192,7 @@ print("sum:", int(np.array([1,2,3]).sum()))
     }
   });
 
-  // LOAD FILE (choose & upload)
+  // ---------- LOAD FILE ----------
   $("loadFileBtn").addEventListener("click", ()=>{
     if(!pyReady){ alert("Boot first."); return; }
     $("csvInput").click();
@@ -221,18 +222,17 @@ print("sum:", int(np.array([1,2,3]).sum()))
     }
   });
 
-  // RUN (with staged processing updates)
-<script>
-$("runBtn").addEventListener("click", async ()=>{
-  if(!uploaded){ alert("Load a CSV first."); return; }
-  if(!modelReady){ alert("Validate/Load model first."); return; }
-  if(!libsReady){ alert("Boot first."); return; }
+  // ---------- RUN (uses setStdout/setStderr; no stdout option) ----------
+  $("runBtn").addEventListener("click", async ()=>{
+    if(!uploaded){ alert("Load a CSV first."); return; }
+    if(!modelReady){ alert("Validate/Load model first."); return; }
+    if(!libsReady){ alert("Boot first."); return; }
 
-  $("procProg").value = 5;
-  $("procStatus").textContent = "Starting…";
-  log("▶️ Running annotation …");
+    $("procProg").value = 5;
+    $("procStatus").textContent = "Starting…";
+    log("▶️ Running annotation …");
 
-  const code = `
+    const code = `
 import numpy as np, pandas as pd, gzip, json, os, io, sys
 
 def stage(pct, msg):
@@ -247,7 +247,7 @@ def read_any(path):
 
 stage(10, "Loading input")
 X = read_any('/tmp_input')
-# Optional guard:
+# Optional guard against non-numeric columns:
 # X = X.apply(pd.to_numeric, errors='coerce').fillna(0.0)
 
 stage(20, "Reading model")
@@ -312,52 +312,4 @@ part = np.partition(P, -2, axis=1)[:, -2:]
 cert = part[:,1] - part[:,0]
 
 stage(95, "Writing output")
-out = pd.DataFrame({'cell_id': X.index, 'predicted_label': labels, 'conf_score': top, 'cert_score': cert})
-out.to_csv('/pred.csv', index=False)
-print('DONE', X.shape, len(loaded['classes_']))
-`;
-
-  // Stream progress via stdout/stderr
-  const unhookOut = pyodide.setStdout({
-    batched: (s) => {
-      (s || "").split(/\r?\n/).forEach(line=>{
-        if(!line) return;
-        if(line.startsWith("__STAGE__:")){
-          const parts = line.trim().split(":");
-          const pct = Math.max(0, Math.min(100, parseInt(parts[1]||"0",10)));
-          const msg = parts.slice(2).join(":") || "Working…";
-          $("procProg").value = pct;
-          $("procStatus").textContent = msg;
-        } else {
-          log(line);
-        }
-      });
-    }
-  });
-  const unhookErr = pyodide.setStderr({
-    batched: (s) => { s && s.trim() && log("ERR: " + s); }
-  });
-
-  try{
-    await pyodide.runPythonAsync(code);         // <- NO stdout option here
-    $("procProg").value = 100;
-    $("procStatus").textContent = "Complete";
-
-    const bytes = FS.readFile("/pred.csv");
-    const blob  = new Blob([bytes], { type: "text/csv" });
-    if(resultUrl){ URL.revokeObjectURL(resultUrl); }
-    resultUrl = URL.createObjectURL(blob);
-    $("downloadWrap").style.display = "block";
-    $("downloadLink").href = resultUrl;
-    log("✅ pred.csv ready. Use the link above to download.");
-  }catch(err){
-    $("procStatus").textContent = "❌ Error";
-    log("❌ Run error: " + (err?.message || err));
-  }finally{
-    try{ unhookOut && unhookOut(); }catch(_){}
-    try{ unhookErr && unhookErr(); }catch(_){}
-  }
-});
-</script>
-
-{% endraw %}
+out = pd.DataFrame({'cell_id':_
