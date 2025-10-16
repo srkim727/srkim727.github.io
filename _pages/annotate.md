@@ -1,336 +1,288 @@
 ---
 title: Annotate
-author: S. Kim
-date: 2025-01-01
-category: Jekyll
 layout: post
+permalink: /annotate/
 ---
 
 {% raw %}
+<div id="ann-app" style="max-width:900px">
+  <h2>Annotate .h5ad (client-side)</h2>
+  <p>Input <code>.h5ad</code> must have <code>X</code> = 1e4-normalized + log1p.</p>
 
-<div id="annotate-app">
+  <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+    <input type="file" id="file" accept=".h5ad">
+    <button id="load">Load file</button>
+    <button id="run" disabled>Run</button>
+    <label style="display:inline-flex;align-items:center;gap:6px;">
+      Batch <input id="batch" type="number" min="2000" step="1000" value="8000" style="width:80px">
+    </label>
+    <label style="display:inline-flex;align-items:center;gap:6px;">
+      Safe mode <input id="safe" type="checkbox">
+    </label>
+  </div>
 
-<h2>Annotate .h5ad with Level1 model (ONNX, WebGPU/WASM)</h2>
-<p>
-  Input <code>.h5ad</code> must have <code>X</code> = 1e4-normalized + log1p.<br>
-  Output <code>pred.csv</code>: <code>cell_id, Level1|predicted_labels, Level1|conf_score, Level1|cert_score</code>.
-</p>
+  <div id="meta" style="margin:6px 0; opacity:.9;"></div>
 
-<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
-  <input type="file" id="h5ad" accept=".h5ad">
-  <button id="load">Upload / Load file</button>
-  <button id="run" disabled>Run annotation</button>
+  <div style="margin:8px 0;">
+    <label style="display:inline-block;min-width:120px;">Upload</label>
+    <progress id="upBar" value="0" max="100" style="width:360px;height:12px"></progress>
+    <span id="upPct" style="font-variant-numeric:tabular-nums">0%</span>
+    <span id="upSpd" style="margin-left:10px;opacity:.8">0.00 MB/s</span>
+  </div>
+
+  <div style="margin:8px 0;">
+    <label style="display:inline-block;min-width:120px;">Annotate</label>
+    <progress id="anBar" value="0" max="100" style="width:360px;height:12px"></progress>
+    <span id="anPct" style="font-variant-numeric:tabular-nums">0%</span>
+  </div>
+
+  <div id="status" style="margin:6px 0; font-size:.95em;"></div>
+  <div id="download" style="margin-top:6px"></div>
+
+  <style>#ann-app .clipboard{display:none!important}</style>
 </div>
-
-<div id="fileinfo" style="margin:6px 0; font-size:0.95em; opacity:0.9;"></div>
-
-<!-- PROGRESS: Upload -->
-<div style="margin:10px 0;">
-  <label style="display:inline-block;min-width:120px;">Upload progress</label>
-  <progress id="up_prog" value="0" max="100" style="width:420px;height:14px;"></progress>
-  <span id="up_pct" style="margin-left:8px; font-variant-numeric:tabular-nums;">0%</span>
-  <span id="up_speed" style="margin-left:12px; opacity:.8;">0.00 MB/s</span>
-</div>
-
-<!-- PROGRESS: Annotation -->
-<div style="margin:10px 0;">
-  <label style="display:inline-block;min-width:120px;">Annotation progress</label>
-  <progress id="an_prog" value="0" max="100" style="width:420px;height:14px;"></progress>
-  <span id="an_pct" style="margin-left:8px; font-variant-numeric:tabular-nums;">0%</span>
-</div>
-
-<pre id="log" style="background:#0b1020;color:#e8eaf6;padding:10px;border-radius:6px;max-height:320px;overflow:auto;"></pre>
-<div id="download"></div>
-
-<!-- Hide the theme's copy button just on this page -->
-<style>
-  #annotate-app .clipboard { display: none !important; }
-</style>
-
-<!-- onnxruntime-web -->
-<script src="https://cdn.jsdelivr.net/npm/onnxruntime-web/dist/ort.min.js"></script>
 
 <script type="module">
-  import * as h5wasm from "https://cdn.jsdelivr.net/npm/h5wasm@0.5.0/dist/esm/h5wasm.js";
-
+  // ======= Config =======
   const MODEL_URL   = "{{ '/assets/models/Level1/model.onnx'   | relative_url }}";
   const GENES_URL   = "{{ '/assets/models/Level1/genes.json'   | relative_url }}";
   const CLASSES_URL = "{{ '/assets/models/Level1/classes.json' | relative_url }}";
 
-  const $file = document.getElementById("h5ad");
-  const $load = document.getElementById("load");
-  const $run  = document.getElementById("run");
-  const $info = document.getElementById("fileinfo");
-  const $log  = document.getElementById("log");
-  const $dl   = document.getElementById("download");
+  // ======= UI refs =======
+  const $f=document.getElementById('file'), $load=document.getElementById('load'), $run=document.getElementById('run');
+  const $meta=document.getElementById('meta'), $status=document.getElementById('status'), $dl=document.getElementById('download');
+  const $upBar=document.getElementById('upBar'), $upPct=document.getElementById('upPct'), $upSpd=document.getElementById('upSpd');
+  const $anBar=document.getElementById('anBar'), $anPct=document.getElementById('anPct');
+  const $batch=document.getElementById('batch'), $safe=document.getElementById('safe');
 
-  const $upProg = document.getElementById("up_prog");
-  const $upPct  = document.getElementById("up_pct");
-  const $upSpd  = document.getElementById("up_speed");
-  const $anProg = document.getElementById("an_prog");
-  const $anPct  = document.getElementById("an_pct");
+  const setUp=v=>{ $upBar.value=v; $upPct.textContent=Math.round(v)+'%'; };
+  const setSpd=v=>{ $upSpd.textContent=(v||0).toFixed(2)+' MB/s'; };
+  const setAn=v=>{ $anBar.value=v; $anPct.textContent=Math.round(v)+'%'; };
+  const say=t=>{ $status.textContent=t; };
 
-  const setUp = v => { $upProg.value = v; $upPct.textContent = Math.round(v) + "%"; };
-  const setUpSpeed = mbps => { $upSpd.textContent = `${mbps.toFixed(2)} MB/s`; };
-  const setAn = v => { $anProg.value = v; $anPct.textContent = Math.round(v) + "%"; };
-  const resetUI = () => { $dl.innerHTML=""; $log.textContent=""; setUp(0); setUpSpeed(0); setAn(0); };
+  // Show ANY runtime error on the page (not only in console)
+  window.addEventListener('error', e => say('Error: ' + e.message));
+  window.addEventListener('unhandledrejection', e => say('Promise Rejection: ' + (e.reason?.message || e.reason)));
 
-  const log = m => { $log.textContent += m + "\n"; $log.scrollTop = $log.scrollHeight; };
+  // ======= State =======
+  let genes=null, classes=null, fileBuf=null, h5=null, shape=null, varNames=null, obsNames=null;
+  let ort=null, h5wasm=null;
 
-  $file.addEventListener("change", () => {
-    if ($file.files?.[0]) {
-      const f = $file.files[0];
-      const mb = (f.size/1024/1024).toFixed(2);
-      $info.textContent = `Selected: ${f.name} (${mb} MB)`;
-    } else {
-      $info.textContent = "";
+  // ======= CDN fallback loader =======
+  async function importWithFallback(url1, url2, isModule=true){
+    try {
+      return isModule ? await import(url1) : await new Promise((res, rej)=>{
+        const s=document.createElement('script'); s.src=url1; s.onload=()=>res(); s.onerror=rej; document.head.appendChild(s);
+      });
+    } catch {
+      if (isModule) return import(url2);
+      await new Promise((res, rej)=>{
+        const s=document.createElement('script'); s.src=url2; s.onload=res; s.onerror=rej; document.head.appendChild(s);
+      });
     }
-  });
+  }
 
-  // Globals after upload
-  let fileBuf = null, h5file = null;
-  let varNames = null, obsNames = null, shape = null;
-  let genes = null, classes = null;
+  // ======= File read (with speed + Safari fallback) =======
+  async function readFileWithProgress(file, onTick){
+    const t0=performance.now();
+    if (!$safe.checked && file.stream && typeof file.stream==='function'){
+      const reader=file.stream().getReader();
+      const chunks=[]; let rec=0, lastT=t0, lastB=0;
+      for(;;){
+        const {done, value}=await reader.read();
+        const now=performance.now();
+        if (done) break;
+        chunks.push(value); rec+=value.byteLength;
+        const dt=(now-lastT)/1000, dB=rec-lastB;
+        const mbps = dt>0 ? (dB/1048576)/dt : 0;
+        onTick && onTick(rec/file.size*100, mbps);
+        lastT=now; lastB=rec;
+      }
+      const buf = await new Blob(chunks).arrayBuffer();
+      const avg = (rec/1048576) / ((performance.now()-t0)/1000 || 1);
+      onTick && onTick(100, avg);
+      return new Uint8Array(buf);
+    }
+    // Safe fallback
+    const t1=performance.now();
+    const buf = await file.arrayBuffer();
+    const avg = (buf.byteLength/1048576)/((performance.now()-t1)/1000 || 1);
+    for (let i=1;i<=10;i++){ onTick && onTick(i*10, avg); await new Promise(r=>setTimeout(r,5)); }
+    return new Uint8Array(buf);
+  }
 
-  // ---- HDF5 helpers ----
-  function readVarNames(f) {
-    for (const p of ["var/_index","var/index","var/feature_names"]) {
-      const ds = f.get(p); if (ds?.isDataset) {
-        const arr = ds.toArray?.() ?? ds.value;
-        return Array.from(arr, x => (typeof x === "string" ? x : (x?.toString?.() ?? String(x))));
+  // ======= HDF5 helpers =======
+  function readVarNames(h){
+    for (const p of ["var/_index","var/index","var/feature_names"]){
+      const ds=h.get(p); if (ds?.isDataset){
+        const arr=ds.toArray?.() ?? ds.value;
+        return Array.from(arr, x=> typeof x==="string" ? x : (x?.toString?.() ?? String(x)));
       }
     }
-    throw new Error("Could not find gene names in var.");
+    throw new Error("Cannot find var index");
   }
-  function readObsNames(f) {
-    for (const p of ["obs/_index","obs/index","obs/names"]) {
-      const ds = f.get(p); if (ds?.isDataset) {
-        const arr = ds.toArray?.() ?? ds.value;
-        return Array.from(arr, x => (typeof x === "string" ? x : (x?.toString?.() ?? String(x))));
+  function readObsNames(h){
+    for (const p of ["obs/_index","obs/index","obs/names"]){
+      const ds=h.get(p); if (ds?.isDataset){
+        const arr=ds.toArray?.() ?? ds.value;
+        return Array.from(arr, x=> typeof x==="string" ? x : (x?.toString?.() ?? String(x)));
       }
     }
-    const n = readXShape(f)[0];
-    return Array.from({length:n}, (_,i)=>"cell_"+i);
+    const n = readXShape(h)[0];
+    return Array.from({length:n},(_,i)=>"cell_"+i);
   }
-  function readXShape(f) {
-    const X = f.get("X");
+  function readXShape(h){
+    const X=h.get("X");
     if (X?.isDataset) return X.shape;
-    const s = f.get("X/shape")?.value;
+    const s=h.get("X/shape")?.value;
     return [Number(s[0]), Number(s[1])];
   }
-
-  // ---- Feature extraction helpers ----
-  function densePick(denseFlat, shape, varNames, genesOrder, onRow) {
-    const [n,d] = shape, D = genesOrder.length;
-    const out = new Float32Array(n*D);
-    const colIdx = new Map(varNames.map((g,i)=>[g,i]));
-    const tickEvery = Math.max(1, Math.floor(n/100));
+  function pickDense(denseFlat, shape, varNames, genes){
+    const [n,d]=shape, D=genes.length;
+    const out=new Float32Array(n*D);
+    const idx=new Map(varNames.map((g,i)=>[g,i]));
+    const map = genes.map(g=>idx.get(g));
     for (let j=0;j<D;j++){
-      const cj = colIdx.get(genesOrder[j]); if (cj===undefined) continue;
-      for (let i=0;i<n;i++){
-        out[i*D+j] = denseFlat[i*d+cj];
-        if (onRow && j===0 && i % tickEvery === 0) onRow(i, n);
-      }
+      const cj=map[j]; if (cj==null) continue;
+      for (let i=0,base=0;i<n;i++,base+=d) out[i*D+j]=denseFlat[base+cj];
     }
-    onRow && onRow(n, n);
     return out;
   }
-  function csrPick(data, indices, indptr, shape, varNames, genesOrder, onRow) {
-    const [n,d] = shape, D = genesOrder.length;
-    const out = new Float32Array(n*D);
-    const colPos = new Map(varNames.map((g,i)=>[g,i]));
-    const wanted = new Map(); genesOrder.forEach((g,j)=>{ const cj=colPos.get(g); if(cj!==undefined) wanted.set(cj,j); });
-    const tickEvery = Math.max(1, Math.floor(n/100));
+  function pickCSR(data, indices, indptr, shape, varNames, genes){
+    const [n,d]=shape, D=genes.length;
+    const out=new Float32Array(n*D);
+    const colPos=new Map(varNames.map((g,i)=>[g,i]));
+    const wanted=new Map(); genes.forEach((g,j)=>{ const cj=colPos.get(g); if (cj!=null) wanted.set(cj,j); });
     for (let i=0;i<n;i++){
       const a=indptr[i], b=indptr[i+1];
-      for (let k=a;k<b;k++){ const cj=indices[k], j=wanted.get(cj); if (j!==undefined) out[i*D+j]=data[k]; }
-      if (onRow && i % tickEvery === 0) onRow(i, n);
-    }
-    onRow && onRow(n, n);
-    return out;
-  }
-  function softmax2d(logits, n, c){
-    const probs=new Float32Array(n*c);
-    for (let i=0;i<n;i++){
-      let mx=-1e30; for(let j=0;j<c;j++) mx=Math.max(mx, logits[i*c+j]);
-      let s=0; for(let j=0;j<c;j++){ const e=Math.exp(logits[i*c+j]-mx); probs[i*c+j]=e; s+=e; }
-      for(let j=0;j<c;j++) probs[i*c+j]/=s;
-    }
-    return probs;
-  }
-
-  function downloadCSV(name, header, rows){
-    const csv=[header.join(","), ...rows.map(r=>r.join(","))].join("\n");
-    const blob=new Blob([csv],{type:"text/csv"}); const url=URL.createObjectURL(blob);
-    const a=Object.assign(document.createElement("a"),{href:url,download:name});
-    $dl.innerHTML=""; $dl.appendChild(a); a.click(); URL.revokeObjectURL(url);
-  }
-
-  async function pickProviders(){ const eps=[]; if (navigator.gpu) eps.push("webgpu"); eps.push("wasm"); return eps; }
-
-  // ---- File read with progress + speed (Safari-safe) ----
-  async function readFileWithProgress(file, onProgressAndSpeed) {
-    const tStart = performance.now();
-    if (file.stream && typeof file.stream === "function") {
-      const total = file.size || 0;
-      const reader = file.stream().getReader();
-      let received = 0;
-      let lastT = tStart, lastBytes = 0;
-      const chunks = [];
-      for (;;) {
-        const {done, value} = await reader.read();
-        const now = performance.now();
-        if (done) break;
-        chunks.push(value);
-        received += value.byteLength;
-
-        // instantaneous speed (MB/s) over last slice
-        const dt = (now - lastT) / 1000;
-        const dB = received - lastBytes;
-        const mbps = dt > 0 ? (dB / 1024 / 1024) / dt : 0;
-        onProgressAndSpeed && onProgressAndSpeed(received, total, mbps);
-
-        lastT = now; lastBytes = received;
-        await new Promise(r => setTimeout(r, 0)); // allow paint
-      }
-      const out = new Uint8Array(received);
-      let off = 0; for (const ch of chunks) { out.set(ch, off); off += ch.byteLength; }
-      // final average speed
-      const dtTot = (performance.now() - tStart) / 1000;
-      const avg = (received / 1024 / 1024) / (dtTot || 1);
-      onProgressAndSpeed && onProgressAndSpeed(received, total, avg);
-      return out;
-    }
-    // Fallback
-    const t0 = performance.now();
-    const buf = await file.arrayBuffer();
-    const out = new Uint8Array(buf);
-    const dtTot = (performance.now() - t0) / 1000;
-    const avg = (out.byteLength / 1024 / 1024) / (dtTot || 1);
-    // simulate ticks
-    const total = out.byteLength || 1;
-    for (let i=1;i<=10;i++){
-      onProgressAndSpeed && onProgressAndSpeed((i/10)*total, total, avg);
-      await new Promise(r => setTimeout(r, 10));
+      for (let k=a;k<b;k++){ const cj=indices[k], j=wanted.get(cj); if (j!=null) out[i*D+j]=data[k]; }
     }
     return out;
   }
 
-  // =================== Upload / Load ===================
-  $load.onclick = async () => {
-    resetUI();
-    const f = $file.files?.[0];
-    if (!f) { log("Please choose a .h5ad file first."); return; }
+  // ======= Load file =======
+  $load.onclick = async ()=>{
+    $dl.innerHTML=''; $status.textContent=''; setUp(0); setSpd(0); setAn(0); $run.disabled=true;
 
-    try {
-      setUp(0); setUpSpeed(0);
-      log("Loading model sidecars ...");
-      [genes, classes] = await Promise.all([
-        fetch(GENES_URL).then(r=>r.json()),
-        fetch(CLASSES_URL).then(r=>r.json()),
-      ]);
-      log(`Genes: ${genes.length} | Classes: ${classes.length}`);
-      setUp(15);
+    const file=$f.files?.[0];
+    if (!file){ say('Pick a .h5ad first.'); return; }
 
-      log(`Reading file (${f.name}) into memory ...`);
-      fileBuf = await readFileWithProgress(f, (done, total, mbps) => {
-        const pct = 15 + 70 * (done/total);
-        setUp(pct);
-        if (!Number.isNaN(mbps)) setUpSpeed(mbps);
-      });
-      log(`File read: ${(fileBuf.byteLength/1024/1024).toFixed(2)} MB`);
-      setUp(88);
+    // sidecars (small)
+    const [g,c]=await Promise.all([fetch(GENES_URL).then(r=>r.json()), fetch(CLASSES_URL).then(r=>r.json())]);
+    genes=g; classes=c;
 
-      log("Opening HDF5 and parsing headers ...");
-      await h5wasm.ready;
-      h5file = new h5wasm.File(fileBuf, "r");
-      varNames = readVarNames(h5file);
-      obsNames = readObsNames(h5file);
-      shape    = readXShape(h5file);
-      log(`Cells: ${shape[0]} | Genes in file: ${shape[1]}`);
-      const vset = new Set(varNames);
-      const missing = genes.filter(g => !vset.has(g));
-      log(`Missing model genes in data: ${missing.length}`);
-      setUp(100);
-
-      log("Ready to run annotation.");
-      $run.disabled = false;
-    } catch (e) {
-      log("🛑 Error while loading: " + (e?.message || e));
-      console.error(e);
-      $run.disabled = true; setUp(0); setUpSpeed(0);
+    // libs (lazy, with fallback CDNs)
+    if (!h5wasm){
+      try {
+        h5wasm = await importWithFallback("https://cdn.jsdelivr.net/npm/h5wasm@0.5.0/dist/esm/h5wasm.js",
+                                          "https://unpkg.com/h5wasm@0.5.0/dist/esm/h5wasm.js", true);
+      } catch (e) { say("Failed to load h5wasm"); throw e; }
     }
+    if (!ort){
+      try {
+        await importWithFallback("https://cdn.jsdelivr.net/npm/onnxruntime-web/dist/ort.min.js",
+                                 "https://unpkg.com/onnxruntime-web/dist/ort.min.js", false);
+        ort = window.ort;
+      } catch (e) { say("Failed to load onnxruntime-web"); throw e; }
+      // safer defaults; boost if not in safe mode
+      ort.env.wasm.simd = !$safe.checked;
+      ort.env.wasm.numThreads = $safe.checked ? 1 : Math.min((navigator.hardwareConcurrency||4),8);
+      ort.env.wasm.proxy = !$safe.checked;
+    }
+
+    $meta.textContent = `Selected: ${file.name} (${(file.size/1048576).toFixed(2)} MB) | Model genes: ${genes.length} | Classes: ${classes.length}`;
+
+    // Read
+    say('Reading file …');
+    fileBuf = await readFileWithProgress(file, (pct, mbps)=>{ setUp(pct); setSpd(mbps); });
+    setUp(100);
+
+    // Open HDF5
+    await h5wasm.ready;
+    h5 = new h5wasm.File(fileBuf, "r");
+    varNames = readVarNames(h5);
+    obsNames = readObsNames(h5);
+    shape = readXShape(h5);
+
+    const vset=new Set(varNames);
+    const missing = genes.reduce((k,g)=>k+(vset.has(g)?0:1),0);
+    say(`Cells: ${shape[0]} | Genes(file): ${shape[1]} | Missing vs model: ${missing}`);
+    $run.disabled=false;
   };
 
-  // =================== Run annotation ===================
-  $run.onclick = async () => {
-    if (!h5file || !genes || !classes || !shape) {
-      log("Please upload/load the file first.");
-      return;
+  // ======= Run =======
+  $run.onclick = async ()=>{
+    if (!h5 || !genes || !classes || !shape){ say('Load a file first.'); return; }
+    $run.disabled=true; setAn(0); say('Preparing…');
+
+    const X = h5.get("X");
+    const n = shape[0], D = genes.length, C = classes.length;
+
+    // Features
+    say('Extracting features …');
+    let feats;
+    if (X.isDataset){
+      const arr = X.value;
+      const denseF32 = (arr instanceof Float32Array) ? arr : new Float32Array(arr);
+      feats = pickDense(denseF32, shape, varNames, genes);
+    } else {
+      const data = X.get('data').value;
+      const indices = X.get('indices').value;
+      const indptr = X.get('indptr').value;
+      const dataF32 = (data instanceof Float32Array) ? data : new Float32Array(data);
+      const idxI32  = (indices instanceof Int32Array) ? indices : new Int32Array(indices);
+      const ptrI32  = (indptr  instanceof Int32Array) ? indptr  : new Int32Array(indptr);
+      feats = pickCSR(dataF32, idxI32, ptrI32, shape, varNames, genes);
     }
-    try {
-      setAn(0);
-      const X = h5file.get("X");
+    setAn(30);
 
-      // 0→45%: feature extraction
-      log("Extracting features in model gene order ...");
-      const onRow = (i, n) => setAn(45 * (i / n));
-      let features;
-      if (X.isDataset){
-        const dense = X.value;
-        const denseF32 = dense instanceof Float32Array ? dense : new Float32Array(dense);
-        features = densePick(denseF32, shape, varNames, genes, onRow);
-      } else {
-        const data    = X.get("data").value;
-        const indices = X.get("indices").value;
-        const indptr  = X.get("indptr").value;
-        const dataF32    = data    instanceof Float32Array ? data : new Float32Array(data);
-        const indicesI32 = indices instanceof Int32Array   ? indices : new Int32Array(indices);
-        const indptrI32  = indptr  instanceof Int32Array   ? indptr  : new Int32Array(indptr);
-        features = csrPick(dataF32, indicesI32, indptrI32, shape, varNames, genes, onRow);
-      }
-      setAn(45);
+    // Session
+    say(`Creating session (${navigator.gpu && !$safe.checked ? 'WebGPU' : 'WASM'}) …`);
+    const eps = (navigator.gpu && !$safe.checked) ? ["webgpu","wasm"] : ["wasm"];
+    const session = await ort.InferenceSession.create(MODEL_URL, { executionProviders: eps });
+    setAn(40);
 
-      // 45→55%: session creation
-      log(`Creating ONNX session (${navigator.gpu ? "WebGPU" : "WASM"}) ...`);
-      const session = await ort.InferenceSession.create(MODEL_URL, { executionProviders: await pickProviders() });
-      setAn(55);
-
-      // 55→90%: inference
-      const n = shape[0], D = genes.length, C = classes.length;
-      const tensor = new ort.Tensor("float32", features, [n, D]);
-      log("Running inference ...");
-      const out = await session.run({ [session.inputNames[0]]: tensor });
-      let probs;
-      if (out.probabilities) {
-        probs = out.probabilities.data;
-      } else if (out.logits) {
-        probs = softmax2d(out.logits.data, n, C);
-      } else {
-        throw new Error("ONNX graph lacks 'probabilities' or 'logits'.");
-      }
-      setAn(90);
-
-      // 90→100%: CSV
-      log("Building CSV ...");
-      const header = ["cell_id", "Level1|predicted_labels", "Level1|conf_score", "Level1|cert_score"];
-      const rows = [];
-      for (let i=0;i<n;i++){
-        let best=-1, bj=-1, sum=0;
-        for (let j=0;j<C;j++){ const v=probs[i*C+j]; sum+=v; if (v>best){best=v; bj=j;} }
-        rows.push([obsNames[i], classes[bj], String(best), String(best / (sum || 1))]);
-      }
-      downloadCSV("pred.csv", header, rows);
-      setAn(100);
-      log("✅ Done. Saved pred.csv");
-    } catch (e) {
-      log("🛑 Error during annotation: " + (e?.message || e));
-      console.error(e);
-      setAn(0);
+    // Inference (chunked)
+    const Nbatch = Math.max(2000, Number($batch.value)||8000);
+    const probs = new Float32Array(n*C);
+    for (let start=0; start<n; start+=Nbatch){
+      const end = Math.min(n, start+Nbatch);
+      const view = feats.subarray(start*D, end*D);
+      const t = new ort.Tensor('float32', view, [end-start, D]);
+      const out = await session.run({ [session.inputNames[0]]: t });
+      let part;
+      if (out.probabilities) part = out.probabilities.data;
+      else if (out.logits){
+        part = new Float32Array((end-start)*C);
+        for (let i=0;i<end-start;i++){
+          let mx=-1e30; for(let j=0;j<C;j++) mx=Math.max(mx, out.logits.data[i*C+j]);
+          let s=0; for(let j=0;j<C;j++){ const e=Math.exp(out.logits.data[i*C+j]-mx); part[i*C+j]=e; s+=e; }
+          for (let j=0;j<C;j++) part[i*C+j]/=s;
+        }
+      } else { throw new Error("ONNX outputs missing probabilities/logits"); }
+      probs.set(part, start*C);
+      setAn(40 + 50*(end/n)); // up to 90%
+      await new Promise(r=>setTimeout(r,0));
     }
+
+    // CSV
+    say('Writing CSV …');
+    const header = ["cell_id","Level1|predicted_labels","Level1|conf_score","Level1|cert_score"];
+    const rows = new Array(n);
+    for (let i=0;i<n;i++){
+      let best=-1, bj=-1, sum=0;
+      const base=i*C;
+      for (let j=0;j<C;j++){ const v=probs[base+j]; sum+=v; if (v>best){best=v; bj=j;} }
+      rows[i] = [obsNames[i], classes[bj], String(best), String(best/(sum||1))];
+    }
+    const csv=[header.join(","), ...rows.map(r=>r.join(","))].join("\n");
+    const blob=new Blob([csv],{type:"text/csv"});
+    const url=URL.createObjectURL(blob);
+    const a=Object.assign(document.createElement('a'),{href:url,download:'pred.csv'});
+    $dl.innerHTML=''; $dl.appendChild(a); a.click(); URL.revokeObjectURL(url);
+
+    setAn(100); say('Done.');
+    $run.disabled=false;
   };
 </script>
-
-</div><!-- /annotate-app -->
-
 {% endraw %}
