@@ -1,6 +1,6 @@
 ---
-title: Annotate Cells (Pyodide + Portable CellTypist Model)
-author: Your Name
+title: Annotate Cells (PANGEA celltypes)
+author: S. Kim
 date: 2025-10-16
 layout: post
 ---
@@ -10,23 +10,22 @@ layout: post
 <!-- Load Pyodide from the official CDN -->
 <script defer src="https://cdn.jsdelivr.net/pyodide/v0.26.3/full/pyodide.js"></script>
 
-<h2>cAnnotate Cells from CSV/CSV.GZ (Pyodide, CellTypist-style logistic)</h2>
+<h2>Annotate Cells from csv/csv.gz</h2>
 <p>
-  Model: <code>/assets/models/level1_model_portable.npz</code><br>
-  Input: cells × genes; 1e4-normalized + <code>log1p</code><br>
-  Output: <code>pred.csv</code>
+  Input: cells × genes; 1e4-normalized (10^4 counts per cell) + <code>log1p</code><br>
+  Output: <code>pred.csv (containing prediction results for each cell barcode)</code>
 </p>
 
 <!-- Five buttons -->
 <div style="display:flex;flex-wrap:wrap;gap:10px;margin-bottom:8px;">
-  <button id="bootBtn" type="button">Boot</button>
-  <button id="pingBtn" type="button" disabled>Ping</button>
-  <button id="validateBtn" type="button" disabled>Validate assets</button>
+  <button id="bootBtn" type="button">1:boot</button>
+  <button id="pingBtn" type="button" disabled>2:ping</button>
+  <button id="validateBtn" type="button" disabled>3:validate-assets</button>
   <label for="csvInput" style="display:inline-block;">
     <input type="file" id="csvInput" accept=".csv,.csv.gz,text/csv" style="display:none;">
-    <button id="loadFileBtn" type="button" disabled>Load file</button>
+    <button id="loadFileBtn" type="button" disabled>4:load file</button>
   </label>
-  <button id="runBtn" type="button" disabled>Run</button>
+  <button id="runBtn" type="button" disabled>5:run</button>
 </div>
 
 <!-- Uploading progress -->
