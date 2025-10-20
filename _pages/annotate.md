@@ -10,7 +10,6 @@ layout: post
 <!-- Load Pyodide from the official CDN -->
 <script defer src="https://cdn.jsdelivr.net/pyodide/v0.26.3/full/pyodide.js"></script>
 
-<!-- <h2>Annotate Cells from csv/csv.gz</h2> -->
 <p>
   Input: cells × genes; <code>1e4-normalized + log1p</code> (normalized up to 10,000 counts per cell and log1p-transformed), should be in <code>.csv</code> or <code>.csv.gz</code> format <br>
   Output: <code>pred.csv</code> (containing prediction results for each cell barcode) <br>

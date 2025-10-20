@@ -1,5 +1,5 @@
 ---
-title: Annotate cells (Online)
+title: gene plot
 author: S. Kim
 date: 2025-10-16
 layout: post
@@ -10,12 +10,6 @@ excerpt: ""
 
 <!-- Pyodide -->
 <script defer src="https://cdn.jsdelivr.net/pyodide/v0.26.3/full/pyodide.js"></script>
-
-<p>
-  Input: cells × genes; <code>1e4-normalized + log1p</code> (<code>.csv/.csv.gz</code> not needed here) <br>
-  Assets required under <code>/data/profile/</code>: <code>fdic.pkl</code>, <code>&lt;cell&gt;_avg.npy.gz</code>, <code>&lt;cell&gt;_cov.npy.gz</code><br>
-  Output: a PNG plot (downloadable)
-</p>
 
 <div style="display:flex;gap:10px;flex-wrap:wrap;margin:12px 0;">
   <label>Cell:
@@ -35,7 +29,7 @@ excerpt: ""
   </label>
 
   <label>Gene:
-    <input id="geneInput" type="text" list="geneList" placeholder="Type to search…" style="min-width:200px;">
+    <input id="geneInput" type="text" list="geneList" placeholder="Type to search…" style="min-width:220px;">
     <datalist id="geneList"></datalist>
   </label>
 
@@ -43,12 +37,9 @@ excerpt: ""
 </div>
 
 <div id="geneErr" style="display:none;font-size:12px;color:#b91c1c;margin:-6px 0 10px 0;"></div>
-<div id="assetHint" style="font-size:12px;color:#666;margin:-2px 0 10px 0;">
-  Assets auto-load from <code id="assetBaseShow">/data/profile/</code> after the page boots.
-</div>
 
-<!-- Processing progress -->
-<div style="margin:8px 0 4px 0; font-size:13px; color:#555;">Processing</div>
+<!-- Progress -->
+<div style="margin:8px 0 4px 0; font-size:13px; color:#555;">Status</div>
 <progress id="procProg" max="100" value="0" style="width:100%;"></progress>
 <div id="procStatus" style="font-size:12px;color:#777;margin:4px 0 8px 0;">Booting…</div>
 
@@ -70,86 +61,70 @@ excerpt: ""
 
 <script>
 (function(){
-  // --- config ---
-  const ASSET_BASE = "/data/profile/"; // trailing slash
-  document.getElementById("assetBaseShow").textContent = ASSET_BASE;
+  // --- fixed asset base ---
+  const ASSET_BASE = "/assets/data/expression_profile/"; // trailing slash included
 
   // --- helpers ---
   const $ = (id)=>document.getElementById(id);
   function log(msg){
     const el = $("log"); el.textContent += msg + "\n";
     const lines = el.textContent.split("\n");
-    if(lines.length>300) el.textContent = lines.slice(-300).join("\n");
+    if(lines.length>400) el.textContent = lines.slice(-400).join("\n");
     el.scrollTop = el.scrollHeight;
   }
-  function stage(pct, msg){
-    $("procProg").value = pct;
-    $("procStatus").textContent = msg;
-  }
-  async function waitFor(fnName, t=20000){
+  function stage(pct, msg){ $("procProg").value = pct; $("procStatus").textContent = msg; }
+  async function waitFor(fnName, t=30000){
     const t0=performance.now();
     return new Promise((res, rej)=>{
       (function check(){
         if(typeof globalThis[fnName]==="function") return res();
         if(performance.now()-t0>t) return rej(new Error("Timeout waiting for "+fnName));
-        setTimeout(check, 100);
+        setTimeout(check,100);
       })();
     });
   }
   async function fetchToFS(url, fsPath){
-    const r = await fetch(url + (url.includes("?")?"":"?t="+Date.now()), { cache:"no-store" });
+    const r = await fetch(url + (url.includes("?") ? "" : "?t="+Date.now()), { cache:"no-store" });
     if(!r.ok) throw new Error("HTTP " + r.status + " for " + url);
     const buf = new Uint8Array(await r.arrayBuffer());
     pyodide.FS.writeFile(fsPath, buf);
     return buf.length;
   }
-  function showGeneError(msg){
-    const e = $("geneErr");
-    e.textContent = msg; e.style.display = "block";
-  }
-  function clearGeneError(){
-    const e = $("geneErr");
-    e.textContent = ""; e.style.display = "none";
-  }
+  function showGeneError(msg){ const e=$("geneErr"); e.textContent=msg; e.style.display="block"; }
+  function clearGeneError(){ const e=$("geneErr"); e.textContent=""; e.style.display="none"; }
 
   // --- state ---
-  let pyodide=null, FS=null, genesList=[];
-  let booted=false, fdicLoaded=false;
-  let pngURL=null;
+  let pyodide=null, FS=null;
+  let genesList=[], fdicLoaded=false, booted=false, pngURL=null;
 
-  // --- autocomplete: throttle datalist to first 200 matches for performance ---
+  // gene datalist: render up to 200 matches for speed
   function updateGeneDatalist(prefix){
-    const dl = $("geneList");
-    dl.innerHTML = "";
-    if(!prefix){ // seed first 200 alphabetically when empty
-      const first = genesList.slice(0, 200);
-      first.forEach(g => {
-        const opt = document.createElement("option");
-        opt.value = g; dl.appendChild(opt);
-      });
+    const dl = $("geneList"); dl.innerHTML = "";
+    if(!genesList.length) return;
+    const cap = 200;
+    if(!prefix){
+      for(let i=0;i<Math.min(cap, genesList.length);i++){
+        const opt = document.createElement("option"); opt.value = genesList[i]; dl.appendChild(opt);
+      }
       return;
     }
     const p = prefix.toLowerCase();
-    let count=0;
+    let n=0;
     for(const g of genesList){
       if(g.toLowerCase().includes(p)){
-        const opt = document.createElement("option");
-        opt.value = g; dl.appendChild(opt);
-        if(++count>=200) break;
+        const opt = document.createElement("option"); opt.value = g; dl.appendChild(opt);
+        if(++n>=cap) break;
       }
     }
   }
-  $("geneInput").addEventListener("input", (e)=>{
-    clearGeneError();
-    updateGeneDatalist(e.target.value.trim());
-  });
+  $("geneInput").addEventListener("input", (e)=>{ clearGeneError(); updateGeneDatalist(e.target.value.trim()); });
 
-  // --- auto boot + fdic load ---
+  // --- auto boot ---
   (async function autoBoot(){
     try{
       stage(2, "Waiting for Pyodide…");
       await waitFor("loadPyodide", 30000);
-      log("⏳ Boot: initializing Pyodide…");
+      log("⏳ Initializing Pyodide…");
       pyodide = await globalThis.loadPyodide({ indexURL: "https://cdn.jsdelivr.net/pyodide/v0.26.3/full/" });
       FS = pyodide.FS;
       log("✅ Pyodide " + pyodide.version + " loaded.");
@@ -167,82 +142,73 @@ import matplotlib.pyplot as plt
       log("✅ Python ready.");
       booted = true;
 
-      // Load fdic.pkl (for genes + features)
+      // Load fdic.pkl and gene list
       stage(20, "Fetching fdic.pkl …");
       const fdSz = await fetchToFS(ASSET_BASE + "fdic.pkl", "/fdic.pkl");
-      log(`✅ fdic.pkl → /fdic.pkl (${(fdSz/1e6).toFixed(2)} MB)`);
+      log(\`✅ fdic.pkl → /fdic.pkl (\${(fdSz/1e6).toFixed(2)} MB)\`);
 
-      // parse genes + show first batch in datalist
       stage(35, "Parsing gene list …");
       const result = await pyodide.runPythonAsync(`
 import pickle as pkl
 with open("/fdic.pkl","rb") as fh:
     _fd = pkl.load(fh)
 genes = list(_fd["gene"])
-cells = [k for k in _fd.keys() if k!="gene"]
-(genes[:5000], len(genes), cells[:20])  # cap preview for transfer
+(genes[:5000], len(genes))
       `);
-      const genesPreview = result[0]; // JS receives a list
+      const genesPreview = result[0];
       const totalGenes   = result[1];
-      // We'll lazily keep only preview for datalist; the exact test happens in Python on run
       genesList = Array.isArray(genesPreview) ? genesPreview : [];
       updateGeneDatalist("");
-      log(`ℹ️ Loaded ${totalGenes} genes (showing up to 5000 for autocomplete).`);
+      log(\`ℹ️ Loaded \${totalGenes} genes (showing up to 5000 for autocomplete).\`);
       fdicLoaded = true;
 
-      // Enable Run
       $("runBtn").disabled = false;
-      stage(40, "Ready. Pick cell & gene, then Run.");
+      stage(45, "Ready.");
     }catch(err){
-      log("❌ Boot error: " + (err?.message||err));
+      $("runBtn").disabled = true;
+      fdicLoaded = false;
       stage(0, "Error");
+      log("❌ Boot error: " + (err?.message||err));
+      if(/HTTP 404/i.test(err?.message||"")){
+        log("ℹ️ Check that files exist under /assets/data/expression_profile/ (path is case-sensitive).");
+      }
     }
   })();
 
-  // --- RUN plot ---
+  // --- Run plot ---
   $("runBtn").addEventListener("click", async ()=>{
     if(!booted || !fdicLoaded){ return; }
     clearGeneError();
 
     const cell = $("cellSelect").value.trim();
     const gene = $("geneInput").value.trim();
+    if(!gene){ showGeneError("Please enter a gene symbol."); return; }
 
-    if(!gene){
-      showGeneError("Please enter a gene symbol.");
-      return;
-    }
-
-    // Stream staged logs
-    const unhookOut = pyodide.setStdout({
-      batched: (s)=>{
-        (s||"").split(/\r?\n/).forEach(line=>{
-          if(!line) return;
-          if(line.startsWith("__STAGE__:")){
-            const p = line.split(":");
-            const pct = parseInt(p[1]||"50",10);
-            const msg = p.slice(2).join(":") || "Working…";
-            stage(pct, msg);
-          }else{ log(line); }
-        });
-      }
-    });
+    const unhookOut = pyodide.setStdout({ batched: (s)=>{
+      (s||"").split(/\r?\n/).forEach(line=>{
+        if(!line) return;
+        if(line.startsWith("__STAGE__:")){
+          const p = line.split(":"); const pct = parseInt(p[1]||"50",10); const msg = p.slice(2).join(":")||"Working…";
+          stage(pct, msg);
+        } else { log(line); }
+      });
+    }});
     const unhookErr = pyodide.setStderr({ batched: (s)=>{ s && s.trim() && log("ERR: " + s); } });
 
     try{
-      stage(45, `Fetching ${cell} matrices …`);
+      stage(50, `Fetching ${cell} matrices …`);
       const avgSize = await fetchToFS(ASSET_BASE + `${cell}_avg.npy.gz`, "/avg.npy.gz");
       const covSize = await fetchToFS(ASSET_BASE + `${cell}_cov.npy.gz`, "/cov.npy.gz");
       log(`✅ ${cell}_avg.npy.gz → /avg.npy.gz (${(avgSize/1e6).toFixed(2)} MB)`);
       log(`✅ ${cell}_cov.npy.gz → /cov.npy.gz (${(covSize/1e6).toFixed(2)} MB)`);
 
-      stage(55, "Plotting …");
+      stage(58, "Plotting …");
       const code = `
 import os, io, gzip, pickle as pkl
 import numpy as np, pandas as pd
 import matplotlib as mpl
 mpl.use("Agg")
 import matplotlib.pyplot as plt
-
 def stage(pct,msg): print(f"__STAGE__:{pct}:{msg}")
 
 cell = ${JSON.stringify(cell)}
@@ -276,7 +242,6 @@ fac  = 100.0
 padx = 0.5
 pady = 0.5
 
-stage(80, "Rendering figure …")
 fig = plt.figure()
 ax  = plt.gca()
 scatt = ax.scatter(x=Y, y=X, s=d2 * fac, c=d1, cmap='OrRd',
@@ -304,7 +269,6 @@ cbar.ax.tick_params(length=0, labelbottom=False, labeltop=False)
 
 fig.set_size_inches(0.3, len(feat)/4.0)
 
-stage(90, "Saving PNG …")
 buf = io.BytesIO()
 plt.savefig(buf, format="png", bbox_inches="tight", dpi=150)
 plt.close(fig)
@@ -314,7 +278,7 @@ open("/plot.png","wb").write(buf.getbuffer())
       await pyodide.runPythonAsync(code);
 
       stage(100, "Done");
-      const bytes = FS.readFile("/plot.png");
+      const bytes = pyodide.FS.readFile("/plot.png");
       const blob  = new Blob([bytes], { type: "image/png" });
       if(pngURL) URL.revokeObjectURL(pngURL);
       pngURL = URL.createObjectURL(blob);
@@ -323,12 +287,15 @@ open("/plot.png","wb").write(buf.getbuffer())
       $("downloadPNG").href = pngURL;
       log("✅ Plot ready.");
     }catch(e){
-      const msg = (e?.message || String(e));
+      const msg = (e?.message||String(e));
+      stage(0, "Error");
+      log("❌ Run error: " + msg);
       if(/not in our gene list/i.test(msg)){
         showGeneError("The gene you entered is not on our gene list.");
       }
-      stage(0, "Error");
-      log("❌ Run error: " + msg);
+      if(/HTTP 404/i.test(msg)){
+        log("ℹ️ Check filenames for the selected cell in /assets/data/expression_profile/ (case-sensitive).");
+      }
       $("imgWrap").style.display = "none";
     }finally{
       try{ unhookOut && unhookOut(); }catch(_){}
