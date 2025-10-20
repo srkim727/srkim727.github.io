@@ -12,6 +12,8 @@ excerpt: ""
 <script defer src="https://cdn.jsdelivr.net/pyodide/v0.26.3/full/pyodide.js"></script>
 
 <div style="display:flex;gap:10px;flex-wrap:wrap;margin:12px 0;">
+  <button id="bootBtn" type="button">Boot</button>
+
   <label>Cell:
     <select id="cellSelect" style="min-width:180px;">
       <option>Whole</option>
@@ -41,7 +43,7 @@ excerpt: ""
 <!-- Progress -->
 <div style="margin:8px 0 4px 0; font-size:13px; color:#555;">Status</div>
 <progress id="procProg" max="100" value="0" style="width:100%;"></progress>
-<div id="procStatus" style="font-size:12px;color:#777;margin:4px 0 8px 0;">Booting…</div>
+<div id="procStatus" style="font-size:12px;color:#777;margin:4px 0 8px 0;">Idle</div>
 
 <!-- Output image -->
 <div id="imgWrap" style="display:none;margin:10px 0;">
@@ -54,9 +56,20 @@ excerpt: ""
 <details open style="margin-top:10px;">
   <summary><strong>Log</strong></summary>
   <pre id="log" style="
-    background:#0a0f17;color:#e8eef7;padding:6px;border-radius:6px;overflow:auto;height:240px;
+    background:#0a0f17;color:#e8eef7;padding:6px;border-radius:6px;overflow:auto;height:260px;
     white-space:pre-wrap;font-size:11px;line-height:1.25;font-family:ui-monospace,Menlo,Consolas,monospace;">
   </pre>
+</details>
+
+<details style="margin-top:10px;">
+  <summary><strong>Troubleshooting</strong></summary>
+  <ul style="font-size:13px;line-height:1.4;">
+    <li><b>“loadPyodide is not a function”</b>: your browser blocked the CDN or it hasn’t loaded yet. Wait a second and click <i>Boot</i> again.</li>
+    <li><b>HTTP 404 for fdic.pkl / *_avg.npy.gz / *_cov.npy.gz</b>: confirm files exist under <code>/assets/data/expression_profile/</code> (case-sensitive).</li>
+    <li><b>CORS error</b>: serve the site via http(s) (not file://). With Jekyll, use <code>bundle exec jekyll serve</code>.</li>
+    <li><b>Blank logs</b>: ensure this page uses a layout that outputs the HTML body (e.g., <code>layout: post</code> or <code>default</code>).</li>
+    <li><b>Very large fdic.pkl</b>: initial Boot can be slow on first visit (browser cache helps afterwards).</li>
+  </ul>
 </details>
 
 <script>
@@ -69,7 +82,7 @@ excerpt: ""
   function log(msg){
     const el = $("log"); el.textContent += msg + "\n";
     const lines = el.textContent.split("\n");
-    if(lines.length>400) el.textContent = lines.slice(-400).join("\n");
+    if(lines.length>600) el.textContent = lines.slice(-600).join("\n");
     el.scrollTop = el.scrollHeight;
   }
   function stage(pct, msg){ $("procProg").value = pct; $("procStatus").textContent = msg; }
@@ -95,9 +108,9 @@ excerpt: ""
 
   // --- state ---
   let pyodide=null, FS=null;
-  let genesList=[], fdicLoaded=false, booted=false, pngURL=null;
+  let booted=false, genesList=[], fdicLoaded=false, pngURL=null;
 
-  // gene datalist: render up to 200 matches for speed
+  // datalist: render up to 200 matches for speed
   function updateGeneDatalist(prefix){
     const dl = $("geneList"); dl.innerHTML = "";
     if(!genesList.length) return;
@@ -119,33 +132,44 @@ excerpt: ""
   }
   $("geneInput").addEventListener("input", (e)=>{ clearGeneError(); updateGeneDatalist(e.target.value.trim()); });
 
-  // --- auto boot ---
-  (async function autoBoot(){
+  // --- BOOT button ---
+  $("bootBtn").addEventListener("click", async ()=>{
     try{
+      $("runBtn").disabled = true;
       stage(2, "Waiting for Pyodide…");
+      log("⏳ Boot: waiting for pyodide.js …");
       await waitFor("loadPyodide", 30000);
-      log("⏳ Initializing Pyodide…");
-      pyodide = await globalThis.loadPyodide({ indexURL: "https://cdn.jsdelivr.net/pyodide/v0.26.3/full/" });
-      FS = pyodide.FS;
-      log("✅ Pyodide " + pyodide.version + " loaded.");
-      stage(10, "Loading numpy/pandas/matplotlib…");
-      await pyodide.loadPackage(["numpy","pandas","matplotlib"]);
-      log("✅ Packages loaded.");
-      stage(15, "Importing Python libs…");
-      await pyodide.runPythonAsync(`
+
+      if(!booted){
+        log("⏳ Boot: initializing Pyodide…");
+        pyodide = await globalThis.loadPyodide({ indexURL: "https://cdn.jsdelivr.net/pyodide/v0.26.3/full/" });
+        FS = pyodide.FS;
+        log("✅ Pyodide " + pyodide.version + " loaded.");
+        stage(10, "Loading numpy/pandas/matplotlib…");
+        await pyodide.loadPackage(["numpy","pandas","matplotlib"]);
+        log("✅ Packages loaded.");
+        stage(15, "Importing Python libs…");
+        await pyodide.runPythonAsync(`
 import sys, io, os, gzip
 import numpy as np, pandas as pd
 import matplotlib as mpl
 mpl.use("Agg")
 import matplotlib.pyplot as plt
-      `);
-      log("✅ Python ready.");
-      booted = true;
+print("numpy", np.__version__)
+print("pandas", pd.__version__)
+print("matplotlib", mpl.__version__)
+        `);
+        log("✅ Python ready.");
+        booted = true;
+      } else {
+        log("↻ Pyodide already loaded — reloading assets only.");
+      }
 
-      // Load fdic.pkl and gene list
+      // Pull fdic.pkl & parse gene list
+      fdicLoaded = false;
       stage(20, "Fetching fdic.pkl …");
       const fdSz = await fetchToFS(ASSET_BASE + "fdic.pkl", "/fdic.pkl");
-      log(\`✅ fdic.pkl → /fdic.pkl (\${(fdSz/1e6).toFixed(2)} MB)\`);
+      log(`✅ fdic.pkl → /fdic.pkl (${(fdSz/1e6).toFixed(2)} MB)`);
 
       stage(35, "Parsing gene list …");
       const result = await pyodide.runPythonAsync(`
@@ -159,23 +183,26 @@ genes = list(_fd["gene"])
       const totalGenes   = result[1];
       genesList = Array.isArray(genesPreview) ? genesPreview : [];
       updateGeneDatalist("");
-      log(\`ℹ️ Loaded \${totalGenes} genes (showing up to 5000 for autocomplete).\`);
+      log(`ℹ️ Loaded ${totalGenes} genes (showing up to 5000 for autocomplete).`);
       fdicLoaded = true;
 
       $("runBtn").disabled = false;
-      stage(45, "Ready.");
+      stage(45, "Boot complete. Select cell & gene, then Run.");
     }catch(err){
       $("runBtn").disabled = true;
       fdicLoaded = false;
       stage(0, "Error");
-      log("❌ Boot error: " + (err?.message||err));
-      if(/HTTP 404/i.test(err?.message||"")){
-        log("ℹ️ Check that files exist under /assets/data/expression_profile/ (path is case-sensitive).");
+      const msg = (err?.message || String(err));
+      log("❌ Boot error: " + msg);
+      if(/HTTP 404/i.test(msg)){
+        log("ℹ️ Check path: /assets/data/expression_profile/fdic.pkl (case-sensitive).");
+      } else if(/CORS/i.test(msg)){
+        log("ℹ️ Serve the site via http(s), not file:// .");
       }
     }
-  })();
+  });
 
-  // --- Run plot ---
+  // --- RUN plot ---
   $("runBtn").addEventListener("click", async ()=>{
     if(!booted || !fdicLoaded){ return; }
     clearGeneError();
@@ -198,7 +225,7 @@ genes = list(_fd["gene"])
     try{
       stage(50, `Fetching ${cell} matrices …`);
       const avgSize = await fetchToFS(ASSET_BASE + `${cell}_avg.npy.gz`, "/avg.npy.gz");
-      const covSize = await fetchToFS(ASSET_BASE + `${cell}_cov.npy.gz`, "/cov.npy.gz");
+      const covSize = await fetchToFS(ASSET_BASE + `${cell}_cov.npy.gz`, "/cov.npy.gz`);
       log(`✅ ${cell}_avg.npy.gz → /avg.npy.gz (${(avgSize/1e6).toFixed(2)} MB)`);
       log(`✅ ${cell}_cov.npy.gz → /cov.npy.gz (${(covSize/1e6).toFixed(2)} MB)`);
 
@@ -213,7 +240,6 @@ def stage(pct,msg): print(f"__STAGE__:{pct}:{msg}")
 
 cell = ${JSON.stringify(cell)}
 gene = ${JSON.stringify(gene)}
-
 plt.rcParams['figure.dpi'] = 150
 
 stage(60, "Reading fdic …")
@@ -303,6 +329,8 @@ open("/plot.png","wb").write(buf.getbuffer())
     }
   });
 
+  // Small hint in log so you know it's idle before pressing Boot
+  log("Idle — click Boot to load Pyodide and index genes.");
 })();
 </script>
 
