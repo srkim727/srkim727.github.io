@@ -11,6 +11,7 @@ excerpt: ""
 <!-- Pyodide -->
 <script defer src="https://cdn.jsdelivr.net/pyodide/v0.26.3/full/pyodide.js"></script>
 
+
 <div style="display:flex;gap:10px;flex-wrap:wrap;margin:12px 0;">
   <button id="bootBtn" type="button">1: boot</button>
   <button id="assetsBtn" type="button" disabled>2: load assets</button>
@@ -24,7 +25,7 @@ excerpt: ""
 </div>
 
 <div id="assetHint" style="font-size:12px;color:#666;margin:-6px 0 10px 0;">
-  Assets load from <code id="assetBaseShow">/assets/data/expression_profile/</code>.
+  Assets are loaded from <code id="assetBaseShow">/data/profile/</code>. Adjust in the script if your path differs.
 </div>
 
 <!-- Processing progress -->
@@ -50,8 +51,8 @@ excerpt: ""
 
 <script>
 (function(){
-  // --- assets path ---
-  const ASSET_BASE = "/assets/data/expression_profile/"; // trailing slash
+  // --- config: adjust if your assets live elsewhere ---
+  const ASSET_BASE = "/assets/data/expression_profile/"; // trailing slash required
   document.getElementById("assetBaseShow").textContent = ASSET_BASE;
 
   // --- helpers ---
@@ -67,18 +68,8 @@ excerpt: ""
     $("procProg").value = pct;
     $("procStatus").textContent = msg;
   }
-  async function waitForLoadPyodide(timeout=20000){
-    return new Promise((res, rej)=>{
-      const t0=performance.now();
-      (function check(){
-        if(typeof globalThis.loadPyodide==="function") return res();
-        if(performance.now()-t0>timeout) return rej(new Error("Timeout waiting for loadPyodide()"));
-        setTimeout(check,100);
-      })();
-    });
-  }
   async function fetchToFS(path, fsPath){
-    const u = path + (path.includes("?") ? "" : "?t=" + Date.now()); // cache-bust
+    const u = (path.includes("?") ? path : path + "?t=" + Date.now()); // bust cache
     const r = await fetch(u, { cache:"no-store" });
     if(!r.ok) throw new Error("HTTP " + r.status + " for " + path);
     const buf = new Uint8Array(await r.arrayBuffer());
@@ -95,7 +86,14 @@ excerpt: ""
     try{
       setDisabled("bootBtn", true);
       log("⏳ Boot: waiting for pyodide.js …");
-      await waitForLoadPyodide();
+      await new Promise((res, rej)=>{
+        const t0=performance.now();
+        (function check(){
+          if(typeof globalThis.loadPyodide==="function") return res();
+          if(performance.now()-t0>20000) return rej(new Error("Timeout waiting for loadPyodide()"));
+          setTimeout(check,100);
+        })();
+      });
 
       log("⏳ Boot: initializing Pyodide…");
       pyodide = await globalThis.loadPyodide({ indexURL: "https://cdn.jsdelivr.net/pyodide/v0.26.3/full/" });
@@ -106,6 +104,7 @@ excerpt: ""
       await pyodide.loadPackage(["numpy","pandas","matplotlib"]);
       log("✅ Packages loaded.");
 
+      // import libs + set non-interactive backend
       await pyodide.runPythonAsync(`
 import sys, io, os, gzip
 import numpy as np, pandas as pd
@@ -136,24 +135,24 @@ print("matplotlib", mpl.__version__)
       setDisabled("assetsBtn", true);
       stage(5, "Fetching fdic.pkl …");
       const fdicSize = await fetchToFS(ASSET_BASE + "fdic.pkl", "/fdic.pkl");
-      log(\`✅ fdic.pkl → /fdic.pkl (\${(fdicSize/1e6).toFixed(2)} MB)\`);
+      log(`✅ fdic.pkl → /fdic.pkl (${(fdicSize/1e6).toFixed(2)} MB)`);
 
-      stage(20, \`Fetching \${cell}_avg.npy.gz …\`);
-      const avgSize = await fetchToFS(ASSET_BASE + \`\${cell}_avg.npy.gz\`, "/avg.npy.gz");
-      log(\`✅ \${cell}_avg.npy.gz → /avg.npy.gz (\${(avgSize/1e6).toFixed(2)} MB)\`);
+      stage(20, `Fetching ${cell}_avg.npy.gz …`);
+      const avgSize = await fetchToFS(ASSET_BASE + `${cell}_avg.npy.gz`, "/avg.npy.gz");
+      log(`✅ ${cell}_avg.npy.gz → /avg.npy.gz (${(avgSize/1e6).toFixed(2)} MB)`);
 
-      stage(35, \`Fetching \${cell}_cov.npy.gz …\`);
-      const covSize = await fetchToFS(ASSET_BASE + \`\${cell}_cov.npy.gz\`, "/cov.npy.gz");
-      log(\`✅ \${cell}_cov.npy.gz → /cov.npy.gz (\${(covSize/1e6).toFixed(2)} MB)\`);
+      stage(35, `Fetching ${cell}_cov.npy.gz …`);
+      const covSize = await fetchToFS(ASSET_BASE + `${cell}_cov.npy.gz`, "/cov.npy.gz");
+      log(`✅ ${cell}_cov.npy.gz → /cov.npy.gz (${(covSize/1e6).toFixed(2)} MB)`);
 
-      // quick smoke test: open fdic
-      const keys = await pyodide.runPythonAsync(`
+      // quick smoke test: open fdic and list available keys for info
+      const info = await pyodide.runPythonAsync(`
 import pickle as pkl
 with open("/fdic.pkl","rb") as fh:
     _fd = pkl.load(fh)
 list(_fd.keys())[:5]
       `);
-      log("ℹ️ fdic keys (first 5): " + JSON.stringify(keys));
+      log("ℹ️ fdic keys (first 5): " + JSON.stringify(info));
       assetsLoaded = true;
       setDisabled("runBtn", false);
       stage(45, "Assets loaded. Ready.");
@@ -175,7 +174,7 @@ list(_fd.keys())[:5]
     if(!gene){ alert("Enter a gene symbol."); return; }
 
     stage(50, "Plotting …");
-    log(\`▶️ Plot: cell=\${cell}, gene=\${gene}\`);
+    log(`▶️ Plot: cell=${cell}, gene=${gene}`);
 
     // capture staged prints
     const unhookOut = pyodide.setStdout({
@@ -213,8 +212,8 @@ stage(55, "Reading fdic …")
 with open("/fdic.pkl","rb") as f: fdic = pkl.load(f)
 
 genes = fdic['gene']
-cell  = ${JSON.stringify("".concat("${cell}"))}
-gene  = ${JSON.stringify("".concat("${gene}"))}
+cell  = ${JSON.stringify(cell)!==undefined ? JSON.stringify(cell) : "'Whole'"}
+gene  = ${JSON.stringify(gene)!==undefined ? JSON.stringify(gene) : "'CD79A'"}
 
 if gene not in genes:
     raise ValueError(f"Gene '{gene}' not in fdic['gene']")
@@ -226,7 +225,7 @@ with gzip.open("/avg.npy.gz","rb") as f: avg = np.load(f)
 with gzip.open("/cov.npy.gz","rb") as f: cov = np.load(f)
 
 d1 = avg[:, idx]    # mean
-d2 = cov[:, idx]    # variance proxy
+d2 = cov[:, idx]    # variance or "size" proxy
 
 feat = fdic[cell]
 
@@ -257,6 +256,7 @@ plt.xlim(-padx, len(mlist)-1+padx)
 leg = ax.legend(*scatt.legend_elements("sizes", num=5),
                 bbox_to_anchor=(1.05,1), title='express.\\nratio',
                 loc='upper left')
+# center legend title (if multiline)
 try:
     leg.get_title().set_ha('center')
     leg.get_title().set_multialignment('center')
@@ -283,6 +283,7 @@ open("/plot.png","wb").write(buf.getbuffer())
       await pyodide.runPythonAsync(code);
       stage(100, "Done");
 
+      // read PNG and show
       const bytes = FS.readFile("/plot.png");
       const blob  = new Blob([bytes], { type: "image/png" });
       if(pngURL) URL.revokeObjectURL(pngURL);
