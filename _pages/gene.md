@@ -15,9 +15,23 @@ excerpt: ""
 <div style="display:flex;gap:10px;flex-wrap:wrap;margin:12px 0;">
   <button id="bootBtn" type="button">1: boot</button>
   <button id="assetsBtn" type="button" disabled>2: load assets</button>
+
   <label>Cell:
-    <input id="cellInput" type="text" value="Whole" style="width:140px;">
+    <select id="cellSelect" style="width:180px;">
+      <option selected>Whole</option>
+      <option>B_mature</option>
+      <option>Dendritic_classical</option>
+      <option>Ductal</option>
+      <option>Endothelial</option>
+      <option>Fibroblast</option>
+      <option>Macrophage</option>
+      <option>Monocyte</option>
+      <option>Mural</option>
+      <option>Squamous</option>
+      <option>T&NK</option>
+    </select>
   </label>
+
   <label>Gene:
     <input id="geneInput" type="text" value="CD79A" style="width:140px;">
   </label>
@@ -129,7 +143,7 @@ print("matplotlib", mpl.__version__)
   // --- load assets ---
   $("assetsBtn").addEventListener("click", async ()=>{
     if(!booted){ alert("Boot first."); return; }
-    const cell = $("cellInput").value.trim();
+    const cell = $("cellSelect").value.trim();   // <-- dropdown
     if(!cell){ alert("Enter a cell name (e.g., Whole)."); return; }
     try{
       setDisabled("assetsBtn", true);
@@ -169,7 +183,7 @@ list(_fd.keys())[:5]
   // --- run plot ---
   $("runBtn").addEventListener("click", async ()=>{
     if(!assetsLoaded){ alert("Load assets first."); return; }
-    const cell = $("cellInput").value.trim();
+    const cell = $("cellSelect").value.trim();   // <-- dropdown
     const gene = $("geneInput").value.trim();
     if(!gene){ alert("Enter a gene symbol."); return; }
 
@@ -212,8 +226,8 @@ stage(55, "Reading fdic …")
 with open("/fdic.pkl","rb") as f: fdic = pkl.load(f)
 
 genes = fdic['gene']
-cell  = ${JSON.stringify(cell)!==undefined ? JSON.stringify(cell) : "'Whole'"}
-gene  = ${JSON.stringify(gene)!==undefined ? JSON.stringify(gene) : "'CD79A'"}
+cell  = ${JSON.stringify("".concat("${cell}"))}
+gene  = ${JSON.stringify("".concat("${gene}"))}
 
 if gene not in genes:
     raise ValueError(f"Gene '{gene}' not in fdic['gene']")
