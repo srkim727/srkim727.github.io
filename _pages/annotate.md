@@ -1,5 +1,5 @@
 ---
-title: Annotate Cells (PANGEA celltypes)
+title: Annotate cells (Online)
 author: S. Kim
 date: 2025-10-16
 layout: post
