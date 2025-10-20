@@ -11,34 +11,21 @@ excerpt: ""
 <!-- Pyodide -->
 <script defer src="https://cdn.jsdelivr.net/pyodide/v0.26.3/full/pyodide.js"></script>
 
+
 <div style="display:flex;gap:10px;flex-wrap:wrap;margin:12px 0;">
   <button id="bootBtn" type="button">1: boot</button>
-
+  <button id="assetsBtn" type="button" disabled>2: load assets</button>
   <label>Cell:
-    <select id="cellSelect" style="width:180px;">
-      <option selected>Whole</option>
-      <option>B_mature</option>
-      <option>Dendritic_classical</option>
-      <option>Ductal</option>
-      <option>Endothelial</option>
-      <option>Fibroblast</option>
-      <option>Macrophage</option>
-      <option>Monocyte</option>
-      <option>Mural</option>
-      <option>Squamous</option>
-      <option>T&NK</option>
-    </select>
+    <input id="cellInput" type="text" value="Whole" style="width:140px;">
   </label>
-
   <label>Gene:
     <input id="geneInput" type="text" value="CD79A" style="width:140px;">
   </label>
-
-  <button id="runBtn" type="button" disabled>2: run plot</button>
+  <button id="runBtn" type="button" disabled>3: run plot</button>
 </div>
 
 <div id="assetHint" style="font-size:12px;color:#666;margin:-6px 0 10px 0;">
-  Assets load from <code id="assetBaseShow">/assets/data/expression_profile/</code>.
+  Assets are loaded from <code id="assetBaseShow">/data/profile/</code>. Adjust in the script if your path differs.
 </div>
 
 <!-- Processing progress -->
@@ -64,8 +51,8 @@ excerpt: ""
 
 <script>
 (function(){
-  // --- assets path ---
-  const ASSET_BASE = "/assets/data/expression_profile/"; // trailing slash
+  // --- config: adjust if your assets live elsewhere ---
+  const ASSET_BASE = "/assets/data/expression_profile/"; // trailing slash required
   document.getElementById("assetBaseShow").textContent = ASSET_BASE;
 
   // --- helpers ---
@@ -81,18 +68,8 @@ excerpt: ""
     $("procProg").value = pct;
     $("procStatus").textContent = msg;
   }
-  async function waitForLoadPyodide(timeout=20000){
-    return new Promise((res, rej)=>{
-      const t0=performance.now();
-      (function check(){
-        if(typeof globalThis.loadPyodide==="function") return res();
-        if(performance.now()-t0>timeout) return rej(new Error("Timeout waiting for loadPyodide()"));
-        setTimeout(check,100);
-      })();
-    });
-  }
   async function fetchToFS(path, fsPath){
-    const u = path + (path.includes("?") ? "" : "?t=" + Date.now()); // cache-bust
+    const u = (path.includes("?") ? path : path + "?t=" + Date.now()); // bust cache
     const r = await fetch(u, { cache:"no-store" });
     if(!r.ok) throw new Error("HTTP " + r.status + " for " + path);
     const buf = new Uint8Array(await r.arrayBuffer());
@@ -102,14 +79,21 @@ excerpt: ""
 
   // --- state ---
   let pyodide=null, FS=null;
-  let booted=false, pngURL=null;
+  let booted=false, assetsLoaded=false, pngURL=null;
 
   // --- boot ---
   $("bootBtn").addEventListener("click", async ()=>{
     try{
       setDisabled("bootBtn", true);
       log("⏳ Boot: waiting for pyodide.js …");
-      await waitForLoadPyodide();
+      await new Promise((res, rej)=>{
+        const t0=performance.now();
+        (function check(){
+          if(typeof globalThis.loadPyodide==="function") return res();
+          if(performance.now()-t0>20000) return rej(new Error("Timeout waiting for loadPyodide()"));
+          setTimeout(check,100);
+        })();
+      });
 
       log("⏳ Boot: initializing Pyodide…");
       pyodide = await globalThis.loadPyodide({ indexURL: "https://cdn.jsdelivr.net/pyodide/v0.26.3/full/" });
@@ -120,6 +104,7 @@ excerpt: ""
       await pyodide.loadPackage(["numpy","pandas","matplotlib"]);
       log("✅ Packages loaded.");
 
+      // import libs + set non-interactive backend
       await pyodide.runPythonAsync(`
 import sys, io, os, gzip
 import numpy as np, pandas as pd
@@ -132,7 +117,7 @@ print("matplotlib", mpl.__version__)
       `);
       log("✅ Python libs imported & backend set.");
       booted = true;
-      setDisabled("runBtn", false);
+      setDisabled("assetsBtn", false);
     }catch(e){
       log("❌ Boot failed: " + (e?.message||e));
       setDisabled("bootBtn", false);
@@ -141,39 +126,57 @@ print("matplotlib", mpl.__version__)
     setDisabled("bootBtn", false);
   });
 
-  // --- run plot (auto-fetches assets for the selected cell) ---
-  $("runBtn").addEventListener("click", async ()=>{
+  // --- load assets ---
+  $("assetsBtn").addEventListener("click", async ()=>{
     if(!booted){ alert("Boot first."); return; }
+    const cell = $("cellInput").value.trim();
+    if(!cell){ alert("Enter a cell name (e.g., Whole)."); return; }
+    try{
+      setDisabled("assetsBtn", true);
+      stage(5, "Fetching fdic.pkl …");
+      const fdicSize = await fetchToFS(ASSET_BASE + "fdic.pkl", "/fdic.pkl");
+      log(`✅ fdic.pkl → /fdic.pkl (${(fdicSize/1e6).toFixed(2)} MB)`);
 
-    const cell = $("cellSelect").value.trim();
+      stage(20, `Fetching ${cell}_avg.npy.gz …`);
+      const avgSize = await fetchToFS(ASSET_BASE + `${cell}_avg.npy.gz`, "/avg.npy.gz");
+      log(`✅ ${cell}_avg.npy.gz → /avg.npy.gz (${(avgSize/1e6).toFixed(2)} MB)`);
+
+      stage(35, `Fetching ${cell}_cov.npy.gz …`);
+      const covSize = await fetchToFS(ASSET_BASE + `${cell}_cov.npy.gz`, "/cov.npy.gz");
+      log(`✅ ${cell}_cov.npy.gz → /cov.npy.gz (${(covSize/1e6).toFixed(2)} MB)`);
+
+      // quick smoke test: open fdic and list available keys for info
+      const info = await pyodide.runPythonAsync(`
+import pickle as pkl
+with open("/fdic.pkl","rb") as fh:
+    _fd = pkl.load(fh)
+list(_fd.keys())[:5]
+      `);
+      log("ℹ️ fdic keys (first 5): " + JSON.stringify(info));
+      assetsLoaded = true;
+      setDisabled("runBtn", false);
+      stage(45, "Assets loaded. Ready.");
+    }catch(e){
+      log("❌ Asset load failed: " + (e?.message||e));
+      assetsLoaded = false;
+      setDisabled("runBtn", true);
+      stage(0, "Idle");
+    }finally{
+      setDisabled("assetsBtn", false);
+    }
+  });
+
+  // --- run plot ---
+  $("runBtn").addEventListener("click", async ()=>{
+    if(!assetsLoaded){ alert("Load assets first."); return; }
+    const cell = $("cellInput").value.trim();
     const gene = $("geneInput").value.trim();
     if(!gene){ alert("Enter a gene symbol."); return; }
 
-    stage(10, "Fetching fdic.pkl …");
-    try{
-      const fdicSize = await fetchToFS(ASSET_BASE + "fdic.pkl", "/fdic.pkl");
-      log(\`✅ fdic.pkl → /fdic.pkl (\${(fdicSize/1e6).toFixed(2)} MB)\`);
-    }catch(e){
-      stage(0, "Error");
-      log("❌ Could not fetch fdic.pkl: " + (e?.message||e));
-      return;
-    }
+    stage(50, "Plotting …");
+    log(`▶️ Plot: cell=${cell}, gene=${gene}`);
 
-    stage(25, \`Fetching \${cell} matrices …\`);
-    try{
-      const avgSize = await fetchToFS(ASSET_BASE + \`\${cell}_avg.npy.gz\`, "/avg.npy.gz");
-      log(\`✅ \${cell}_avg.npy.gz → /avg.npy.gz (\${(avgSize/1e6).toFixed(2)} MB)\`);
-      const covSize = await fetchToFS(ASSET_BASE + \`\${cell}_cov.npy.gz\`, "/cov.npy.gz");
-      log(\`✅ \${cell}_cov.npy.gz → /cov.npy.gz (\${(covSize/1e6).toFixed(2)} MB)\`);
-    }catch(e){
-      stage(0, "Error");
-      log("❌ Could not fetch avg/cov: " + (e?.message||e));
-      return;
-    }
-
-    stage(40, "Plotting …");
-    log(\`▶️ Plot: cell=\${cell}, gene=\${gene}\`);
-
+    // capture staged prints
     const unhookOut = pyodide.setStdout({
       batched: (s)=>{
         (s||"").split(/\r?\n/).forEach(line=>{
@@ -209,8 +212,8 @@ stage(55, "Reading fdic …")
 with open("/fdic.pkl","rb") as f: fdic = pkl.load(f)
 
 genes = fdic['gene']
-cell  = ${JSON.stringify("".concat("${cell}"))}
-gene  = ${JSON.stringify("".concat("${gene}"))}
+cell  = ${JSON.stringify(cell)!==undefined ? JSON.stringify(cell) : "'Whole'"}
+gene  = ${JSON.stringify(gene)!==undefined ? JSON.stringify(gene) : "'CD79A'"}
 
 if gene not in genes:
     raise ValueError(f"Gene '{gene}' not in fdic['gene']")
@@ -222,7 +225,7 @@ with gzip.open("/avg.npy.gz","rb") as f: avg = np.load(f)
 with gzip.open("/cov.npy.gz","rb") as f: cov = np.load(f)
 
 d1 = avg[:, idx]    # mean
-d2 = cov[:, idx]    # variance proxy
+d2 = cov[:, idx]    # variance or "size" proxy
 
 feat = fdic[cell]
 
@@ -280,6 +283,7 @@ open("/plot.png","wb").write(buf.getbuffer())
       await pyodide.runPythonAsync(code);
       stage(100, "Done");
 
+      // read PNG and show
       const bytes = FS.readFile("/plot.png");
       const blob  = new Blob([bytes], { type: "image/png" });
       if(pngURL) URL.revokeObjectURL(pngURL);
@@ -298,7 +302,7 @@ open("/plot.png","wb").write(buf.getbuffer())
     }
   });
 
-  log("Flow → 1) boot → 2) run plot (assets are fetched automatically for the selected cell)");
+  log("Flow → 1) boot → 2) load assets → 3) run plot");
 })();
 </script>
 
