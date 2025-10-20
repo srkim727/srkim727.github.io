@@ -39,7 +39,7 @@ excerpt: ""
 </div>
 
 <div id="assetHint" style="font-size:12px;color:#666;margin:-6px 0 10px 0;">
-  Assets are loaded from <code id="assetBaseShow">/data/profile/</code>. Adjust in the script if your path differs.
+  Assets are loaded from <code id="assetBaseShow">/assets/data/expression_profile/</code>.
 </div>
 
 <!-- Processing progress -->
@@ -143,7 +143,7 @@ print("matplotlib", mpl.__version__)
   // --- load assets ---
   $("assetsBtn").addEventListener("click", async ()=>{
     if(!booted){ alert("Boot first."); return; }
-    const cell = $("cellSelect").value.trim();   // <-- dropdown
+    const cell = $("cellSelect").value.trim();
     if(!cell){ alert("Enter a cell name (e.g., Whole)."); return; }
     try{
       setDisabled("assetsBtn", true);
@@ -183,7 +183,7 @@ list(_fd.keys())[:5]
   // --- run plot ---
   $("runBtn").addEventListener("click", async ()=>{
     if(!assetsLoaded){ alert("Load assets first."); return; }
-    const cell = $("cellSelect").value.trim();   // <-- dropdown
+    const cell = $("cellSelect").value.trim();
     const gene = $("geneInput").value.trim();
     if(!gene){ alert("Enter a gene symbol."); return; }
 
@@ -226,8 +226,8 @@ stage(55, "Reading fdic …")
 with open("/fdic.pkl","rb") as f: fdic = pkl.load(f)
 
 genes = fdic['gene']
-cell  = ${JSON.stringify("".concat("${cell}"))}
-gene  = ${JSON.stringify("".concat("${gene}"))}
+cell  = ${JSON.stringify(cell)}
+gene  = ${JSON.stringify(gene)}
 
 if gene not in genes:
     raise ValueError(f"Gene '{gene}' not in fdic['gene']")
