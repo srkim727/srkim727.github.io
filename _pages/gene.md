@@ -37,6 +37,9 @@ excerpt: ""
   <button id="runBtn" type="button" disabled>2: run plot</button>
 </div>
 
+<div id="assetHint" style="font-size:12px;color:#666;margin:-6px 0 10px 0;">
+  Assets load from <code id="assetBaseShow">/assets/data/expression_profile/</code>.
+</div>
 
 <!-- Processing progress -->
 <div style="margin:8px 0 4px 0; font-size:13px; color:#555;">Processing</div>
