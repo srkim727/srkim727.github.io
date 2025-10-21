@@ -32,7 +32,7 @@ excerpt: ""
   </label>
 
   <label>Genes (comma-sep):
-    <input id="geneInput" type="text" value="CD79A,MS4A1,CD19" style="width:340px;">
+    <input id="geneInput" type="text" value="CD79A,MS4A1,CD19,CD3D,CDH19" style="width:360px;">
   </label>
   <button id="runBtn" type="button" disabled>3: run plot</button>
 </div>
@@ -220,7 +220,7 @@ print("matplotlib", mpl.__version__)
     cellReloadTimer = setTimeout(()=> loadAssetsForCell(cell), 150);
   });
 
-  // --- run plot: uses your exact X/Y and flatten logic ---
+  // --- run plot: updated Python code exactly following your new snippet ---
   $("runBtn").addEventListener("click", async ()=>{
     if(!assetsLoaded){ alert("Load assets first."); return; }
     const cell = $("cellSelect").value.trim();
@@ -263,35 +263,38 @@ def stage(pct,msg):
     print(f"__STAGE__:{pct}:{msg}")
 
 cell = ${JSON.stringify(cell)}
-gene_in = ${JSON.stringify(geneStr)}
+gene = ${JSON.stringify(geneStr)}
 
 # ---- load dictionaries and gene list ----
 stage(55, "Reading fdic …")
-with open("/fdic.pkl","rb") as f: fdic = pkl.load(f)
+with open("/fdic.pkl","rb") as file:
+    fdic = pkl.load(file)
 genes = fdic['gene']  # full gene catalog for indexing
 
-# ---- parse gene list and build mask exactly like your code ----
-mlist = [i for i in gene_in.split(",") if i in genes]
-idx   = [i in mlist for i in genes]
+# ---- parse gene list and build ordered index list exactly like your code ----
+mlist = [i for i in gene.split(",") if i in genes]
 if len(mlist) == 0:
     raise ValueError("None of the requested genes are present.")
+idx = [genes.index(i) for i in mlist]   # ordered column indices
 
 # ---- load per-cell arrays ----
 stage(65, "Reading avg/cov …")
-with gzip.open(f"/avg.npy.gz","rb") as f: avg = np.load(f)
-with gzip.open(f"/cov.npy.gz","rb") as f: cov = np.load(f)
+with gzip.open("/avg.npy.gz","rb") as f:
+    avg = np.load(f)
+with gzip.open("/cov.npy.gz","rb") as f:
+    cov = np.load(f)
 
-# ---- select columns ----
-d1 = avg[:, idx]  # mean
+# ---- select columns by ordered indices ----
+d1 = avg[:, idx]  # mean (color)
 d2 = cov[:, idx]  # express. ratio (size)
 
 feat   = fdic[cell]
 n_feat = len(feat)
 n_gene = len(mlist)
 
-# ---- grid coordinates (your new version) ----
-X = np.tile(np.arange(n_gene), n_feat)     # x: gene column
-Y = np.repeat(np.arange(n_feat), n_gene)   # y: feature row
+# ---- grid coordinates (your version) ----
+X = np.tile(np.arange(n_gene), n_feat)     # col index per dot (x)
+Y = np.repeat(np.arange(n_feat), n_gene)   # row index per dot (y)
 
 # ---- styles ----
 fac  = 100.0
@@ -304,8 +307,8 @@ color = np.ravel(d1).astype(float)
 stage(75, "Making figure …")
 fig = plt.figure()
 ax  = plt.gca()
-scatt = ax.scatter(x=X, y=Y, s=sizes, c=color, cmap='OrRd',
-                   edgecolor='black', linewidth=.5)
+scatt = ax.scatter(x = X, y = Y, s = sizes, c = color, cmap = 'OrRd',
+                   edgecolor = 'black', linewidth = .5)
 
 ax.set_yticks(range(len(feat)))
 ax.set_yticklabels(feat)
@@ -317,9 +320,8 @@ plt.ylim(-pady, len(feat)-1+pady)
 plt.xlim(-padx, len(mlist)-1+padx)
 
 # size legend
-leg = ax.legend(*scatt.legend_elements("sizes", num=5),
-                bbox_to_anchor=(1.05,1), title='express.\\nratio',
-                loc='upper left')
+plt.legend(*scatt.legend_elements("sizes", num=5),
+           bbox_to_anchor=(1.05,1), title='express.\\nratio', loc='upper left')
 
 # colorbar scales with number of genes
 plt.colorbar(scatt, anchor=(0.5,0), location='top',
