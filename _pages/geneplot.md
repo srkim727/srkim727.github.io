@@ -32,7 +32,7 @@ excerpt: ""
   </label>
 
   <label>Genes (comma-sep):
-    <input id="geneInput" type="text" value="CD19,LRRC15,CD36,COCH,NFAT5,COL1A1,IL6,HSPA1A" style="width:340px;">
+    <input id="geneInput" type="text" value="CD79A,MS4A1,CD19" style="width:340px;">
   </label>
   <button id="runBtn" type="button" disabled>3: run plot</button>
 </div>
@@ -220,7 +220,7 @@ print("matplotlib", mpl.__version__)
     cellReloadTimer = setTimeout(()=> loadAssetsForCell(cell), 150);
   });
 
-  // --- run plot (multi-gene as in your Python) ---
+  // --- run plot: uses your exact X/Y and flatten logic ---
   $("runBtn").addEventListener("click", async ()=>{
     if(!assetsLoaded){ alert("Load assets first."); return; }
     const cell = $("cellSelect").value.trim();
@@ -256,6 +256,7 @@ import matplotlib as mpl
 mpl.use("Agg")
 import matplotlib.pyplot as plt
 
+# match your settings
 plt.rcParams['figure.dpi'] = 150
 
 def stage(pct,msg):
@@ -264,81 +265,70 @@ def stage(pct,msg):
 cell = ${JSON.stringify(cell)}
 gene_in = ${JSON.stringify(geneStr)}
 
+# ---- load dictionaries and gene list ----
 stage(55, "Reading fdic …")
 with open("/fdic.pkl","rb") as f: fdic = pkl.load(f)
-genes = fdic['gene']  # list of all known gene symbols
+genes = fdic['gene']  # full gene catalog for indexing
 
-# parse and filter genes
-mlist = [g.strip() for g in gene_in.split(",") if g.strip()]
-mlist = [g for g in mlist if g in genes]
-if not mlist:
-    raise ValueError("None of the input genes are present in the profile dictionary.")
+# ---- parse gene list and build mask exactly like your code ----
+mlist = [i for i in gene_in.split(",") if i in genes]
+idx   = [i in mlist for i in genes]
+if len(mlist) == 0:
+    raise ValueError("None of the requested genes are present.")
 
-# boolean mask for selected genes over the full 'genes' list
-idx = np.array([g in mlist for g in genes], dtype=bool)
-
+# ---- load per-cell arrays ----
 stage(65, "Reading avg/cov …")
-with gzip.open("/avg.npy.gz","rb") as f: avg = np.load(f)
-with gzip.open("/cov.npy.gz","rb") as f: cov = np.load(f)
+with gzip.open(f"/avg.npy.gz","rb") as f: avg = np.load(f)
+with gzip.open(f"/cov.npy.gz","rb") as f: cov = np.load(f)
 
-# select columns by mask; rows = features (fdic[cell])
-d1 = avg[:, idx]   # mean expression for selected genes
-d2 = cov[:, idx]   # "express. ratio" (used for sizes)
+# ---- select columns ----
+d1 = avg[:, idx]  # mean
+d2 = cov[:, idx]  # express. ratio (size)
 
-feat = fdic[cell]  # list of feature names (y-axis labels)
+feat   = fdic[cell]
 n_feat = len(feat)
-n_gen  = len(mlist)
+n_gene = len(mlist)
 
-if d1.shape != (n_feat, n_gen) or d2.shape != (n_feat, n_gen):
-    raise ValueError(f"Shape mismatch: d1={d1.shape}, d2={d2.shape}, expected=({n_feat},{n_gen})")
+# ---- grid coordinates (your new version) ----
+X = np.tile(np.arange(n_gene), n_feat)     # x: gene column
+Y = np.repeat(np.arange(n_feat), n_gene)   # y: feature row
 
-# build the same X,Y as your code
-X = np.repeat(range(n_feat), n_gen).reshape(-1,n_gen).T.flatten()
-Y = np.repeat(range(n_gen), n_feat).reshape(-1,n_feat).flatten()
-
-# flatten color & size in the same order as X,Y
-# We created X by transposing; match that order by transposing first then ravel().
-d1_flat = d1.T.flatten()
-d2_flat = d2.T.flatten()
-
-# plot params
+# ---- styles ----
 fac  = 100.0
 padx = 0.5
 pady = 0.5
 
+sizes = np.ravel(d2).astype(float) * fac
+color = np.ravel(d1).astype(float)
+
 stage(75, "Making figure …")
 fig = plt.figure()
 ax  = plt.gca()
-scatt = ax.scatter(x=Y, y=X, s=d2_flat * fac, c=d1_flat, cmap='OrRd',
-                   edgecolor='black', linewidth=0.5)
+scatt = ax.scatter(x=X, y=Y, s=sizes, c=color, cmap='OrRd',
+                   edgecolor='black', linewidth=.5)
 
-ax.set_yticks(range(n_feat))
+ax.set_yticks(range(len(feat)))
 ax.set_yticklabels(feat)
-ax.set_xticks(range(n_gen))
+ax.set_xticks(range(len(mlist)))
 ax.set_xticklabels(mlist)
-plt.tick_params(axis='x', rotation=90)
+plt.tick_params(axis='x', rotation = 90)
 
-plt.ylim(-pady, n_feat-1+pady)
-plt.xlim(-padx, n_gen-1+padx)
+plt.ylim(-pady, len(feat)-1+pady)
+plt.xlim(-padx, len(mlist)-1+padx)
 
-# size legend (keep raw sizes)
+# size legend
 leg = ax.legend(*scatt.legend_elements("sizes", num=5),
                 bbox_to_anchor=(1.05,1), title='express.\\nratio',
                 loc='upper left')
-try:
-    leg.get_title().set_ha('center')
-    leg.get_title().set_multialignment('center')
-except Exception:
-    pass
 
-# colorbar scaled by number of genes
+# colorbar scales with number of genes
 plt.colorbar(scatt, anchor=(0.5,0), location='top',
-             fraction = 0.12 / max(1, n_gen), aspect=5,
-             label='mean express.', orientation='horizontal',
-             ticks=[], pad=0.02)
+             fraction = .12 / max(1, len(mlist)), aspect = 5,
+             label = 'mean express.', orientation = 'horizontal',
+             ticks = [], pad = 0.02)
 
-# figure size: width grows with number of genes, height with number of features
-plt.gcf().set_size_inches(0.1 + 0.2*max(1, n_gen), n_feat / 4.0)
+# figure size responsive to gene count and feature count
+plt.gcf().set_size_inches(.1 + .2*len(mlist), len(feat) / 4)
 
 stage(90, "Saving PNG …")
 buf = io.BytesIO()
@@ -373,4 +363,3 @@ open("/plot.png","wb").write(buf.getbuffer())
 </script>
 
 {% endraw %}
-
