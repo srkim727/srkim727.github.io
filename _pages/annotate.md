@@ -14,19 +14,44 @@ layout: post
   Input: cells × genes; <code>1e4-normalized + log1p</code> (normalized up to 10,000 counts per cell and log1p-transformed), should be in <code>.csv</code> or <code>.csv.gz</code> format <br>
   Output: <code>pred.csv</code> (containing prediction results for each cell barcode) <br>
   Process: running through 1-5 steps below
-
 </p>
 
-<!-- Five buttons -->
-<div style="display:flex;flex-wrap:wrap;gap:10px;margin-bottom:8px;">
+<!-- Controls row 1 -->
+<div style="display:flex;flex-wrap:wrap;gap:10px;margin-bottom:8px;align-items:center;">
   <button id="bootBtn" type="button">1:boot</button>
   <button id="pingBtn" type="button" disabled>2:ping</button>
   <button id="validateBtn" type="button" disabled>3:validate-assets</button>
+
+  <!-- Model selector -->
+  <label style="display:flex;gap:6px;align-items:center;">
+    <span style="font-size:13px;color:#555;">Model</span>
+    <select id="modelSel" style="padding:4px 6px;">
+      <option value="level1_Whole_model_portable.npz" selected>Whole (level1)</option>
+      <option value="level2_B_mature_model_portable.npz">B_mature (level2)</option>
+      <option value="level2_Dendritic_classical_model_portable.npz">Dendritic_classical (level2)</option>
+      <option value="level2_Ductal_model_portable.npz">Ductal (level2)</option>
+      <option value="level2_Endothelial_model_portable.npz">Endothelial (level2)</option>
+      <option value="level2_Fibroblast_model_portable.npz">Fibroblast (level2)</option>
+      <option value="level2_Macrophage_model_portable.npz">Macrophage (level2)</option>
+      <option value="level2_Monocyte_model_portable.npz">Monocyte (level2)</option>
+      <option value="level2_Mural_model_portable.npz">Mural (level2)</option>
+      <option value="level2_Squamous_model_portable.npz">Squamous (level2)</option>
+      <option value="level2_T&NK_model_portable.npz">T&NK (level2)</option>
+    </select>
+  </label>
+</div>
+
+<!-- Controls row 2 -->
+<div style="display:flex;flex-wrap:wrap;gap:10px;margin-bottom:8px;align-items:center;">
   <label for="csvInput" style="display:inline-block;">
     <input type="file" id="csvInput" accept=".csv,.csv.gz,text/csv" style="display:none;">
     <button id="loadFileBtn" type="button" disabled>4:load file</button>
   </label>
   <button id="runBtn" type="button" disabled>5:run</button>
+
+  <label title="Safer but slower (disables SIMD)">
+    <input type="checkbox" id="safe"> Safe mode
+  </label>
 </div>
 
 <!-- Uploading progress -->
@@ -102,11 +127,24 @@ layout: post
     });
   }
 
+  // ---------- Model selection ----------
+  const MODEL_BASE = "/assets/models/";
+  function getModelURL(){
+    const f = $("modelSel").value || "level1_Whole_model_portable.npz";
+    return MODEL_BASE + f;
+  }
+
   // ---------- State ----------
-  const MODEL_URL = "/assets/models/level1_model_portable.npz";
   let pyodide=null, FS=null;
   let pyReady=false, libsReady=false, modelReady=false, uploaded=false;
   let resultUrl=null;
+
+  // Reset model state when selection changes
+  $("modelSel").addEventListener("change", ()=>{
+    modelReady = false;
+    setDisabled("runBtn", true);
+    log("🧭 Model selected: " + $("modelSel").selectedOptions[0].text + " → " + getModelURL());
+  });
 
   // ---------- BOOT ----------
   $("bootBtn").addEventListener("click", async ()=>{
@@ -129,6 +167,7 @@ layout: post
       await pyodide.runPythonAsync("import numpy as np, pandas as pd, gzip, io, json, os");
       libsReady = true;
       log("✅ Python libs imported.");
+
       setDisabled("pingBtn", false);
       setDisabled("validateBtn", false);
       setDisabled("loadFileBtn", false);
@@ -167,14 +206,15 @@ print("sum:", int(np.array([1,2,3]).sum()))
       return { buf, sizeHeader: resp.headers.get("content-length") };
     }
     try{
-      log("🔎 Validate: GET " + MODEL_URL + " …");
-      let { buf } = await fetchModel(MODEL_URL);
+      const url = getModelURL();
+      log("🔎 Validate: GET " + url + " …");
+      let { buf } = await fetchModel(url);
 
       // NPZ magic check (ZIP local file header)
       const magicOk = (buf.length >= 4 && buf[0]===0x50 && buf[1]===0x4B && buf[2]===0x03 && buf[3]===0x04);
       if(!magicOk){
         log("⚠️ Not a ZIP magic; retrying (cache-bust) …");
-        ({ buf } = await fetchModel(MODEL_URL + "?t=" + Date.now()));
+        ({ buf } = await fetchModel(url + "?t=" + Date.now()));
       }
       if(!(buf.length >= 4 && buf[0]===0x50 && buf[1]===0x4B && buf[2]===0x03 && buf[3]===0x04)){
         throw new Error("Model is not a valid .npz (ZIP magic missing). Bytes=" + buf.length);
@@ -182,7 +222,7 @@ print("sum:", int(np.array([1,2,3]).sum()))
 
       FS.writeFile("/tmp_model", buf);
       modelReady = true;
-      log(`✅ Model written to /tmp_model (${(buf.length/1e6).toFixed(2)} MB)`);
+      log(`✅ Model cached to /tmp_model (${(buf.length/1e6).toFixed(2)} MB)`);
       $("uploadStatus").textContent = "Waiting for file…";
       setDisabled("runBtn", !uploaded);
     }catch(err){
@@ -212,7 +252,7 @@ print("sum:", int(np.array([1,2,3]).sum()))
       $("uploadStatus").textContent = `✅ Upload complete • ${(bytes.length/1e6).toFixed(2)} MB`;
       log(`📤 Loaded into FS → /tmp_input (${(bytes.length/1e6).toFixed(2)} MB)`);
       setDisabled("runBtn", !(uploaded && modelReady));
-      if(!modelReady) log("ℹ️ Validate assets to load model, then Run will enable.");
+      if(!modelReady) log("ℹ️ Validate assets to load selected model, then Run will enable.");
     }catch(err){
       uploaded = false;
       $("uploadProg").value = 0;
@@ -222,7 +262,7 @@ print("sum:", int(np.array([1,2,3]).sum()))
     }
   });
 
-  // ---------- RUN (uses setStdout/setStderr; no stdout option) ----------
+  // ---------- RUN ----------
   $("runBtn").addEventListener("click", async ()=>{
     if(!uploaded){ alert("Load a CSV first."); return; }
     if(!modelReady){ alert("Validate/Load model first."); return; }
@@ -317,7 +357,7 @@ out.to_csv('/pred.csv', index=False)
 print('DONE', X.shape, len(loaded['classes_']))
 `;
 
-    // Capture staged progress via stdout/stderr (Pyodide 0.26.x)
+    // capture staged progress
     const unhookOut = pyodide.setStdout({
       batched: (s) => {
         (s || "").split(/\r?\n/).forEach(line=>{
@@ -334,12 +374,10 @@ print('DONE', X.shape, len(loaded['classes_']))
         });
       }
     });
-    const unhookErr = pyodide.setStderr({
-      batched: (s) => { s && s.trim() && log("ERR: " + s); }
-    });
+    const unhookErr = pyodide.setStderr({ batched: (s) => { s && s.trim() && log("ERR: " + s); } });
 
     try{
-      await pyodide.runPythonAsync(code); // IMPORTANT: no stdout option here
+      await pyodide.runPythonAsync(code);
       $("procProg").value = 100;
       $("procStatus").textContent = "Complete";
 
@@ -360,6 +398,7 @@ print('DONE', X.shape, len(loaded['classes_']))
   });
 
   log("Flow → 1) Boot  2) Ping  3) Validate assets  4) Load file  5) Run");
+  log("🧭 Default model: " + $("modelSel").selectedOptions[0].text + " → " + getModelURL());
 })();
 </script>
 
