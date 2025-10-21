@@ -13,14 +13,13 @@ layout: post
 <p>
   Input: cells × genes; <code>1e4-normalized + log1p</code> (normalized up to 10,000 counts per cell and log1p-transformed), should be in <code>.csv</code> or <code>.csv.gz</code> format <br>
   Output: <code>pred.csv</code> (containing prediction results for each cell barcode) <br>
-  Process: running through 1-5 steps below
+  Process: 1) Boot → 2) Ping → 3) Load file → 4) Run
 </p>
 
 <!-- Controls row 1 -->
 <div style="display:flex;flex-wrap:wrap;gap:10px;margin-bottom:8px;align-items:center;">
   <button id="bootBtn" type="button">1:boot</button>
   <button id="pingBtn" type="button" disabled>2:ping</button>
-  <button id="validateBtn" type="button" disabled>3:validate-assets</button>
 
   <!-- Model selector -->
   <label style="display:flex;gap:6px;align-items:center;">
@@ -39,19 +38,19 @@ layout: post
       <option value="level2_T&NK_model_portable.npz">T&NK (level2)</option>
     </select>
   </label>
+
+  <label title="Safer but slower (disables SIMD)">
+    <input type="checkbox" id="safe"> Safe mode
+  </label>
 </div>
 
 <!-- Controls row 2 -->
 <div style="display:flex;flex-wrap:wrap;gap:10px;margin-bottom:8px;align-items:center;">
   <label for="csvInput" style="display:inline-block;">
     <input type="file" id="csvInput" accept=".csv,.csv.gz,text/csv" style="display:none;">
-    <button id="loadFileBtn" type="button" disabled>4:load file</button>
+    <button id="loadFileBtn" type="button" disabled>3:load file</button>
   </label>
-  <button id="runBtn" type="button" disabled>5:run</button>
-
-  <label title="Safer but slower (disables SIMD)">
-    <input type="checkbox" id="safe"> Safe mode
-  </label>
+  <button id="runBtn" type="button" disabled>4:run</button>
 </div>
 
 <!-- Uploading progress -->
@@ -136,13 +135,15 @@ layout: post
 
   // ---------- State ----------
   let pyodide=null, FS=null;
-  let pyReady=false, libsReady=false, modelReady=false, uploaded=false;
+  let pyReady=false, libsReady=false, uploaded=false;
+  let modelPath="/tmp_model";   // in Pyodide FS
+  let modelFresh=false;         // set false when selection changes
   let resultUrl=null;
 
   // Reset model state when selection changes
   $("modelSel").addEventListener("change", ()=>{
-    modelReady = false;
-    setDisabled("runBtn", true);
+    modelFresh = false;
+    setDisabled("runBtn", !uploaded || !libsReady);
     log("🧭 Model selected: " + $("modelSel").selectedOptions[0].text + " → " + getModelURL());
   });
 
@@ -169,8 +170,8 @@ layout: post
       log("✅ Python libs imported.");
 
       setDisabled("pingBtn", false);
-      setDisabled("validateBtn", false);
       setDisabled("loadFileBtn", false);
+      setDisabled("runBtn", !uploaded);
     }catch(err){
       log("❌ Boot failed: " + (err?.message || err));
       setDisabled("bootBtn", false);
@@ -197,41 +198,6 @@ print("sum:", int(np.array([1,2,3]).sum()))
     }
   });
 
-  // ---------- VALIDATE MODEL ----------
-  $("validateBtn").addEventListener("click", async ()=>{
-    async function fetchModel(url){
-      const resp = await fetch(url, { cache: "no-store" });
-      if(!resp.ok) throw new Error("HTTP " + resp.status);
-      const buf = new Uint8Array(await resp.arrayBuffer());
-      return { buf, sizeHeader: resp.headers.get("content-length") };
-    }
-    try{
-      const url = getModelURL();
-      log("🔎 Validate: GET " + url + " …");
-      let { buf } = await fetchModel(url);
-
-      // NPZ magic check (ZIP local file header)
-      const magicOk = (buf.length >= 4 && buf[0]===0x50 && buf[1]===0x4B && buf[2]===0x03 && buf[3]===0x04);
-      if(!magicOk){
-        log("⚠️ Not a ZIP magic; retrying (cache-bust) …");
-        ({ buf } = await fetchModel(url + "?t=" + Date.now()));
-      }
-      if(!(buf.length >= 4 && buf[0]===0x50 && buf[1]===0x4B && buf[2]===0x03 && buf[3]===0x04)){
-        throw new Error("Model is not a valid .npz (ZIP magic missing). Bytes=" + buf.length);
-      }
-
-      FS.writeFile("/tmp_model", buf);
-      modelReady = true;
-      log(`✅ Model cached to /tmp_model (${(buf.length/1e6).toFixed(2)} MB)`);
-      $("uploadStatus").textContent = "Waiting for file…";
-      setDisabled("runBtn", !uploaded);
-    }catch(err){
-      modelReady = false;
-      setDisabled("runBtn", true);
-      log("❌ Validate failed: " + (err?.message || err));
-    }
-  });
-
   // ---------- LOAD FILE ----------
   $("loadFileBtn").addEventListener("click", ()=>{
     if(!pyReady){ alert("Boot first."); return; }
@@ -251,8 +217,8 @@ print("sum:", int(np.array([1,2,3]).sum()))
       $("uploadProg").value = 100;
       $("uploadStatus").textContent = `✅ Upload complete • ${(bytes.length/1e6).toFixed(2)} MB`;
       log(`📤 Loaded into FS → /tmp_input (${(bytes.length/1e6).toFixed(2)} MB)`);
-      setDisabled("runBtn", !(uploaded && modelReady));
-      if(!modelReady) log("ℹ️ Validate assets to load selected model, then Run will enable.");
+      setDisabled("runBtn", !libsReady);
+      if(!libsReady) log("ℹ️ Boot first, then Run will enable.");
     }catch(err){
       uploaded = false;
       $("uploadProg").value = 0;
@@ -262,15 +228,41 @@ print("sum:", int(np.array([1,2,3]).sum()))
     }
   });
 
+  // ---------- Fetch selected model into Pyodide FS (called from Run) ----------
+  async function ensureModelInFS(){
+    if (modelFresh) return;
+    const url = getModelURL();
+    log("🔎 Fetching model: " + url);
+    const resp = await fetch(url, { cache: "no-store" });
+    if(!resp.ok) throw new Error("Model HTTP " + resp.status);
+    const buf = new Uint8Array(await resp.arrayBuffer());
+
+    // Basic ZIP magic check
+    const ok = (buf.length >= 4 && buf[0]===0x50 && buf[1]===0x4B && buf[2]===0x03 && buf[3]===0x04);
+    if(!ok) log("⚠️ Model doesn't look like a ZIP (npz) – continuing anyway.");
+
+    FS.writeFile(modelPath, buf);
+    modelFresh = true;
+    log(`✅ Model cached at ${modelPath} (${(buf.length/1e6).toFixed(2)} MB)`);
+  }
+
   // ---------- RUN ----------
   $("runBtn").addEventListener("click", async ()=>{
     if(!uploaded){ alert("Load a CSV first."); return; }
-    if(!modelReady){ alert("Validate/Load model first."); return; }
     if(!libsReady){ alert("Boot first."); return; }
 
     $("procProg").value = 5;
     $("procStatus").textContent = "Starting…";
     log("▶️ Running annotation …");
+
+    // fetch model for current selection
+    try{
+      await ensureModelInFS();
+    }catch(err){
+      $("procStatus").textContent = "❌ Model fetch error";
+      log("❌ Model fetch error: " + (err?.message || err));
+      return;
+    }
 
     const code = `
 import numpy as np, pandas as pd, gzip, json, os, io, sys
@@ -397,7 +389,7 @@ print('DONE', X.shape, len(loaded['classes_']))
     }
   });
 
-  log("Flow → 1) Boot  2) Ping  3) Validate assets  4) Load file  5) Run");
+  log("Flow → 1) Boot  2) Ping  3) Load file  4) Run");
   log("🧭 Default model: " + $("modelSel").selectedOptions[0].text + " → " + getModelURL());
 })();
 </script>
