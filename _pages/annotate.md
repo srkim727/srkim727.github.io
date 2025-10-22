@@ -1,5 +1,5 @@
 ---
-title: Annotate cells (Online)
+title: Annotate cells online
 author: S. Kim
 date: 2025-10-16
 layout: post
