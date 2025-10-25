@@ -32,7 +32,7 @@ excerpt: ""
   </label>
 
   <label>Genes (comma-sep):
-    <input id="geneInput" type="text" value="CD79A,MS4A1,CD19,CD3D,CDH19" style="width:360px;">
+    <input id="geneInput" type="text" value="CD3D,KRT5,CDH19,PTPRC,CD79A,MS4A1" style="width:360px;">
   </label>
   <button id="runBtn" type="button" disabled>3: run plot</button>
 </div>
