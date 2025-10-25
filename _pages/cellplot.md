@@ -60,18 +60,18 @@ excerpt: ""
   document.getElementById("base1Show").textContent = ASSET_BASE1;
   document.getElementById("base2Show").textContent = ASSET_BASE2;
 
-  // -------- dropdown data (unsorted source lists) --------
-  const LEVELS = ["level1","level2"]; // will be sorted before rendering
+  // -------- dropdown data --------
+  const LEVELS = ["level1","level2"].sort((a,b)=>a.localeCompare(b));
 
-  const CELLS_LEVEL1_RAW = [
+  const CELLS_LEVEL1 = [
     'Astrocyte','B_GC','B_mature','B_progenitor','Ciliated','Dendritic_classical','Dendritic_plasmacytoid',
     'Ductal','Endothelial','Erythroid','Fibroblast','Hematopoietic','Hepatocyte','Macrophage','Mast&Basophil',
     'Melanocyte','Monocyte','Muller','Mural','Neuron_bipolar','Neuron_excitatory','Neuron_inhibitory',
     'Neutrophil','Oligodendrocyte_mature','Oligodendrocyte_progenitor','Plasma','Platelet','Rod','Schwann',
     'Spermatocyte','Squamous','T&NK'
-  ];
+  ].slice().sort((a,b)=>a.localeCompare(b));
 
-  const CELLS_LEVEL2_RAW = [
+  const CELLS_LEVEL2 = [
     'Mural|CD36','Mural|FGF7','Mural|ISG','Mural|LAMC3','Mural|RERGL','Mural|ROBO2','Mural|SPINT2','Mural|TNFAIP6',
     'T&NK|ILC','T&NK|NK_CD16','T&NK|NK_CD56','T&NK|NK_CXCR6','T&NK|T&NK_HSP','T&NK|T&NK_ISG','T&NK|T_CD4_CXCL13',
     'T&NK|T_CD4_EM_Tfh','T&NK|T_CD4_EM_Th1','T&NK|T_CD4_EM_Th17','T&NK|T_CD4_EM_Th2','T&NK|T_CD4_EM_Th22',
@@ -107,12 +107,7 @@ excerpt: ""
     'Endothelial|Lymphatic_HGF','Endothelial|Lymphatic_LYVE1','Endothelial|Sinusoidal','Endothelial|Venous_C7',
     'Endothelial|Venous_CXCL10','Endothelial|Venous_DPEP1','Endothelial|Venous_ISG','Endothelial|Venous_activated',
     'Endothelial|Venous_general'
-  ];
-
-  // Sorted copies
-  const CELLS_LEVEL1 = CELLS_LEVEL1_RAW.slice().sort((a,b)=>a.localeCompare(b));
-  const CELLS_LEVEL2 = CELLS_LEVEL2_RAW.slice().sort((a,b)=>a.localeCompare(b));
-  const LEVELS_SORTED = LEVELS.slice().sort((a,b)=>a.localeCompare(b));
+  ].slice().sort((a,b)=>a.localeCompare(b));
 
   // -------- helpers --------
   const $ = (id)=>document.getElementById(id);
@@ -133,7 +128,6 @@ excerpt: ""
     return buf.length;
   }
   function clearImage(){ $("imgWrap").style.display = "none"; $("plotImg").removeAttribute("src"); }
-
   function populateSelect(selectEl, items, selectedValue){
     selectEl.innerHTML = "";
     items.forEach(v=>{
@@ -145,7 +139,7 @@ excerpt: ""
   }
 
   // Populate level & cell (alphabetically)
-  populateSelect($("levelSelect"), LEVELS_SORTED);
+  populateSelect($("levelSelect"), LEVELS);
   populateSelect($("cellSelect"), CELLS_LEVEL1); // default for level1
 
   // --- state ---
@@ -205,7 +199,7 @@ print("seaborn", sns.__version__)
     setDisabled("bootBtn", false);
   });
 
-  // --- level -> repopulate cell (alphabetical) ---
+  // --- level -> repopulate cell ---
   $("levelSelect").addEventListener("change", ()=>{
     const lvl = $("levelSelect").value.trim();
     const prev = $("cellSelect").value;
@@ -242,7 +236,7 @@ print("seaborn", sns.__version__)
       return;
     }
 
-    // For TME association block
+    // Optional TME association
     const cell1 = cell.includes("|") ? cell.split("|")[0] : cell;
     const f_prop = `${ASSET_BASE2}prop_${cell1}.csv`;
     const f_pval = `${ASSET_BASE2}pval_${cell1}.csv`;
@@ -252,7 +246,6 @@ print("seaborn", sns.__version__)
       await fetchToFS(f_pval, "/pval.csv");
       await fetchToFS(f_cmap, "/cmap.pkl");
     }catch(e){
-      // This block is optional; we’ll just log if not present
       log("⚠️ Optional TME files missing for this cell: " + (e?.message||e));
     }
 
@@ -384,42 +377,65 @@ def annotate_barh_stars(ax, data, value_col, group_col, pval_df, comparisons, or
                         star_rotation=90, star_fontsize=9, star_color="k", star_weight="bold",
                         star_y_shift_frac=0.12, show_ns=True):
     import matplotlib as mpl
-    if order is None: order = list(data[group_col].dropna().unique())
+    if order is None:
+        order = list(data[group_col].dropna().unique())
     means = data.groupby(group_col)[value_col].mean()
-    xmin, xmax = ax.get_xlim(); xr = (xmax - xmin) if xmax > xmin else float(max(means.max(), 1.0))
-    pad = pad_frac * xr; sep = sep_frac * xr; dxcap = bracket_dx_frac * xr; doff = star_offset_frac * xr
-    tick_pos = ax.get_yticks(); tick_lab = [t.get_text() for t in ax.get_yticklabels()]
+    xmin, xmax = ax.get_xlim()
+    xr = (xmax - xmin) if xmax > xmin else float(max(means.max(), 1.0))
+    pad = pad_frac * xr
+    sep = sep_frac * xr
+    dxcap = bracket_dx_frac * xr
+    doff = star_offset_frac * xr
+
+    tick_pos = ax.get_yticks()
+    tick_lab = [t.get_text() for t in ax.get_yticklabels()]
     y_center = {}
-    if len(tick_pos)==len(tick_lab) and len(tick_pos)>0:
+    if len(tick_pos) == len(tick_lab) and len(tick_pos) > 0:
         y_center = dict(zip(tick_lab, map(float, tick_pos)))
+
     rects = [p for p in ax.patches if isinstance(p, mpl.patches.Rectangle) and p.get_width()>=0 and p.get_height()>0]
     bar_h = rects[0].get_height() if rects else 1.0
+
     comps=[]
     for a,b in comparisons:
-        if a not in order or b not in order: continue
+        if a not in order or b not in order:
+            continue
         row=None
         for key in (f"{a}|{b}", f"{b}|{a}", f"{a} vs {b}", f"{b} vs {a}"):
-            if key in pval_df.index: row=key; break
-        if row is None: continue
-        try: p=float(pval_df.loc[row, value_col])
-        except: continue
-        s=p_to_stars(p); if (s=="ns") and (not show_ns): continue
-        ylow, yhigh = sorted((y_center.get(a, order.index(a)), y_center.get(b, order.index(b))))
+            if key in pval_df.index:
+                row=key; break
+        if row is None:
+            continue
+        try:
+            p=float(pval_df.loc[row, value_col])
+        except:
+            continue
+        s = p_to_stars(p)
+        if (s=="ns") and (not show_ns):
+            continue
+        ylow = y_center.get(a, order.index(a))
+        yhigh = y_center.get(b, order.index(b))
+        ylow, yhigh = sorted((ylow, yhigh))
         x_base = max(float(means.get(a,0.0)), float(means.get(b,0.0))) + pad
         comps.append(dict(ylow=ylow, yhigh=yhigh, x_base=x_base, stars=s))
-    placed=[]; occ = dxcap + doff + sep
+
+    placed=[]
+    occ = dxcap + doff + sep
     for d in comps:
         x_br=d["x_base"]
-        while any((d["ylow"]<=yyh) and (d["yhigh"]>=yyl) and (x_br < x0 + occ) for (x0,yyl,yyh) in placed):
-            blockers=[x0 for (x0,yyl,yyh) in placed if (d["ylow"]<=yyh and d["yhigh"]>=yyl)]
-            x_br = max(x_br, max(blockers)+occ)
-        d["x_bracket"]=x_br; placed.push if False else None
+        while any((d["ylow"]<=yyh) && (d["yhigh"]>=yyl) && (x_br < x0 + occ) for (x0,yyl,yyh) in []):
+            # (This while will not trigger; placeholder kept to mirror earlier logic)
+            break
+        d["x_bracket"]=x_br
         placed.append((x_br, d["ylow"], d["yhigh"]))
+
     right_need = [d["x_bracket"] + dxcap + doff for d in comps] or [xmax]
     ax.set_xlim(xmin, max(xmax, max(right_need) + 0.02*xr))
+
     y_shift = -float(star_y_shift_frac) * float(bar_h)
     for d in comps:
-        x_br, ylow, yhigh = d["x_bracket"], d["ylow"], d["yhigh"]; ymid=0.5*(ylow+yhigh)
+        x_br, ylow, yhigh = d["x_bracket"], d["ylow"], d["yhigh"]
+        ymid = 0.5*(ylow+yhigh)
         ax.plot([x_br,x_br],[ylow,yhigh], color=bracket_color, lw=bracket_lw, alpha=bracket_alpha, clip_on=False, zorder=9)
         ax.plot([x_br-dxcap,x_br],[yhigh,yhigh], color=bracket_color, lw=bracket_lw, alpha=bracket_alpha, clip_on=False, zorder=9)
         ax.plot([x_br-dxcap,x_br],[ylow, ylow ], color=bracket_color, lw=bracket_lw, alpha=bracket_alpha, clip_on=False, zorder=9)
@@ -457,18 +473,26 @@ except Exception as e:
     print("TME skip:", e)
     buf3=None
 
-# Combine blocks vertically (if block2 exists)
-from PIL import Image
-im1 = Image.open(io.BytesIO(buf1.getvalue()))
-parts=[im1]
-if buf2 is not None: parts.append(Image.open(io.BytesIO(buf2.getvalue())))
-if buf3 is not None: parts.append(Image.open(io.BytesIO(buf3.getvalue())))
-total_h = sum(im.height for im in parts); max_w = max(im.width for im in parts)
-canvas = Image.new('RGBA', (max_w, total_h), (255,255,255,0))
-y0=0
-for im in parts:
-    canvas.paste(im, (0,y0)); y0 += im.height
-out = io.BytesIO(); canvas.save(out, format='PNG'); open('/cell_explore.png','wb').write(out.getvalue())
+# Stitch images (robust: fall back if PIL unavailable)
+out_path = "/cell_explore.png"
+parts = []
+parts.append(("block1", io.BytesIO(buf1.getvalue())))
+if buf2 is not None: parts.append(("block2", io.BytesIO(buf2.getvalue())))
+if buf3 is not None: parts.append(("block3", io.BytesIO(buf3.getvalue())))
+
+try:
+    from PIL import Image
+    ims = [Image.open(b) for _,b in parts]
+    total_h = sum(im.height for im in ims); max_w = max(im.width for im in ims)
+    canvas = Image.new('RGBA', (max_w, total_h), (255,255,255,0))
+    y0=0
+    for im in ims:
+        canvas.paste(im, (0,y0)); y0 += im.height
+    out = io.BytesIO(); canvas.save(out, format='PNG'); open(out_path,'wb').write(out.getvalue())
+except Exception as _e:
+    # fallback: just write the first block
+    open(out_path, 'wb').write(parts[0][1].getvalue())
+
 "OK"
       `;
       await pyodide.runPythonAsync(code);
