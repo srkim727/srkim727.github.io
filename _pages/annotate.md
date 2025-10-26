@@ -10,6 +10,52 @@ layout: post
 <!-- Load Pyodide from the official CDN -->
 <script defer src="https://cdn.jsdelivr.net/pyodide/v0.26.3/full/pyodide.js"></script>
 
+<!-- Annotation panel -->
+<style>
+  .meta-panel{
+    background:#f8f9fb;border:1px solid #e5e7eb;border-radius:8px;
+    padding:12px 14px;margin:10px 0 14px 0;color:#111;font-size:14px;
+  }
+  .meta-panel code{background:#eef2f7;padding:1px 4px;border-radius:4px}
+  .meta-panel ol{margin:6px 0 0 20px}
+  .meta-panel ul{margin:4px 0 0 18px}
+  .meta-panel li{margin:2px 0}
+</style>
+
+<div class="meta-panel">
+  <strong>This page conducts cell annotations on the uploaded gene expression files</strong>
+  <ol>
+    <li><strong>Input file configuration</strong>
+      <ul>
+        <li>Should contain gene expression matrix <code>(cell_barcode × gene_id)</code></li>
+        <li>Raw expression must be <code>1e4</code>-normalized &amp; <code>log1p</code>-transformed<br>
+            <small>normalized up to 10,000 counts per cell, then log-transformed with 1 pseudocount</small>
+        </li>
+        <li>File format: <code>.csv</code> or <code>.csv.gz</code></li>
+      </ul>
+    </li>
+    <li><strong>Cell annotation</strong>
+      <ul>
+        <li>Performed per cell barcode with a selectable model</li>
+        <li>PANGEA provides one Level1 model and ten Level2 models</li>
+        <li>Level1: 32 cell types; Level2 (combined): 165 annotations</li>
+        <li>Predictions are based on pre-trained logistic regression models</li>
+        <li>Results may differ from the original <code>PANGEApy</code> package
+          (<a href="https://github.com/srkim727/pangeapy" target="_blank" rel="noopener">github.com/srkim727/pangeapy</a>)
+        </li>
+      </ul>
+    </li>
+    <li><strong>Output file configuration</strong>
+      <ul>
+        <li>Output file: <code>pred.csv</code> with three columns for each cell barcode</li>
+        <li><code>predicted_label</code> – predicted cell label from the selected model</li>
+        <li><code>conf_score</code> – confidence score from the model prediction</li>
+        <li><code>cert_score</code> – certainty compared to other labels within the model</li>
+      </ul>
+    </li>
+  </ol>
+</div>
+
 <p>
   Input: cells × genes; <code>1e4-normalized + log1p</code> (normalized up to 10,000 counts per cell and log1p-transformed), should be in <code>.csv</code> or <code>.csv.gz</code> format <br>
   Output: <code>pred.csv</code> (containing prediction results for each cell barcode) <br>
@@ -349,7 +395,6 @@ out.to_csv('/pred.csv', index=False)
 print('DONE', X.shape, len(loaded['classes_']))
 `;
 
-    // capture staged progress
     const unhookOut = pyodide.setStdout({
       batched: (s) => {
         (s || "").split(/\r?\n/).forEach(line=>{
