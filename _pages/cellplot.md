@@ -282,13 +282,10 @@ print("Cell type: %s" % cell)
 try:
     with open("/marker.pkl","rb") as fh:
         mdic = pkl.load(fh)
-    if level == "level2":
-        key = cell
-    else:
-        key = cell
+    key = cell
     if key in mdic:
         mls = mdic[key][:10]
-        print("\\nCurated marker:", " ".join(mls))
+        print("\\nCurated marker:", ",".join(mls))
     else:
         print("\\nCurated marker: N/A")
 except Exception as e:
@@ -301,7 +298,12 @@ sns.set_style("whitegrid")
 overall = pd.read_csv('/overall.csv', index_col=0)
 prop    = pd.read_csv('/profile.csv', index_col=0).fillna(0)
 
-fig, axes = plt.subplots(1,2, figsize=(12.5,2.5), sharey=None, width_ratios=[1,4])
+fig, axes = plt.subplots(
+    1, 2,
+    figsize=(12.5, 2.5),
+    sharey=None,
+    gridspec_kw={'width_ratios':[1, 4]}   # << fixed here
+)
 
 # left scatter
 sns.scatterplot(data=overall, y='avg', x='spec', s=10, linewidth=0, color='lightgrey', ax=axes[0])
@@ -424,7 +426,7 @@ def annotate_barh_stars(ax, data, value_col, group_col, pval_df, comparisons, or
     tick_pos = list(ax.get_yticks())
     tick_lab = [t.get_text() for t in ax.get_yticklabels()]
     y_center = {}
-    if len(tick_pos) == len(tick_lab) and len(tick_pos) > 0:
+    if len(tick_pos) == len(tick_lab) && len(tick_pos) > 0:
         y_center = dict(zip(tick_lab, map(float, tick_pos)))
 
     rects = [p for p in ax.patches if isinstance(p, mpl.patches.Rectangle) and p.get_width()>=0 and p.get_height()>0]
@@ -453,7 +455,6 @@ def annotate_barh_stars(ax, data, value_col, group_col, pval_df, comparisons, or
         x_base = max(float(means.get(a,0.0)), float(means.get(b,0.0))) + pad
         comps.append(dict(ylow=ylow, yhigh=yhigh, x_base=x_base, stars=s))
 
-    # simple non-overlap: push to the right if ranges overlap and x is too close
     placed=[]
     occ = dxcap + doff + sep
     for d in comps:
@@ -480,6 +481,7 @@ def annotate_barh_stars(ax, data, value_col, group_col, pval_df, comparisons, or
 # Try TME association (optional)
 buf3=None
 try:
+    import pickle as pkl
     pdf  = pd.read_csv('/prop.csv', index_col=0)
     df1  = pd.read_csv('/pval.csv', index_col=0)
     with open('/cmap.pkl','rb') as fh: cmapdic = pkl.load(fh)
@@ -506,7 +508,7 @@ try:
 except Exception as e:
     print("TME skip:", e)
 
-# Stitch images (robust: fall back if PIL unavailable)
+# Stitch images
 out_path = "/cell_explore.png"
 parts = [("block1", io.BytesIO(buf1.getvalue()))]
 if buf2 is not None: parts.append(("block2", io.BytesIO(buf2.getvalue())))
@@ -522,7 +524,6 @@ try:
         canvas.paste(im, (0,y0)); y0 += im.height
     out = io.BytesIO(); canvas.save(out, format='PNG'); open(out_path,'wb').write(out.getvalue())
 except Exception:
-    # fallback: just write the first block
     open(out_path, 'wb').write(parts[0][1].getvalue())
 
 "OK"
