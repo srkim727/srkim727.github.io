@@ -341,7 +341,7 @@ except Exception as e:
 overall = pd.read_csv("/work/overall.csv", index_col=0)
 prop    = pd.read_csv("/work/profile.csv", index_col=0).fillna(0)
 
-fig, axes = plt.subplots(2, 1, figsize=(10, 20))
+fig, axes = plt.subplots(2, 1, figsize=(7, 10), girdspec_kw = {'height_ratios':[7,3]})
 
 # scatter (all)
 sns.scatterplot(data=overall, y='avg', x='spec', s=10, linewidth=0, color='lightgrey', ax=axes[0])
@@ -382,8 +382,8 @@ if mls:
 else:
     mtext = ''
 
-add_fig_note(fig, f"Cell type: {cell}", x=0.01, y=1.25, ha='left', va='bottom', fontsize=10)
-add_fig_note(fig, f"{mtext}", x=0.01, y=1.15, ha='left', va='bottom', fontsize=8)
+add_fig_note(fig, f"Cell type: {cell}", x=0.01, y=1.15, ha='left', va='bottom', fontsize=10)
+add_fig_note(fig, f"{mtext}", x=0.01, y=1.1, ha='left', va='bottom', fontsize=8)
 add_fig_note(fig, f"Organ distribution", x=0.01, y=1.05, ha='left', va='bottom', fontsize=9)
 
 sns.despine()
