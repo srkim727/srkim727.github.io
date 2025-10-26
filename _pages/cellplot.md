@@ -421,7 +421,7 @@ if 'PANGEA_annotation' in mdf.columns and (cell in set(mdf['PANGEA_annotation'])
                         edgecolor="black", linewidth=0.5)
 
         ax.set_xticks([0,1,2,3.5])
-        ax.set_xticklabels(['SEN','PPV','CFS','Total\nscore'])
+        ax.set_xticklabels(['SEN','PPV','CFS','score'])
         ax.set_yticks(y_rows)
         ax.set_yticklabels(list(mdf1.index))
 
