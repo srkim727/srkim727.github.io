@@ -10,7 +10,7 @@ layout: post
 <!-- Load Pyodide from the official CDN -->
 <script defer src="https://cdn.jsdelivr.net/pyodide/v0.26.3/full/pyodide.js"></script>
 
-<!-- Annotation panel -->
+<!-- Annotation panel styles -->
 <style>
   .meta-panel{
     background:#f8f9fb;border:1px solid #e5e7eb;border-radius:8px;
@@ -21,40 +21,6 @@ layout: post
   .meta-panel ul{margin:4px 0 0 18px}
   .meta-panel li{margin:2px 0}
 </style>
-
-<div class="meta-panel">
-  <strong>This page conducts cell annotations on the uploaded gene expression files</strong>
-  <ol>
-    <li><strong>Input file configuration</strong>
-      <ul>
-        <li>Should contain gene expression matrix <code>(cell_barcode × gene_id)</code></li>
-        <li>Raw expression must be <code>1e4</code>-normalized &amp; <code>log1p</code>-transformed<br>
-            <small>normalized up to 10,000 counts per cell, then log-transformed with 1 pseudocount</small>
-        </li>
-        <li>File format: <code>.csv</code> or <code>.csv.gz</code></li>
-      </ul>
-    </li>
-    <li><strong>Cell annotation</strong>
-      <ul>
-        <li>Performed per cell barcode with a selectable model</li>
-        <li>PANGEA provides one Level1 model and ten Level2 models</li>
-        <li>Level1: 32 cell types; Level2 (combined): 165 annotations</li>
-        <li>Predictions are based on pre-trained logistic regression models</li>
-        <li>Results may differ from the original <code>PANGEApy</code> package
-          (<a href="https://github.com/srkim727/pangeapy" target="_blank" rel="noopener">github.com/srkim727/pangeapy</a>)
-        </li>
-      </ul>
-    </li>
-    <li><strong>Output file configuration</strong>
-      <ul>
-        <li>Output file: <code>pred.csv</code> with three columns for each cell barcode</li>
-        <li><code>predicted_label</code> – predicted cell label from the selected model</li>
-        <li><code>conf_score</code> – confidence score from the model prediction</li>
-        <li><code>cert_score</code> – certainty compared to other labels within the model</li>
-      </ul>
-    </li>
-  </ol>
-</div>
 
 <!-- Controls row -->
 <div style="display:flex;flex-wrap:wrap;gap:10px;margin-bottom:8px;align-items:center;">
@@ -100,10 +66,47 @@ layout: post
 <progress id="procProg" max="100" value="0" style="width:100%;"></progress>
 <div id="procStatus" style="font-size:12px;color:#777;margin:4px 0 8px 0;">Idle</div>
 
+<!-- Download link -->
 <p id="downloadWrap" style="display:none;margin-top:8px;">
   <a id="downloadLink" download="pred.csv">Download pred.csv</a>
 </p>
 
+<!-- ✨ Annotations moved here: below controls & progress, just above the Log window -->
+<div class="meta-panel">
+  <strong>This page conducts cell annotations on the uploaded gene expression files</strong>
+  <ol>
+    <li><strong>Input file configuration</strong>
+      <ul>
+        <li>Should contain gene expression matrix <code>(cell_barcode × gene_id)</code></li>
+        <li>Raw expression must be <code>1e4</code>-normalized &amp; <code>log1p</code>-transformed<br>
+            <small>normalized up to 10,000 counts per cell, then log-transformed with 1 pseudocount</small>
+        </li>
+        <li>File format: <code>.csv</code> or <code>.csv.gz</code></li>
+      </ul>
+    </li>
+    <li><strong>Cell annotation</strong>
+      <ul>
+        <li>Performed per cell barcode with a selectable model</li>
+        <li>PANGEA provides one Level1 model and ten Level2 models</li>
+        <li>Level1: 32 cell types; Level2 (combined): 165 annotations</li>
+        <li>Predictions are based on pre-trained logistic regression models</li>
+        <li>Results may differ from the original <code>PANGEApy</code> package
+          (<a href="https://github.com/srkim727/pangeapy" target="_blank" rel="noopener">github.com/srkim727/pangeapy</a>)
+        </li>
+      </ul>
+    </li>
+    <li><strong>Output file configuration</strong>
+      <ul>
+        <li>Output file: <code>pred.csv</code> with three columns for each cell barcode</li>
+        <li><code>predicted_label</code> – predicted cell label from the selected model</li>
+        <li><code>conf_score</code> – confidence score from the model prediction</li>
+        <li><code>cert_score</code> – certainty compared to other labels within the model</li>
+      </ul>
+    </li>
+  </ol>
+</div>
+
+<!-- Log -->
 <details open style="margin-top:10px;">
   <summary><strong>Log</strong></summary>
   <pre id="log" style="
@@ -152,7 +155,7 @@ layout: post
           const pct = Math.round((e.loaded/e.total)*100);
           $("uploadProg").value = pct;
           const now = performance.now();
-          const rate = (e.loaded-lastLoaded)/((now-last)/1000); // bytes/s
+          const rate = (e.loaded-lastLoaded)/((now-last)/1000);
           $("uploadStatus").textContent = `Reading: ${pct}% • ${(rate/1048576).toFixed(2)} MB/s`;
           last = now; lastLoaded = e.loaded;
         }

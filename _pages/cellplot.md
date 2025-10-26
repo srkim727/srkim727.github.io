@@ -12,22 +12,29 @@ excerpt: ""
 <script defer src="https://cdn.jsdelivr.net/pyodide/v0.26.3/full/pyodide.js"></script>
 
 <style>
-  /* Compact controls */
-  .ctl-row{display:flex;gap:6px;flex-wrap:wrap;margin:10px 0;}
-  label.inline{display:inline-flex;align-items:center;gap:4px;font-size:12px;}
+  /* Bigger controls to match other MD files */
+  .ctl-row{display:flex;gap:12px;flex-wrap:wrap;margin:12px 0;align-items:center;}
+  label.inline{display:inline-flex;align-items:center;gap:8px;font-size:14px;}
+
   button, select, input{
-    font-size:12px;               /* smaller text */
-    padding:2px 6px;              /* tighter padding */
-    height:26px;                  /* compact height */
-    line-height:22px;
-    border-radius:4px;
+    font-size:15px;
+    line-height:1.2;
+    padding:8px 14px;         /* comfy target */
+    height:40px;              /* consistent height */
+    border-radius:8px;
+    border:1px solid #e5e7eb;
   }
-  /* Optional: make the buttons visually lighter */
+
+  /* Buttons look like the rest of the site */
   button{
-    background:#f3f4f6;border:1px solid #e5e7eb;cursor:pointer;
+    background:#f3f4f6; cursor:pointer;
+    box-shadow:0 1px 0 rgba(0,0,0,0.02);
   }
   button:disabled{opacity:.6;cursor:not-allowed}
   button:not(:disabled):hover{background:#eef0f4}
+
+  /* Keep select widths from your inline styles; just ensure vertical centering */
+  select{appearance:auto}
 
   .meta-panel{
     background:#f8f9fb;border:1px solid #e5e7eb;border-radius:8px;
@@ -131,17 +138,17 @@ excerpt: ""
       const r = await fetch(u, { cache: "no-store" });
       if(!r.ok){
         if(optional){
-          log(`⚠️ Optional ${label||url} missing: HTTP ${r.status} for ${url}`);
+          log(\`⚠️ Optional \${label||url} missing: HTTP \${r.status} for \${url}\`);
           return false;
         }
-        throw new Error(`HTTP ${r.status} for ${url}`);
+        throw new Error(\`HTTP \${r.status} for \${url}\`);
       }
       const buf = new Uint8Array(await r.arrayBuffer());
       pyodide.FS.writeFile(fsPath, buf);
-      log(`✅ ${label||url} → ${fsPath} (${(buf.length/1e6).toFixed(2)} MB)`);
+      log(\`✅ \${label||url} → \${fsPath} (\${(buf.length/1e6).toFixed(2)} MB)\`);
       return true;
     }catch(e){
-      if(optional){ log(`⚠️ Optional ${label||url} skipped: ` + (e?.message||e)); return false; }
+      if(optional){ log(\`⚠️ Optional \${label||url} skipped: \` + (e?.message||e)); return false; }
       throw e;
     }
   }
@@ -302,21 +309,21 @@ def add_fig_note(fig, text, x=0.01, y=0.99, fontsize=9, mono=True, ha='left', va
     const cell  = $("cellSelect").value.trim();
 
     stage(10, "Preparing files …");
-    log(`▶️ Explore: level=${level}, cell=${cell}`);
+    log(\`▶️ Explore: level=\${level}, cell=\${cell}\`);
 
     const baseProfile = DATA_BASE + "cell_profile/";
-    const f_overall = `${baseProfile}overall_${level}.csv`;
-    const f_profile = `${baseProfile}profile_${level}.csv`;
-    const f_match   = `${baseProfile}matching_res.csv`;
+    const f_overall = \`\${baseProfile}overall_\${level}.csv\`;
+    const f_profile = \`\${baseProfile}profile_\${level}.csv\`;
+    const f_match   = \`\${baseProfile}matching_res.csv\`;
 
-    const f_m_l1 = `${baseProfile}marker/Level1_mdic.pkl`;
+    const f_m_l1 = \`\${baseProfile}marker/Level1_mdic.pkl\`;
     const cell1 = (cell.includes("|") ? cell.split("|")[0] : cell);
-    const f_m_l2 = `${baseProfile}marker/${cell1}_mdic.pkl`;
+    const f_m_l2 = \`\${baseProfile}marker/\${cell1}_mdic.pkl\`;
 
-    const tme_dir = `${baseProfile}cancer_dist/`;
-    const f_prop  = `${tme_dir}prop_${cell1}.csv`;
-    const f_pval  = `${tme_dir}pval_${cell1}.csv`;
-    const f_cmap  = `${tme_dir}cmapdic_cat.pkl`;
+    const tme_dir = \`\${baseProfile}cancer_dist/\`;
+    const f_prop  = \`\${tme_dir}prop_\${cell1}.csv\`;
+    const f_pval  = \`\${tme_dir}pval_\${cell1}.csv\`;
+    const f_cmap  = \`\${tme_dir}cmapdic_cat.pkl\`;
 
     try{
       try{ FS.mkdir("/work"); }catch(_){}
@@ -326,11 +333,11 @@ def add_fig_note(fig, text, x=0.01, y=0.99, fontsize=9, mono=True, ha='left', va
       if(level==="level1"){
         await fetchToFS(f_m_l1, "/work/marker.pkl", {label:"Level1 marker dict"});
       }else{
-        await fetchToFS(f_m_l2, "/work/marker.pkl", {label:`${cell1} marker dict`});
+        await fetchToFS(f_m_l2, "/work/marker.pkl", {label:\`\${cell1} marker dict\`});
       }
-      await fetchToFS(f_prop, "/work/prop.csv", {optional:true,label:`TME prop_${cell1}.csv`});
-      await fetchToFS(f_pval, "/work/pval.csv", {optional:true,label:`TME pval_${cell1}.csv`});
-      await fetchToFS(f_cmap, "/work/cmap.pkl", {optional:true,label:`TME cmapdic_cat.pkl`});
+      await fetchToFS(f_prop, "/work/prop.csv", {optional:true,label:\`TME prop_\${cell1}.csv\`});
+      await fetchToFS(f_pval, "/work/pval.csv", {optional:true,label:\`TME pval_\${cell1}.csv\`});
+      await fetchToFS(f_cmap, "/work/cmap.pkl", {optional:true,label:\`TME cmapdic_cat.pkl\`});
     }catch(e){
       stage(0,"Error"); log("❌ Fetch failed: " + (e?.message||e)); return;
     }
