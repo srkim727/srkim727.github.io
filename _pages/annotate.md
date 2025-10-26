@@ -56,16 +56,9 @@ layout: post
   </ol>
 </div>
 
-<p>
-  Input: cells × genes; <code>1e4-normalized + log1p</code> (normalized up to 10,000 counts per cell and log1p-transformed), should be in <code>.csv</code> or <code>.csv.gz</code> format <br>
-  Output: <code>pred.csv</code> (containing prediction results for each cell barcode) <br>
-  Process: 1) Boot → 2) Ping → 3) Load file → 4) Run
-</p>
-
-<!-- Controls row 1 -->
+<!-- Controls row -->
 <div style="display:flex;flex-wrap:wrap;gap:10px;margin-bottom:8px;align-items:center;">
   <button id="bootBtn" type="button">1:boot</button>
-  <button id="pingBtn" type="button" disabled>2:ping</button>
 
   <!-- Model selector -->
   <label style="display:flex;gap:6px;align-items:center;">
@@ -88,15 +81,13 @@ layout: post
   <label title="Safer but slower (disables SIMD)">
     <input type="checkbox" id="safe"> Safe mode
   </label>
-</div>
 
-<!-- Controls row 2 -->
-<div style="display:flex;flex-wrap:wrap;gap:10px;margin-bottom:8px;align-items:center;">
   <label for="csvInput" style="display:inline-block;">
     <input type="file" id="csvInput" accept=".csv,.csv.gz,text/csv" style="display:none;">
-    <button id="loadFileBtn" type="button" disabled>3:load file</button>
+    <button id="loadFileBtn" type="button" disabled>2:load file</button>
   </label>
-  <button id="runBtn" type="button" disabled>4:run</button>
+
+  <button id="runBtn" type="button" disabled>3:run</button>
 </div>
 
 <!-- Uploading progress -->
@@ -193,7 +184,7 @@ layout: post
     log("🧭 Model selected: " + $("modelSel").selectedOptions[0].text + " → " + getModelURL());
   });
 
-  // ---------- BOOT ----------
+  // ---------- BOOT (with integrated sanity check) ----------
   $("bootBtn").addEventListener("click", async ()=>{
     try{
       setDisabled("bootBtn", true);
@@ -210,12 +201,17 @@ layout: post
       await pyodide.loadPackage(["numpy","pandas"]);
       log("✅ Packages loaded.");
 
-      log("⏳ Boot: importing numpy/pandas/gzip …");
-      await pyodide.runPythonAsync("import numpy as np, pandas as pd, gzip, io, json, os");
+      log("⏳ Boot: importing libs & running sanity check …");
+      const pingOut = await pyodide.runPythonAsync(`
+import numpy as np, pandas as pd, gzip, io, json, os
+print("numpy", np.__version__)
+print("pandas", pd.__version__)
+print("sum:", int(np.array([1,2,3]).sum()))
+"OK"
+      `);
       libsReady = true;
-      log("✅ Python libs imported.");
+      log("✅ Sanity check OK: " + pingOut);
 
-      setDisabled("pingBtn", false);
       setDisabled("loadFileBtn", false);
       setDisabled("runBtn", !uploaded);
     }catch(err){
@@ -224,24 +220,6 @@ layout: post
       return;
     }
     setDisabled("bootBtn", false);
-  });
-
-  // ---------- PING ----------
-  $("pingBtn").addEventListener("click", async ()=>{
-    if(!pyReady){ alert("Boot first."); return; }
-    try{
-      log("🔔 Ping: Python sanity check …");
-      const out = await pyodide.runPythonAsync(`
-import numpy as np, pandas as pd
-print("numpy", np.__version__)
-print("pandas", pd.__version__)
-print("sum:", int(np.array([1,2,3]).sum()))
-"OK"
-      `);
-      log("✅ Ping OK: " + out);
-    }catch(err){
-      log("❌ Ping failed: " + (err?.message || err));
-    }
   });
 
   // ---------- LOAD FILE ----------
@@ -395,6 +373,7 @@ out.to_csv('/pred.csv', index=False)
 print('DONE', X.shape, len(loaded['classes_']))
 `;
 
+    // capture staged progress
     const unhookOut = pyodide.setStdout({
       batched: (s) => {
         (s || "").split(/\r?\n/).forEach(line=>{
@@ -434,7 +413,7 @@ print('DONE', X.shape, len(loaded['classes_']))
     }
   });
 
-  log("Flow → 1) Boot  2) Ping  3) Load file  4) Run");
+  log("Flow → 1) Boot  2) Load file  3) Run");
   log("🧭 Default model: " + $("modelSel").selectedOptions[0].text + " → " + getModelURL());
 })();
 </script>
