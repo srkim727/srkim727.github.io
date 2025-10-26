@@ -377,10 +377,14 @@ axes[1].set_ylabel('Proportion')
 axes[1].set_title(cell)
 
 # figure header/footer instead of print()
-add_fig_note(fig, f"Cell type: {cell}", x=0.01, y=0.99, ha='left', va='top', fontsize=9)
 if mls:
-    add_axes_note(axes[0], "Curated marker: " + ",".join(mls), loc='lower left', fontsize=7)
-add_fig_note(fig, f"I: Organ distribution  |  level={level}", x=0.01, y=0.01, ha='left', va='bottom', fontsize=7)
+    mtext = 'curated marker: '+','.join(mls)
+else:
+    mtext = ''
+
+add_fig_note(fig, f"Cell type: {cell}", x=0.01, y=1.55, ha='left', va='bottom', fontsize=10)
+add_fig_note(fig, f"{mtext}", x=0.01, y=1.25, ha='left', va='bottom', fontsize=8)
+add_fig_note(fig, f"Organ distribution", x=0.01, y=1.05, ha='left', va='bottom', fontsize=9)
 
 sns.despine()
 plt.tight_layout()
@@ -416,7 +420,7 @@ if 'PANGEA_annotation' in mdf.columns and (cell in set(mdf['PANGEA_annotation'])
         norm01 = mpl.colors.Normalize(vmin=0.0, vmax=1.0)
         sizes = 250 * np.clip(vals, 0, 1)
 
-        fig2, ax = plt.subplots(figsize=(n_cols*1.6, n_rows*0.8), dpi=150)
+        fig2, ax = plt.subplots(figsize=(n_cols*1.7, n_rows*0.6), dpi=150)
         sc = ax.scatter(x, y, s=sizes, c=vals, cmap=cmap, norm=norm01,
                         edgecolor="black", linewidth=0.5)
 
@@ -449,10 +453,12 @@ if 'PANGEA_annotation' in mdf.columns and (cell in set(mdf['PANGEA_annotation'])
         axin.set_xticks([]); axin.set_yticks([])
         for sp in axin.spines.values(): sp.set_visible(False)
 
-        add_axes_note(ax, f"II: matching annotations (top {n_rows} hits)\\nMetrics: SEN, PPV, CFS (dots), score (bar)",
-                      loc='upper left', fontsize=7)
-        add_fig_note(plt.gcf(), "Color scale fixed to [0,1]; dot size ∝ metric.",
-                     x=0.01, y=0.01, ha='left', va='bottom', fontsize=7)
+        add_fig_note(plt.gcf(), f"Matching annotation", x=0.01, y=1.05, ha='left', va='bottom', fontsize=9)
+
+        // add_axes_note(ax, f"II: matching annotations (top {n_rows} hits)\\nMetrics: SEN, PPV, CFS (dots), score (bar)",
+        //               loc='upper left', fontsize=7)
+        // add_fig_note(plt.gcf(), "Color scale fixed to [0,1]; dot size ∝ metric.",
+        //              x=0.01, y=0.01, ha='left', va='bottom', fontsize=7)
 
         # colorbar
         shrink = 1 if n_rows==1 else (0.2 + (0.2 / max(1, n_rows/3 + .75)))
@@ -553,8 +559,10 @@ if has_tme:
     annotate_barh_stars(ax3, cell, 'Cancer_Tissue', df1, comps, order)
 
     ax3.set_xlabel(cell); ax3.set_ylabel('')
-    add_axes_note(ax3, "III: TME association\\nComparisons vs Tumor; stars show p-value tiers.",
-                  loc='upper right', fontsize=7)
+    // add_axes_note(ax3, "III: TME association\\nComparisons vs Tumor; stars show p-value tiers.",
+    //               loc='upper right', fontsize=7)
+
+    add_fig_note(plt.gcf(), f"TME distribution", x=0.01, y=1.05, ha='left', va='bottom', fontsize=9)
 
     plt.tight_layout()
     fig3buf = io.BytesIO()
