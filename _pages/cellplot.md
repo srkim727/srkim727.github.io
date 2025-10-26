@@ -575,7 +575,7 @@ try:
             ax.set_xlim(xmin, max(xmax, max(right_need) + 0.02*xr))
 
         # figure
-        fig3, ax3 = plt.subplots(figsize=(4, 2.2), dpi=150)
+        fig3, ax3 = plt.subplots(figsize=(7, 4.5), dpi=150)
         sns.barplot(data=pdf, x=cell, y='Cancer_Tissue', ax=ax3,
                     palette=cmapdic, order=order, estimator=np.mean,
                     linewidth=1, edgecolor='black',
