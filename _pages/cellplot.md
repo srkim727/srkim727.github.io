@@ -285,7 +285,7 @@ try:
     key = cell
     if key in mdic:
         mls = mdic[key][:10]
-        print("\\nCurated marker:", ",".join(mls))
+        print("\\nCurated marker:", " ".join(mls))
     else:
         print("\\nCurated marker: N/A")
 except Exception as e:
@@ -302,7 +302,7 @@ fig, axes = plt.subplots(
     1, 2,
     figsize=(12.5, 2.5),
     sharey=None,
-    gridspec_kw={'width_ratios':[1, 4]}   # << fixed here
+    gridspec_kw={'width_ratios':[1, 4]}
 )
 
 # left scatter
@@ -426,7 +426,8 @@ def annotate_barh_stars(ax, data, value_col, group_col, pval_df, comparisons, or
     tick_pos = list(ax.get_yticks())
     tick_lab = [t.get_text() for t in ax.get_yticklabels()]
     y_center = {}
-    if len(tick_pos) == len(tick_lab) && len(tick_pos) > 0:
+    # FIX: use Python 'and' instead of '&&'
+    if len(tick_pos) == len(tick_lab) and len(tick_pos) > 0:
         y_center = dict(zip(tick_lab, map(float, tick_pos)))
 
     rects = [p for p in ax.patches if isinstance(p, mpl.patches.Rectangle) and p.get_width()>=0 and p.get_height()>0]
