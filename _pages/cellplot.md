@@ -382,8 +382,8 @@ if mls:
 else:
     mtext = ''
 
-add_fig_note(fig, f"Cell type: {cell}", x=0.01, y=1.15, ha='left', va='bottom', fontsize=10)
-add_fig_note(fig, f"{mtext}", x=0.01, y=1.1, ha='left', va='bottom', fontsize=8)
+add_fig_note(fig, f"Cell type: {cell}", x=0.01, y=1.11, ha='left', va='bottom', fontsize=11)
+add_fig_note(fig, f"{mtext}", x=0.01, y=1.08, ha='left', va='bottom', fontsize=8)
 add_fig_note(fig, f"Organ distribution", x=0.01, y=1.05, ha='left', va='bottom', fontsize=9)
 
 sns.despine()
