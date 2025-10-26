@@ -344,10 +344,10 @@ prop    = pd.read_csv("/work/profile.csv", index_col=0).fillna(0)
 fig, axes = plt.subplots(2, 1, figsize=(7, 10), gridspec_kw = {'height_ratios':[7,3]})
 
 # scatter (all)
-sns.scatterplot(data=overall, y='avg', x='spec', s=10, linewidth=0, color='lightgrey', ax=axes[0])
+sns.scatterplot(data=overall, y='avg', x='spec', s=30, linewidth=0, color='lightgrey', ax=axes[0])
 # scatter (highlight)
 if cell in overall.index:
-    sns.scatterplot(data=overall.loc[[cell]], y='avg', x='spec', s=60,
+    sns.scatterplot(data=overall.loc[[cell]], y='avg', x='spec', s=100,
                     linewidth=1, edgecolor='black', color='orange', ax=axes[0])
     x, y = float(overall.loc[cell, 'spec']), float(overall.loc[cell, 'avg'])
     axes[0].text(x, y, cell, fontsize=8, ha='left', va='center')
