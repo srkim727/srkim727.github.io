@@ -301,7 +301,7 @@ prop    = pd.read_csv('/profile.csv', index_col=0).fillna(0)
 fig, axes = plt.subplots(
     1, 2,
     figsize=(12.5, 2.5),
-    sharey=None,
+    sharey='none',
     gridspec_kw={'width_ratios':[1, 4]}
 )
 
