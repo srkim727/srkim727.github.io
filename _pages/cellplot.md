@@ -15,6 +15,12 @@ excerpt: ""
   .ctl-row{display:flex;gap:10px;flex-wrap:wrap;margin:12px 0;}
   label.inline{display:inline-flex;align-items:center;gap:6px}
   select,input{padding:4px 6px}
+  .meta-panel{
+    background:#f8f9fb;border:1px solid #e5e7eb;border-radius:8px;
+    padding:10px 12px;margin:8px 0 12px 0; color:#111; font-size:14px;
+  }
+  .meta-panel code{background:#eef2f7;padding:1px 4px;border-radius:4px}
+  .meta-panel small{color:#666}
 </style>
 
 <div class="ctl-row">
@@ -33,8 +39,40 @@ excerpt: ""
   </label>
 </div>
 
-<div id="assetHint" style="font-size:12px;color:#666;margin:-6px 0 10px 0;">
-  Data base: <code id="dataBaseShow">/assets/data/</code>
+<div class="meta-panel" id="metaPanel">
+  <strong>Meta information of the cell types.</strong>
+  <p style="margin:6px 0 8px 0;">This page shows various information including</p>
+  <ol style="margin:0 0 0 18px;">
+    <li style="margin:2px 0;">Organ distribution patterns</li>
+    <li style="margin:2px 0;">Matching annotation from previous literatures
+      <ul style="margin:6px 0 0 18px;">
+        <li>row indicates <code>{cell_annotation_from_the_literature}@{source_literature}</code></li>
+        <li><code>SEN</code>: ratio of author_annotated_cells assigned to this PANGEA annotation</li>
+        <li><code>PPV</code>: ratio of PANGEA annotation assigned to this author_annotated_cells</li>
+        <li><code>CFS</code>: average prediction score (<code>PG_combined_score</code>)</li>
+        <li><code>score</code>: overall score = cubic root of these parameters</li>
+      </ul>
+    </li>
+    <li style="margin:2px 0;">Distribution patterns in tumor contexts
+      <ul style="margin:6px 0 0 18px;">
+        <li>shows results from PANGEA database (both Curated &amp; Re-aligned database)</li>
+        <li>stats: one-sided Mann–Whitney U test</li>
+        <li>
+          <code>ns</code>: p &ge; 0.05,
+          <code>*</code>: p &ge; 0.01,
+          <code>**</code>: p &ge; 0.001,
+          <code>***</code>: p &ge; 0.0001,
+          <code>****</code>: p &lt; 0.0001
+        </li>
+      </ul>
+    </li>
+  </ol>
+  <div style="margin-top:8px;">
+    <small>for each PANGEA cell annotation</small>
+  </div>
+  <div style="margin-top:6px;">
+    <small>Data base: <code id="dataBaseShow">/assets/data/</code></small>
+  </div>
 </div>
 
 <!-- Processing progress -->
@@ -534,7 +572,7 @@ try:
                 ax.plot([x_br-cap, x_br], [yhigh, yhigh], color="k", lw=1.0, alpha=1.0, zorder=9, clip_on=False)
                 ax.plot([x_br-cap, x_br], [ylow,  ylow ], color="k", lw=1.0, alpha=1.0, zorder=9, clip_on=False)
                 # star a tad below center for readability
-                ymid = 0.5*(ylow+yhigh) - 0.30*0.5  # small downward nudge in data units
+                ymid = 0.5*(ylow+yhigh) - 0.30*0.5
                 ax.text(x_br+doff, ymid, stars, rotation=270, rotation_mode="anchor",
                         ha="left", va="center", fontsize=7, fontweight="bold", color="k")
 
