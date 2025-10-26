@@ -12,36 +12,14 @@ excerpt: ""
 <script defer src="https://cdn.jsdelivr.net/pyodide/v0.26.3/full/pyodide.js"></script>
 
 <style>
-  /* Bigger controls to match other MD files */
-  .ctl-row{display:flex;gap:12px;flex-wrap:wrap;margin:12px 0;align-items:center;}
-  label.inline{display:inline-flex;align-items:center;gap:8px;font-size:14px;}
-
-  button, select, input{
-    font-size:15px;
-    line-height:1.2;
-    padding:8px 14px;         /* comfy target */
-    height:40px;              /* consistent height */
-    border-radius:8px;
-    border:1px solid #e5e7eb;
-  }
-
-  /* Buttons look like the rest of the site */
-  button{
-    background:#f3f4f6; cursor:pointer;
-    box-shadow:0 1px 0 rgba(0,0,0,0.02);
-  }
-  button:disabled{opacity:.6;cursor:not-allowed}
-  button:not(:disabled):hover{background:#eef0f4}
-
-  /* Keep select widths from your inline styles; just ensure vertical centering */
-  select{appearance:auto}
-
   .meta-panel{
     background:#f8f9fb;border:1px solid #e5e7eb;border-radius:8px;
-    padding:10px 12px;margin:8px 0 12px 0; color:#111; font-size:14px;
+    padding:12px 14px;margin:10px 0 14px 0;color:#111;font-size:14px;
   }
   .meta-panel code{background:#eef2f7;padding:1px 4px;border-radius:4px}
-  .meta-panel small{color:#666}
+  .meta-panel ol{margin:6px 0 0 20px}
+  .meta-panel ul{margin:4px 0 0 18px}
+  .meta-panel li{margin:2px 0}
 </style>
 
 <div class="ctl-row">
