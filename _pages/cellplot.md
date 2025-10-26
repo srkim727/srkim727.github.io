@@ -67,12 +67,6 @@ excerpt: ""
       </ul>
     </li>
   </ol>
-  <div style="margin-top:8px;">
-    <small>for each PANGEA cell annotation</small>
-  </div>
-  <div style="margin-top:6px;">
-    <small>Data base: <code id="dataBaseShow">/assets/data/</code></small>
-  </div>
 </div>
 
 <!-- Processing progress -->
