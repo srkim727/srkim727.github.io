@@ -11,6 +11,15 @@ excerpt: ""
 <!-- Pyodide -->
 <script defer src="https://cdn.jsdelivr.net/pyodide/v0.26.3/full/pyodide.js"></script>
 
+<style>
+  .meta-panel{
+    background:#f8f9fb;border:1px solid #e5e7eb;border-radius:8px;
+    padding:10px 12px;margin:8px 0 12px 0;color:#111;font-size:14px;
+  }
+  .meta-panel code{background:#eef2f7;padding:1px 4px;border-radius:4px}
+  .meta-panel small{color:#666}
+</style>
+
 <div style="display:flex;gap:10px;flex-wrap:wrap;margin:12px 0;">
   <button id="bootBtn" type="button">1: boot</button>
   <button id="assetsBtn" type="button" disabled>2: load assets</button>
@@ -37,8 +46,21 @@ excerpt: ""
   <button id="runBtn" type="button" disabled>3: run plot</button>
 </div>
 
-<div id="assetHint" style="font-size:12px;color:#666;margin:-6px 0 10px 0;">
-  Assets are loaded from <code id="assetBaseShow">/assets/data/expression_profile/</code>.
+<!-- Annotation panel -->
+<div class="meta-panel">
+  <strong>Gene expression patterns of the cell types.</strong>
+  <p style="margin:6px 0 8px 0;">This page shows various information including</p>
+  <ol style="margin:0 0 0 18px;">
+    <li style="margin:2px 0;">Ratio of cells expressing each gene</li>
+    <li style="margin:2px 0;">Average expression level of each gene</li>
+  </ol>
+  <p style="margin:8px 0 0 0;">
+    Expression levels were evaluated in the representative cell atlases
+    (both <code>Level1</code> and <code>Level2</code>).
+  </p>
+  <div style="margin-top:6px;">
+    <small>Data base: <code id="assetBaseShow">/assets/data/expression_profile/</code></small>
+  </div>
 </div>
 
 <!-- Processing progress -->
@@ -220,7 +242,7 @@ print("matplotlib", mpl.__version__)
     cellReloadTimer = setTimeout(()=> loadAssetsForCell(cell), 150);
   });
 
-  // --- run plot: updated Python code exactly following your new snippet ---
+  // --- run plot ---
   $("runBtn").addEventListener("click", async ()=>{
     if(!assetsLoaded){ alert("Load assets first."); return; }
     const cell = $("cellSelect").value.trim();
@@ -256,7 +278,6 @@ import matplotlib as mpl
 mpl.use("Agg")
 import matplotlib.pyplot as plt
 
-# match your settings
 plt.rcParams['figure.dpi'] = 150
 
 def stage(pct,msg):
@@ -271,7 +292,7 @@ with open("/fdic.pkl","rb") as file:
     fdic = pkl.load(file)
 genes = fdic['gene']  # full gene catalog for indexing
 
-# ---- parse gene list and build ordered index list exactly like your code ----
+# ---- parse gene list and build ordered index list ----
 mlist = [i for i in gene.split(",") if i in genes]
 if len(mlist) == 0:
     raise ValueError("None of the requested genes are present.")
@@ -292,7 +313,7 @@ feat   = fdic[cell]
 n_feat = len(feat)
 n_gene = len(mlist)
 
-# ---- grid coordinates (your version) ----
+# ---- grid coordinates ----
 X = np.tile(np.arange(n_gene), n_feat)     # col index per dot (x)
 Y = np.repeat(np.arange(n_feat), n_gene)   # row index per dot (y)
 
