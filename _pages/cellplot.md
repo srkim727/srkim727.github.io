@@ -27,7 +27,7 @@ excerpt: ""
 
 <div id="assetHint" style="font-size:12px;color:#666;margin:-6px 0 10px 0;">
   Data are loaded from:
-  <code id="base1Show">/assets/data/cell_profile/</code> (overall/profile/matching_res)
+  <code id="base1Show">/assets/data/cell_profile/</code> (overall/profile/matching_res/marker)
   &amp; <code id="base2Show">/assets/data/cell_profile/cancer_dist/</code> (TME association).
 </div>
 
@@ -47,7 +47,7 @@ excerpt: ""
 <details open style="margin-top:10px;">
   <summary><strong>Log</strong></summary>
   <pre id="log" style="
-    background:#0a0f17;color:#e8eef7;padding:6px;border-radius:6px;overflow:auto;height:300px;
+    background:#0a0f17;color:#e8eef7;padding:6px;border-radius:6px;overflow:auto;height:320px;
     white-space:pre-wrap;font-size:11px;line-height:1.25;font-family:ui-monospace,Menlo,Consolas,monospace;">
   </pre>
 </details>
@@ -55,7 +55,7 @@ excerpt: ""
 <script>
 (function(){
   // -------- paths: adjust to your hosting --------
-  const ASSET_BASE1 = "/assets/data/cell_profile/";            // overall_*.csv, profile_*.csv, matching_res.csv
+  const ASSET_BASE1 = "/assets/data/cell_profile/";            // overall_*.csv, profile_*.csv, matching_res.csv, marker/*.pkl
   const ASSET_BASE2 = "/assets/data/cell_profile/cancer_dist/"; // prop_*.csv, pval_*.csv, cmapdic_cat.pkl
   document.getElementById("base1Show").textContent = ASSET_BASE1;
   document.getElementById("base2Show").textContent = ASSET_BASE2;
@@ -115,7 +115,7 @@ excerpt: ""
   function log(msg){
     const el=$("log"); el.textContent += msg + "\n";
     const lines = el.textContent.split("\n");
-    if(lines.length>500){ el.textContent = lines.slice(-500).join("\n"); }
+    if(lines.length>600){ el.textContent = lines.slice(-600).join("\n"); }
     el.scrollTop = el.scrollHeight;
   }
   function stage(pct, msg){ $("procProg").value = pct; $("procStatus").textContent = msg; }
@@ -203,11 +203,7 @@ print("seaborn", sns.__version__)
   $("levelSelect").addEventListener("change", ()=>{
     const lvl = $("levelSelect").value.trim();
     const prev = $("cellSelect").value;
-    if(lvl==="level2"){
-      populateSelect($("cellSelect"), CELLS_LEVEL2, prev);
-    }else{
-      populateSelect($("cellSelect"), CELLS_LEVEL1, prev);
-    }
+    populateSelect($("cellSelect"), (lvl==="level2" ? CELLS_LEVEL2 : CELLS_LEVEL1), prev);
   });
 
   // --- run ---
@@ -217,15 +213,14 @@ print("seaborn", sns.__version__)
     const cell  = $("cellSelect").value.trim();
     if(!level || !cell){ alert("Choose level and cell."); return; }
 
-    stage(20, "Fetching CSVs …");
+    stage(20, "Fetching CSVs & markers …");
     clearImage();
 
-    // Files we need
+    // Required files
     const f_overall = `${ASSET_BASE1}overall_${level}.csv`;
     const f_profile = `${ASSET_BASE1}profile_${level}.csv`;
     const f_match   = `${ASSET_BASE1}matching_res.csv`;
 
-    // Write into FS
     try{
       await fetchToFS(f_overall, "/overall.csv");
       await fetchToFS(f_profile, "/profile.csv");
@@ -236,8 +231,19 @@ print("seaborn", sns.__version__)
       return;
     }
 
-    // Optional TME association
+    // Marker dictionary (by level)
     const cell1 = cell.includes("|") ? cell.split("|")[0] : cell;
+    let markerPathHTTP = (level === "level1")
+      ? `${ASSET_BASE1}marker/Level1_mdic.pkl`
+      : `${ASSET_BASE1}marker/${cell1}_mdic.pkl`;
+
+    try{
+      await fetchToFS(markerPathHTTP, "/marker.pkl"); // write if exists
+    }catch(e){
+      log("⚠️ Marker file missing for this selection: " + (e?.message||e));
+    }
+
+    // Optional TME association
     const f_prop = `${ASSET_BASE2}prop_${cell1}.csv`;
     const f_pval = `${ASSET_BASE2}pval_${cell1}.csv`;
     const f_cmap = `${ASSET_BASE2}cmapdic_cat.pkl`;
@@ -262,12 +268,33 @@ import numpy as np, pandas as pd, seaborn as sns
 import matplotlib as mpl
 mpl.use("Agg")
 import matplotlib.pyplot as plt
+from matplotlib.lines import Line2D
 
 plt.rcParams['figure.dpi'] = 150
 
 level = ${JSON.stringify(level)}
 cell  = ${JSON.stringify(cell)}
 
+# -------------------------
+# Marker block
+# -------------------------
+print("Cell type: %s" % cell)
+try:
+    with open("/marker.pkl","rb") as fh:
+        mdic = pkl.load(fh)
+    if level == "level2":
+        key = cell
+    else:
+        key = cell
+    if key in mdic:
+        mls = mdic[key][:10]
+        print("\\nCurated marker:", " ".join(mls))
+    else:
+        print("\\nCurated marker: N/A")
+except Exception as e:
+    print("\\nCurated marker: N/A")
+
+print("\\n\\n")
 print('I: Organ distribution')
 
 sns.set_style("whitegrid")
@@ -299,6 +326,9 @@ if cell in prop.columns:
 sns.despine()
 buf1 = io.BytesIO(); plt.tight_layout(); plt.savefig(buf1, format='png', bbox_inches='tight', dpi=150); plt.close()
 
+# -------------------------
+# II: matching annotations
+# -------------------------
 print('II: matching annotations')
 mdf = pd.read_csv('/matching_res.csv', index_col=0)
 
@@ -362,7 +392,11 @@ def block2_png():
 
 buf2 = block2_png()
 
+# -------------------------
+# III: TME association  (optional)
+# -------------------------
 print('III: TME association')
+
 def p_to_stars(p):
     if np.isnan(p): return "NA"
     return ("ns" if p >= 0.05 else
@@ -387,7 +421,7 @@ def annotate_barh_stars(ax, data, value_col, group_col, pval_df, comparisons, or
     dxcap = bracket_dx_frac * xr
     doff = star_offset_frac * xr
 
-    tick_pos = ax.get_yticks()
+    tick_pos = list(ax.get_yticks())
     tick_lab = [t.get_text() for t in ax.get_yticklabels()]
     y_center = {}
     if len(tick_pos) == len(tick_lab) and len(tick_pos) > 0:
@@ -413,19 +447,20 @@ def annotate_barh_stars(ax, data, value_col, group_col, pval_df, comparisons, or
         s = p_to_stars(p)
         if (s=="ns") and (not show_ns):
             continue
-        ylow = y_center.get(a, order.index(a))
-        yhigh = y_center.get(b, order.index(b))
+        ylow = y_center.get(a, float(order.index(a)))
+        yhigh = y_center.get(b, float(order.index(b)))
         ylow, yhigh = sorted((ylow, yhigh))
         x_base = max(float(means.get(a,0.0)), float(means.get(b,0.0))) + pad
         comps.append(dict(ylow=ylow, yhigh=yhigh, x_base=x_base, stars=s))
 
+    # simple non-overlap: push to the right if ranges overlap and x is too close
     placed=[]
     occ = dxcap + doff + sep
     for d in comps:
         x_br=d["x_base"]
-        while any((d["ylow"]<=yyh) && (d["yhigh"]>=yyl) && (x_br < x0 + occ) for (x0,yyl,yyh) in []):
-            # (This while will not trigger; placeholder kept to mirror earlier logic)
-            break
+        for (x0,y0l,y0h) in placed:
+            if (d["ylow"]<=y0h) and (d["yhigh"]>=y0l) and (x_br < x0 + occ):
+                x_br = x0 + occ
         d["x_bracket"]=x_br
         placed.append((x_br, d["ylow"], d["yhigh"]))
 
@@ -443,6 +478,7 @@ def annotate_barh_stars(ax, data, value_col, group_col, pval_df, comparisons, or
                 ha="left", va="center", fontsize=7, color="black", fontweight="bold", zorder=10, clip_on=False)
 
 # Try TME association (optional)
+buf3=None
 try:
     pdf  = pd.read_csv('/prop.csv', index_col=0)
     df1  = pd.read_csv('/pval.csv', index_col=0)
@@ -467,16 +503,12 @@ try:
         ax.set_xlabel(cell); ax.set_ylabel('')
         plt.tight_layout()
         buf3 = io.BytesIO(); plt.savefig(buf3, format='png', bbox_inches='tight', dpi=150); plt.close()
-    else:
-        buf3=None
 except Exception as e:
     print("TME skip:", e)
-    buf3=None
 
 # Stitch images (robust: fall back if PIL unavailable)
 out_path = "/cell_explore.png"
-parts = []
-parts.append(("block1", io.BytesIO(buf1.getvalue())))
+parts = [("block1", io.BytesIO(buf1.getvalue()))]
 if buf2 is not None: parts.append(("block2", io.BytesIO(buf2.getvalue())))
 if buf3 is not None: parts.append(("block3", io.BytesIO(buf3.getvalue())))
 
@@ -489,7 +521,7 @@ try:
     for im in ims:
         canvas.paste(im, (0,y0)); y0 += im.height
     out = io.BytesIO(); canvas.save(out, format='PNG'); open(out_path,'wb').write(out.getvalue())
-except Exception as _e:
+except Exception:
     # fallback: just write the first block
     open(out_path, 'wb').write(parts[0][1].getvalue())
 
