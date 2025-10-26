@@ -33,8 +33,27 @@ excerpt: ""
   </label>
 </div>
 
-<div id="assetHint" style="font-size:12px;color:#666;margin:-6px 0 10px 0;">
-  Data base: <code id="dataBaseShow">/assets/data/</code>
+<div id="assetHint" style="font-size:15px;color:#666;margin:-6px 0 10px 0;">
+Meta information of the cell types.
+This page shows various information including 
+
+1. Organ distribution patterns 
+2. Matching annotation from previous literatures
+    - row indicates {cell_annotation_from_the_literature}@{source_literature}
+    - SEN: ratio of author_annotated_cells assigned to this PANGEA annotation
+    - PPV: ratio of PAGNEA annotation assigned to this author_annotated_cells
+    - CFS: average prediction score ('PG_combined_score')
+    - score: overall score = cubic root of these parameters
+3. Distribution patterns in tumor contexts
+    - shows results from PANGEA database (both Curated & Re-aligned database)
+    - stats: one-sided Mann-Whitney U test 
+    -   "ns"  : p >= 0.05
+        "*"   : p >= 0.01
+        "**"  : p >= 0.001
+        "***" : p >= 0.0001
+        "****": p <  0.0001
+
+,for each PANGEA cell annotation  
 </div>
 
 <!-- Processing progress -->
@@ -542,7 +561,7 @@ if has_tme:
         ax.set_xlim(xmin, max(xmax, max(right_need) + 0.02*xr))
 
     # figure
-    fig3, ax3 = plt.subplots(figsize=(4, 2.2), dpi=150)
+    fig3, ax3 = plt.subplots(figsize=(6, 4), dpi=150)
     sns.barplot(data=pdf, x=cell, y='Cancer_Tissue', ax=ax3,
                 palette=cmapdic, order=order, estimator=np.mean,
                 linewidth=1, edgecolor='black',
