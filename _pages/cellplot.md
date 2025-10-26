@@ -12,14 +12,26 @@ excerpt: ""
 <script defer src="https://cdn.jsdelivr.net/pyodide/v0.26.3/full/pyodide.js"></script>
 
 <style>
+  /* Layout only; let site defaults style the controls */
+  .ctl-row{
+    display:flex;
+    gap:10px;
+    flex-wrap:wrap;
+    margin:10px 0;
+    align-items:center;
+  }
+  label.inline{
+    display:inline-flex;
+    align-items:center;
+    gap:6px;
+  }
+
   .meta-panel{
     background:#f8f9fb;border:1px solid #e5e7eb;border-radius:8px;
-    padding:12px 14px;margin:10px 0 14px 0;color:#111;font-size:14px;
+    padding:10px 12px;margin:8px 0 12px 0; color:#111; font-size:14px;
   }
   .meta-panel code{background:#eef2f7;padding:1px 4px;border-radius:4px}
-  .meta-panel ol{margin:6px 0 0 20px}
-  .meta-panel ul{margin:4px 0 0 18px}
-  .meta-panel li{margin:2px 0}
+  .meta-panel small{color:#666}
 </style>
 
 <div class="ctl-row">
