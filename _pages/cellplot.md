@@ -455,11 +455,6 @@ if 'PANGEA_annotation' in mdf.columns and (cell in set(mdf['PANGEA_annotation'])
 
         add_fig_note(plt.gcf(), f"Matching annotation", x=0.01, y=1.05, ha='left', va='bottom', fontsize=9)
 
-        // add_axes_note(ax, f"II: matching annotations (top {n_rows} hits)\\nMetrics: SEN, PPV, CFS (dots), score (bar)",
-        //               loc='upper left', fontsize=7)
-        // add_fig_note(plt.gcf(), "Color scale fixed to [0,1]; dot size ∝ metric.",
-        //              x=0.01, y=0.01, ha='left', va='bottom', fontsize=7)
-
         # colorbar
         shrink = 1 if n_rows==1 else (0.2 + (0.2 / max(1, n_rows/3 + .75)))
         cbar = plt.colorbar(sc, ax=ax, pad=0.2, shrink=shrink, aspect=10)
@@ -559,9 +554,6 @@ if has_tme:
     annotate_barh_stars(ax3, cell, 'Cancer_Tissue', df1, comps, order)
 
     ax3.set_xlabel(cell); ax3.set_ylabel('')
-    // add_axes_note(ax3, "III: TME association\\nComparisons vs Tumor; stars show p-value tiers.",
-    //               loc='upper right', fontsize=7)
-
     add_fig_note(plt.gcf(), f"TME distribution", x=0.01, y=1.05, ha='left', va='bottom', fontsize=9)
 
     plt.tight_layout()
