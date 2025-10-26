@@ -12,30 +12,9 @@ excerpt: ""
 <script defer src="https://cdn.jsdelivr.net/pyodide/v0.26.3/full/pyodide.js"></script>
 
 <style>
-  /* Bigger controls to match other MD files */
-  .ctl-row{display:flex;gap:12px;flex-wrap:wrap;margin:12px 0;align-items:center;}
-  label.inline{display:inline-flex;align-items:center;gap:8px;font-size:14px;}
-
-  button, select, input{
-    font-size:15px;
-    line-height:1.2;
-    padding:8px 14px;         /* comfy target */
-    height:40px;              /* consistent height */
-    border-radius:8px;
-    border:1px solid #e5e7eb;
-  }
-
-  /* Buttons look like the rest of the site */
-  button{
-    background:#f3f4f6; cursor:pointer;
-    box-shadow:0 1px 0 rgba(0,0,0,0.02);
-  }
-  button:disabled{opacity:.6;cursor:not-allowed}
-  button:not(:disabled):hover{background:#eef0f4}
-
-  /* Keep select widths from your inline styles; just ensure vertical centering */
-  select{appearance:auto}
-
+  .ctl-row{display:flex;gap:10px;flex-wrap:wrap;margin:12px 0;}
+  label.inline{display:inline-flex;align-items:center;gap:6px}
+  select,input{padding:4px 6px}
   .meta-panel{
     background:#f8f9fb;border:1px solid #e5e7eb;border-radius:8px;
     padding:10px 12px;margin:8px 0 12px 0; color:#111; font-size:14px;
@@ -88,9 +67,6 @@ excerpt: ""
       </ul>
     </li>
   </ol>
-  <div style="margin-top:6px;">
-    <small>Data base: <code id="dataBaseShow">/assets/data/</code></small>
-  </div>
 </div>
 
 <!-- Processing progress -->
@@ -115,11 +91,12 @@ excerpt: ""
 </details>
 
 <script>
-/* JS unchanged */
 (function(){
+  // -------- config --------
   const DATA_BASE = "/assets/data/"; // trailing slash
   document.getElementById("dataBaseShow").textContent = DATA_BASE;
 
+  // -------- helpers --------
   const $ = (id)=>document.getElementById(id);
   function setDisabled(id, v){ const el=$(id); if(el) el.disabled = !!v; }
   function log(msg){
@@ -134,21 +111,21 @@ excerpt: ""
   }
   async function fetchToFS(url, fsPath, {optional=false,label=null}={}){
     try{
-      const u = (url.includes("?") ? url : url + "?t=" + Date.now());
+      const u = (url.includes("?") ? url : url + "?t=" + Date.now()); // cache-bust
       const r = await fetch(u, { cache: "no-store" });
       if(!r.ok){
         if(optional){
-          log(\`⚠️ Optional \${label||url} missing: HTTP \${r.status} for \${url}\`);
+          log(`⚠️ Optional ${label||url} missing: HTTP ${r.status} for ${url}`);
           return false;
         }
-        throw new Error(\`HTTP \${r.status} for \${url}\`);
+        throw new Error(`HTTP ${r.status} for ${url}`);
       }
       const buf = new Uint8Array(await r.arrayBuffer());
       pyodide.FS.writeFile(fsPath, buf);
-      log(\`✅ \${label||url} → \${fsPath} (\${(buf.length/1e6).toFixed(2)} MB)\`);
+      log(`✅ ${label||url} → ${fsPath} (${(buf.length/1e6).toFixed(2)} MB)`);
       return true;
     }catch(e){
-      if(optional){ log(\`⚠️ Optional \${label||url} skipped: \` + (e?.message||e)); return false; }
+      if(optional){ log(`⚠️ Optional ${label||url} skipped: ` + (e?.message||e)); return false; }
       throw e;
     }
   }
@@ -158,6 +135,7 @@ excerpt: ""
     img.removeAttribute("src");
   }
 
+  // -------- static dropdown lists (alphabetical) --------
   const LEVELS = ["level1","level2"];
 
   const CELLS_L1 = [
@@ -227,9 +205,11 @@ excerpt: ""
     populateCells();
   });
 
+  // -------- state --------
   let pyodide=null, FS=null;
   let booted=false, pngURL=null;
 
+  // -------- boot --------
   $("bootBtn").addEventListener("click", async ()=>{
     try{
       setDisabled("bootBtn", true);
@@ -301,6 +281,7 @@ def add_fig_note(fig, text, x=0.01, y=0.99, fontsize=9, mono=True, ha='left', va
     setDisabled("bootBtn", false);
   });
 
+  // -------- run --------
   $("runBtn").addEventListener("click", async ()=>{
     if(!booted){ alert("Boot first."); return; }
     clearImage();
@@ -309,42 +290,54 @@ def add_fig_note(fig, text, x=0.01, y=0.99, fontsize=9, mono=True, ha='left', va
     const cell  = $("cellSelect").value.trim();
 
     stage(10, "Preparing files …");
-    log(\`▶️ Explore: level=\${level}, cell=\${cell}\`);
+    log(`▶️ Explore: level=${level}, cell=${cell}`);
 
+    // derive file paths
     const baseProfile = DATA_BASE + "cell_profile/";
-    const f_overall = \`\${baseProfile}overall_\${level}.csv\`;
-    const f_profile = \`\${baseProfile}profile_\${level}.csv\`;
-    const f_match   = \`\${baseProfile}matching_res.csv\`;
+    const f_overall = `${baseProfile}overall_${level}.csv`;
+    const f_profile = `${baseProfile}profile_${level}.csv`;
+    const f_match   = `${baseProfile}matching_res.csv`;
 
-    const f_m_l1 = \`\${baseProfile}marker/Level1_mdic.pkl\`;
+    // markers
+    const f_m_l1 = `${baseProfile}marker/Level1_mdic.pkl`;
     const cell1 = (cell.includes("|") ? cell.split("|")[0] : cell);
-    const f_m_l2 = \`\${baseProfile}marker/\${cell1}_mdic.pkl\`;
+    const f_m_l2 = `${baseProfile}marker/${cell1}_mdic.pkl`;
 
-    const tme_dir = \`\${baseProfile}cancer_dist/\`;
-    const f_prop  = \`\${tme_dir}prop_\${cell1}.csv\`;
-    const f_pval  = \`\${tme_dir}pval_\${cell1}.csv\`;
-    const f_cmap  = \`\${tme_dir}cmapdic_cat.pkl\`;
+    // TME (optional)
+    const tme_dir = `${baseProfile}cancer_dist/`;
+    const f_prop  = `${tme_dir}prop_${cell1}.csv`;
+    const f_pval  = `${tme_dir}pval_${cell1}.csv`;
+    const f_cmap  = `${tme_dir}cmapdic_cat.pkl`;
 
     try{
+      // ensure target dir
       try{ FS.mkdir("/work"); }catch(_){}
+      // required
       await fetchToFS(f_overall, "/work/overall.csv", {label:"overall"});
       await fetchToFS(f_profile, "/work/profile.csv", {label:"profile"});
       await fetchToFS(f_match,   "/work/matching.csv", {label:"matching_res"});
+      // markers (choose based on level)
       if(level==="level1"){
         await fetchToFS(f_m_l1, "/work/marker.pkl", {label:"Level1 marker dict"});
       }else{
-        await fetchToFS(f_m_l2, "/work/marker.pkl", {label:\`\${cell1} marker dict\`});
+        await fetchToFS(f_m_l2, "/work/marker.pkl", {label:`${cell1} marker dict`});
       }
-      await fetchToFS(f_prop, "/work/prop.csv", {optional:true,label:\`TME prop_\${cell1}.csv\`});
-      await fetchToFS(f_pval, "/work/pval.csv", {optional:true,label:\`TME pval_\${cell1}.csv\`});
-      await fetchToFS(f_cmap, "/work/cmap.pkl", {optional:true,label:\`TME cmapdic_cat.pkl\`});
+      // optional TME
+      await fetchToFS(f_prop, "/work/prop.csv", {optional:true,label:`TME prop_${cell1}.csv`});
+      await fetchToFS(f_pval, "/work/pval.csv", {optional:true,label:`TME pval_${cell1}.csv`});
+      await fetchToFS(f_cmap, "/work/cmap.pkl", {optional:true,label:`TME cmapdic_cat.pkl`});
     }catch(e){
-      stage(0,"Error"); log("❌ Fetch failed: " + (e?.message||e)); return;
+      stage(0,"Error");
+      log("❌ Fetch failed: " + (e?.message||e));
+      return;
     }
 
     stage(40, "Running Python …");
 
-    const unhookOut = pyodide.setStdout({ batched: (s)=>{ (s||"").split(/\r?\n/).forEach(line=> line && log(line)); } });
+    // capture staged prints
+    const unhookOut = pyodide.setStdout({
+      batched: (s)=>{ (s||"").split(/\r?\n/).forEach(line=> line && log(line)); }
+    });
     const unhookErr = pyodide.setStderr({ batched: (s)=>{ s && s.trim() && log("ERR: " + s); } });
 
     try{
@@ -355,6 +348,10 @@ import matplotlib.pyplot as plt
 from matplotlib.lines import Line2D
 from math import isfinite
 
+# helpers are already defined in the session:
+# - add_axes_note
+# - add_fig_note
+
 level = ${JSON.stringify(level)}
 cell  = ${JSON.stringify(cell)}
 cell1 = (cell.split("|")[0] if "|" in cell else cell)
@@ -362,26 +359,32 @@ cell1 = (cell.split("|")[0] if "|" in cell else cell)
 sns.set_theme(style="whitegrid")
 mpl.rcParams['figure.dpi'] = 150
 
+# -------- load markers --------
 mls = []
 try:
     with open("/work/marker.pkl","rb") as fh:
         mdic = pkl.load(fh)
     if cell in mdic:
         mls = list(mdic[cell])[:10]
-except: pass
+except Exception as e:
+    pass
 
+# -------- I: Organ distribution --------
 overall = pd.read_csv("/work/overall.csv", index_col=0)
 prop    = pd.read_csv("/work/profile.csv", index_col=0).fillna(0)
 
 fig, axes = plt.subplots(2, 1, figsize=(7, 10), gridspec_kw = {'height_ratios':[7,3]})
 
+# scatter (all)
 sns.scatterplot(data=overall, y='avg', x='spec', s=30, linewidth=0, color='lightgrey', ax=axes[0])
+# scatter (highlight)
 if cell in overall.index:
     sns.scatterplot(data=overall.loc[[cell]], y='avg', x='spec', s=100,
                     linewidth=1, edgecolor='black', color='orange', ax=axes[0])
     x, y = float(overall.loc[cell, 'spec']), float(overall.loc[cell, 'avg'])
     axes[0].text(x, y, cell, fontsize=8, ha='left', va='center')
 
+# stats note inside left panel
 if cell in overall.index:
     axes[0].text(overall['spec'].max(), overall['avg'].max(),
                  f"Organ spec.: {overall.loc[cell,'spec']:.2f}\\nAverage prop.: {overall.loc[cell,'avg']:.2f}",
@@ -390,6 +393,7 @@ if cell in overall.index:
 axes[0].set_xlabel('Organ specificity')
 axes[0].set_ylabel('Average proportion')
 
+# bar by organ (ordered by mean of the selected cell)
 if cell in prop.columns:
     order = prop.groupby('Organ')[cell].mean().sort_values(ascending=False).index
 else:
@@ -404,18 +408,11 @@ axes[1].set_xlabel("")
 axes[1].set_ylabel('Proportion')
 axes[1].set_title(cell)
 
-if mls: mtext = 'curated marker: '+','.join(mls)
-else:   mtext = ''
-
-from matplotlib import pyplot as _plt
-def add_fig_note(fig, text, x=0.01, y=0.99, fontsize=9, mono=True, ha='left', va='top', max_width=120):
-    import textwrap
-    wrapped = textwrap.fill(text, width=max_width)
-    kw = dict(fontsize=fontsize, ha=ha, va=va)
-    if mono: kw['family'] = 'monospace'
-    fig.text(x, y, wrapped, bbox=dict(boxstyle='round,pad=0.3',
-                                      facecolor='#f8f9fb', edgecolor='#999', alpha=0.85),
-             **kw)
+# figure header/footer instead of print()
+if mls:
+    mtext = 'curated marker: '+','.join(mls)
+else:
+    mtext = ''
 
 add_fig_note(fig, f"Cell type: {cell}", x=0.01, y=1.11, ha='left', va='bottom', fontsize=11)
 add_fig_note(fig, f"{mtext}", x=0.01, y=1.08, ha='left', va='bottom', fontsize=8)
@@ -424,10 +421,12 @@ add_fig_note(fig, f"Organ distribution", x=0.01, y=1.05, ha='left', va='bottom',
 sns.despine()
 plt.tight_layout()
 
+# save fig 1 into buffer
 buf1 = io.BytesIO()
 plt.savefig(buf1, format="png", bbox_inches="tight", dpi=150)
 plt.close(fig)
 
+# -------- II: Matching annotations --------
 mdf = pd.read_csv("/work/matching.csv", index_col=0)
 fig2buf = None
 if 'PANGEA_annotation' in mdf.columns and (cell in set(mdf['PANGEA_annotation'])):
@@ -437,64 +436,104 @@ if 'PANGEA_annotation' in mdf.columns and (cell in set(mdf['PANGEA_annotation'])
     metrics = ['SEN','PPV','CFS','score']
     metrics_scatter = metrics[:-1]
     metric_bar = metrics[-1]
+
     n_rows = len(mdf1.index)
     if n_rows>0:
         n_cols = len(metrics)
         n_cols_scatter = len(metrics_scatter)
+
         x = np.repeat(np.arange(n_cols_scatter), n_rows)
         y_rows = np.arange(n_rows)[::-1]
         y = np.tile(y_rows, n_cols_scatter)
         vals = np.concatenate([mdf1[m].values for m in metrics_scatter])
+
+        # sizes & colors
         cmap = mpl.cm.RdYlBu_r
         norm01 = mpl.colors.Normalize(vmin=0.0, vmax=1.0)
         sizes = 250 * np.clip(vals, 0, 1)
+
         fig2, ax = plt.subplots(figsize=(n_cols*1.7, n_rows*0.6), dpi=150)
-        sc = ax.scatter(x, y, s=sizes, c=vals, cmap=cmap, norm=norm01, edgecolor="black", linewidth=0.5)
+        sc = ax.scatter(x, y, s=sizes, c=vals, cmap=cmap, norm=norm01,
+                        edgecolor="black", linewidth=0.5)
+
         ax.set_xticks([0,1,2,3.5])
         ax.set_xticklabels(['SEN','PPV','CFS','score'])
         ax.set_yticks(y_rows)
         ax.set_yticklabels(list(mdf1.index))
-        ax.set_xlim(-0.5, n_cols-0.5); ax.set_ylim(-0.5, n_rows-0.5)
-        sns.despine(bottom=True, left=True); ax.set_axisbelow(True)
-        ax.grid(True, which='major', axis='both', color='#B0B0B0', linestyle='-', linewidth=0.8, alpha=0.6)
+
+        ax.set_xlim(-0.5, n_cols-0.5)
+        ax.set_ylim(-0.5, n_rows-0.5)
+
+        sns.despine(bottom=True, left=True)
+        ax.set_axisbelow(True)
+        ax.grid(True, which='major', axis='both',
+                color='#B0B0B0', linestyle='-', linewidth=0.8, alpha=0.6)
+
+        # inset bar for score
         last_col_center = n_cols - 1
-        cell_left = last_col_center - 0.5; cell_right = last_col_center + 0.5
-        cell_width = cell_right - cell_left; pad_x = 0.05 * cell_width
-        axin = ax.inset_axes([cell_left + 0.5, -0.5, cell_width - 2*pad_x, n_rows], transform=ax.transData)
+        cell_left = last_col_center - 0.5
+        cell_right = last_col_center + 0.5
+        cell_width = cell_right - cell_left
+        pad_x = 0.05 * cell_width
+
+        axin = ax.inset_axes([cell_left + 0.5, -0.5, cell_width - 2*pad_x, n_rows],
+                             transform=ax.transData)
         bar_vals = np.clip(mdf1[metric_bar].values, 0, 1)
-        axin.barh(y_rows, bar_vals, height=0.7, color="slategrey", edgecolor='black', linewidth=0.5)
-        axin.set_ylim(ax.get_ylim()); axin.set_xlim(0,1.1); axin.set_xticks([]); axin.set_yticks([])
+        axin.barh(y_rows, bar_vals, height=0.7, color="slategrey",
+                  edgecolor='black', linewidth=0.5)
+        axin.set_ylim(ax.get_ylim()); axin.set_xlim(0,1.1)
+        axin.set_xticks([]); axin.set_yticks([])
         for sp in axin.spines.values(): sp.set_visible(False)
-        def _add(fig, text): fig.text(0.01, 1.05, text, ha='left', va='bottom',
-                                      fontsize=9, family='monospace',
-                                      bbox=dict(boxstyle='round,pad=0.3', facecolor='#f8f9fb',
-                                                edgecolor='#999', alpha=0.85))
-        _add(plt.gcf(), "Matching annotation")
+
+        add_fig_note(plt.gcf(), f"Matching annotation", x=0.01, y=1.05, ha='left', va='bottom', fontsize=9)
+
+        # colorbar
         shrink = 1 if n_rows==1 else (0.2 + (0.2 / max(1, n_rows/3 + .75)))
         cbar = plt.colorbar(sc, ax=ax, pad=0.2, shrink=shrink, aspect=10)
-        cbar.set_label("values"); cbar.set_ticks([0,0.5,1.0])
-        plt.tight_layout()
-        fig2buf = io.BytesIO(); plt.savefig(fig2buf, format="png", bbox_inches="tight", dpi=150); plt.close(fig2)
+        cbar.set_label("values")
+        cbar.set_ticks([0,0.5,1.0])
 
+        plt.tight_layout()
+        fig2buf = io.BytesIO()
+        plt.savefig(fig2buf, format="png", bbox_inches="tight", dpi=150)
+        plt.close(fig2)
+
+# -------- III: TME association (optional) --------
 try:
     has_tme = os.path.exists("/work/prop.csv") and os.path.exists("/work/pval.csv") and os.path.exists("/work/cmap.pkl")
     fig3buf = None
     if has_tme:
-        import pickle as _p
         pdf = pd.read_csv("/work/prop.csv", index_col=0)
         df1 = pd.read_csv("/work/pval.csv", index_col=0)
-        with open("/work/cmap.pkl", "rb") as fh: cmapdic = _p.load(fh)
+        with open("/work/cmap.pkl", "rb") as fh:
+            cmapdic = pkl.load(fh)
+
         order = ['Control','Non-malignant disease','Cancer_AdjNorm','Cancer_Blood','Cancer_Tumor','Cancer_Metastasis']
         order = [g for g in order if g in set(pdf.get('Cancer_Tissue',[]))]
+
         def p_to_stars(p):
             if pd.isna(p): return "NA"
-            return ("ns" if p >= 0.05 else "*" if p >= 0.01 else "**" if p >= 0.001 else "***" if p >= 1e-4 else "****")
+            return ("ns" if p >= 0.05 else
+                    "*"  if p >= 0.01 else
+                    "**" if p >= 0.001 else
+                    "***" if p >= 1e-4 else
+                    "****")
+
+        # simple horizontal asterisk brackets (compact)
         def annotate_barh_stars(ax, value_col, group_col, pval_df, comparisons, order):
             means = pdf.groupby(group_col)[value_col].mean()
-            xmin, xmax = ax.get_xlim(); xr = xmax - xmin if xmax>xmin else float(max(means.max(),1.0))
-            pad, sep, cap, doff = 0.50*xr, 0.10*xr, 0.025*xr, 0.03*xr
-            tick_pos = list(ax.get_yticks()); tick_lab = [t.get_text() for t in ax.get_yticklabels()]
-            y_center = {lab: float(pos) for lab,pos in zip(tick_lab,tick_pos)} if len(tick_pos)==len(tick_lab) and len(tick_pos)>0 else {}
+            xmin, xmax = ax.get_xlim()
+            xr = xmax - xmin if xmax>xmin else float(max(means.max(),1.0))
+            pad  = 0.50 * xr
+            sep  = 0.10 * xr
+            cap  = 0.025* xr
+            doff = 0.03 * xr
+
+            tick_pos = list(ax.get_yticks())
+            tick_lab = [t.get_text() for t in ax.get_yticklabels()]
+            y_center={}
+            if len(tick_pos)==len(tick_lab) and len(tick_pos)>0:
+                y_center = {lab: float(pos) for lab,pos in zip(tick_lab,tick_pos)}
             if len(y_center)<len(order):
                 rects=[p for p in ax.patches if hasattr(p,"get_y")]
                 if len(rects)>=len(order):
@@ -502,55 +541,72 @@ try:
                         y_center.setdefault(lab, r.get_y()+0.5*r.get_height())
                 else:
                     for i,lab in enumerate(order): y_center.setdefault(lab,float(i))
+
             placed=[]
             for a,b in comparisons:
                 if (a not in order) or (b not in order): continue
+                # find pval row
                 key=None
                 for k in (f"{a}|{b}", f"{b}|{a}", f"{a} vs {b}", f"{b} vs {a}"):
                     if k in pval_df.index: key=k; break
                 if key is None: continue
                 p=float(pval_df.loc[key, value_col]) if value_col in pval_df.columns else np.nan
                 stars=p_to_stars(p)
-                y1,y2 = y_center[a], y_center[b]; ylow, yhigh = sorted((y1,y2))
-                x_br = max(float(means.get(a,0.0)), float(means.get(b,0.0))) + pad
+                y1,y2 = y_center[a], y_center[b]
+                ylow, yhigh = sorted((y1,y2))
+                x_base = max(float(means.get(a,0.0)), float(means.get(b,0.0))) + pad
+                # collision
+                x_br = x_base
                 while any((ylow<=yyh and yhigh>=yyl and x_br < xb + (cap+doff+sep)) for xb,yyl,yyh in placed):
                     blockers=[xb for xb,yyl,yyh in placed if (ylow<=yyh and yhigh>=yyl)]
                     x_br = max(x_br, max(blockers) + (cap+doff+sep))
                 placed.append((x_br, ylow, yhigh))
+                # draw
                 ax.plot([x_br, x_br], [ylow, yhigh], color="k", lw=1.0, alpha=1.0, zorder=9, clip_on=False)
                 ax.plot([x_br-cap, x_br], [yhigh, yhigh], color="k", lw=1.0, alpha=1.0, zorder=9, clip_on=False)
                 ax.plot([x_br-cap, x_br], [ylow,  ylow ], color="k", lw=1.0, alpha=1.0, zorder=9, clip_on=False)
+                # star a tad below center for readability
                 ymid = 0.5*(ylow+yhigh) - 0.30*0.5
                 ax.text(x_br+doff, ymid, stars, rotation=270, rotation_mode="anchor",
                         ha="left", va="center", fontsize=7, fontweight="bold", color="k")
+
+            # widen xlim
             right_need = [xb + cap + doff for xb,_,_ in placed] or [xmax]
             ax.set_xlim(xmin, max(xmax, max(right_need) + 0.02*xr))
-        fig3, ax3 = plt.subplots(figsize=(4, 2.2), dpi=150)
+
+        # figure
+        fig3, ax3 = plt.subplots(figsize=(7, 4.5), dpi=150)
         sns.barplot(data=pdf, x=cell, y='Cancer_Tissue', ax=ax3,
                     palette=cmapdic, order=order, estimator=np.mean,
                     linewidth=1, edgecolor='black',
                     errorbar='se', capsize=.2, errwidth=1, errcolor='black')
         sns.despine()
+
         ctrls = [x for x in ['Control','Non-malignant disease','Cancer_AdjNorm'] if x in set(pdf['Cancer_Tissue'])]
         comps = [('Cancer_Tumor', c) for c in ctrls]
         annotate_barh_stars(ax3, cell, 'Cancer_Tissue', df1, comps, order)
+
         ax3.set_xlabel(cell); ax3.set_ylabel('')
-        def _add(fig, text): fig.text(0.01, 1.05, text, ha='left', va='bottom',
-                                      fontsize=9, family='monospace',
-                                      bbox=dict(boxstyle='round,pad=0.3', facecolor='#f8f9fb',
-                                                edgecolor='#999', alpha=0.85))
-        _add(plt.gcf(), "TME distribution")
+        add_fig_note(plt.gcf(), f"TME distribution", x=0.01, y=1.05, ha='left', va='bottom', fontsize=9)
+
         plt.tight_layout()
-        fig3buf = io.BytesIO(); plt.savefig(fig3buf, format="png", bbox_inches="tight", dpi=150); plt.close(fig3)
+        fig3buf = io.BytesIO()
+        plt.savefig(fig3buf, format="png", bbox_inches="tight", dpi=150)
+        plt.close(fig3)
 except: pass
 
+# -------- Combine figs vertically into one PNG --------
 from PIL import Image
 imgs=[]
 for b in (buf1, fig2buf, fig3buf):
     if b is not None:
         b.seek(0)
         imgs.append(Image.open(b).convert("RGBA"))
-if not imgs: raise RuntimeError("No figures to display.")
+
+if not imgs:
+    raise RuntimeError("No figures to display.")
+
+# stack vertically
 width = max(im.width for im in imgs)
 padded = []
 for im in imgs:
@@ -560,14 +616,19 @@ for im in imgs:
         padded.append(pad)
     else:
         padded.append(im)
+
 total_h = sum(im.height for im in padded) + (len(padded)-1)*20
 out = Image.new("RGBA", (width, total_h), (255,255,255,255))
 y=0
 for i,im in enumerate(padded):
     out.paste(im, (0,y))
     y += im.height + (20 if i<len(padded)-1 else 0)
+
+# write final
 with open("/work/explore.png","wb") as fh:
-    bio=io.BytesIO(); out.convert("RGB").save(bio, format="PNG"); fh.write(bio.getvalue())
+    bio=io.BytesIO()
+    out.convert("RGB").save(bio, format="PNG")
+    fh.write(bio.getvalue())
 "OK"
       `;
       await pyodide.runPythonAsync(code);
