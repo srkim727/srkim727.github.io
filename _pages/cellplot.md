@@ -467,99 +467,101 @@ if 'PANGEA_annotation' in mdf.columns and (cell in set(mdf['PANGEA_annotation'])
         plt.close(fig2)
 
 # -------- III: TME association (optional) --------
-has_tme = os.path.exists("/work/prop.csv") and os.path.exists("/work/pval.csv") and os.path.exists("/work/cmap.pkl")
-fig3buf = None
-if has_tme:
-    pdf = pd.read_csv("/work/prop.csv", index_col=0)
-    df1 = pd.read_csv("/work/pval.csv", index_col=0)
-    with open("/work/cmap.pkl", "rb") as fh:
-        cmapdic = pkl.load(fh)
+try:
+    has_tme = os.path.exists("/work/prop.csv") and os.path.exists("/work/pval.csv") and os.path.exists("/work/cmap.pkl")
+    fig3buf = None
+    if has_tme:
+        pdf = pd.read_csv("/work/prop.csv", index_col=0)
+        df1 = pd.read_csv("/work/pval.csv", index_col=0)
+        with open("/work/cmap.pkl", "rb") as fh:
+            cmapdic = pkl.load(fh)
 
-    order = ['Control','Non-malignant disease','Cancer_AdjNorm','Cancer_Blood','Cancer_Tumor','Cancer_Metastasis']
-    order = [g for g in order if g in set(pdf.get('Cancer_Tissue',[]))]
+        order = ['Control','Non-malignant disease','Cancer_AdjNorm','Cancer_Blood','Cancer_Tumor','Cancer_Metastasis']
+        order = [g for g in order if g in set(pdf.get('Cancer_Tissue',[]))]
 
-    def p_to_stars(p):
-        if pd.isna(p): return "NA"
-        return ("ns" if p >= 0.05 else
-                "*"  if p >= 0.01 else
-                "**" if p >= 0.001 else
-                "***" if p >= 1e-4 else
-                "****")
+        def p_to_stars(p):
+            if pd.isna(p): return "NA"
+            return ("ns" if p >= 0.05 else
+                    "*"  if p >= 0.01 else
+                    "**" if p >= 0.001 else
+                    "***" if p >= 1e-4 else
+                    "****")
 
-    # simple horizontal asterisk brackets (compact)
-    def annotate_barh_stars(ax, value_col, group_col, pval_df, comparisons, order):
-        means = pdf.groupby(group_col)[value_col].mean()
-        xmin, xmax = ax.get_xlim()
-        xr = xmax - xmin if xmax>xmin else float(max(means.max(),1.0))
-        pad  = 0.50 * xr
-        sep  = 0.10 * xr
-        cap  = 0.025* xr
-        doff = 0.03 * xr
+        # simple horizontal asterisk brackets (compact)
+        def annotate_barh_stars(ax, value_col, group_col, pval_df, comparisons, order):
+            means = pdf.groupby(group_col)[value_col].mean()
+            xmin, xmax = ax.get_xlim()
+            xr = xmax - xmin if xmax>xmin else float(max(means.max(),1.0))
+            pad  = 0.50 * xr
+            sep  = 0.10 * xr
+            cap  = 0.025* xr
+            doff = 0.03 * xr
 
-        tick_pos = list(ax.get_yticks())
-        tick_lab = [t.get_text() for t in ax.get_yticklabels()]
-        y_center={}
-        if len(tick_pos)==len(tick_lab) and len(tick_pos)>0:
-            y_center = {lab: float(pos) for lab,pos in zip(tick_lab,tick_pos)}
-        if len(y_center)<len(order):
-            rects=[p for p in ax.patches if hasattr(p,"get_y")]
-            if len(rects)>=len(order):
-                for lab,r in zip(order, rects[:len(order)]):
-                    y_center.setdefault(lab, r.get_y()+0.5*r.get_height())
-            else:
-                for i,lab in enumerate(order): y_center.setdefault(lab,float(i))
+            tick_pos = list(ax.get_yticks())
+            tick_lab = [t.get_text() for t in ax.get_yticklabels()]
+            y_center={}
+            if len(tick_pos)==len(tick_lab) and len(tick_pos)>0:
+                y_center = {lab: float(pos) for lab,pos in zip(tick_lab,tick_pos)}
+            if len(y_center)<len(order):
+                rects=[p for p in ax.patches if hasattr(p,"get_y")]
+                if len(rects)>=len(order):
+                    for lab,r in zip(order, rects[:len(order)]):
+                        y_center.setdefault(lab, r.get_y()+0.5*r.get_height())
+                else:
+                    for i,lab in enumerate(order): y_center.setdefault(lab,float(i))
 
-        placed=[]
-        for a,b in comparisons:
-            if (a not in order) or (b not in order): continue
-            # find pval row
-            key=None
-            for k in (f"{a}|{b}", f"{b}|{a}", f"{a} vs {b}", f"{b} vs {a}"):
-                if k in pval_df.index: key=k; break
-            if key is None: continue
-            p=float(pval_df.loc[key, value_col]) if value_col in pval_df.columns else np.nan
-            stars=p_to_stars(p)
-            y1,y2 = y_center[a], y_center[b]
-            ylow, yhigh = sorted((y1,y2))
-            x_base = max(float(means.get(a,0.0)), float(means.get(b,0.0))) + pad
-            # collision
-            x_br = x_base
-            while any((ylow<=yyh and yhigh>=yyl and x_br < xb + (cap+doff+sep)) for xb,yyl,yyh in placed):
-                blockers=[xb for xb,yyl,yyh in placed if (ylow<=yyh and yhigh>=yyl)]
-                x_br = max(x_br, max(blockers) + (cap+doff+sep))
-            placed.append((x_br, ylow, yhigh))
-            # draw
-            ax.plot([x_br, x_br], [ylow, yhigh], color="k", lw=1.0, alpha=1.0, zorder=9, clip_on=False)
-            ax.plot([x_br-cap, x_br], [yhigh, yhigh], color="k", lw=1.0, alpha=1.0, zorder=9, clip_on=False)
-            ax.plot([x_br-cap, x_br], [ylow,  ylow ], color="k", lw=1.0, alpha=1.0, zorder=9, clip_on=False)
-            # star a tad below center for readability
-            ymid = 0.5*(ylow+yhigh) - 0.30*0.5  # small downward nudge in data units
-            ax.text(x_br+doff, ymid, stars, rotation=270, rotation_mode="anchor",
-                    ha="left", va="center", fontsize=7, fontweight="bold", color="k")
+            placed=[]
+            for a,b in comparisons:
+                if (a not in order) or (b not in order): continue
+                # find pval row
+                key=None
+                for k in (f"{a}|{b}", f"{b}|{a}", f"{a} vs {b}", f"{b} vs {a}"):
+                    if k in pval_df.index: key=k; break
+                if key is None: continue
+                p=float(pval_df.loc[key, value_col]) if value_col in pval_df.columns else np.nan
+                stars=p_to_stars(p)
+                y1,y2 = y_center[a], y_center[b]
+                ylow, yhigh = sorted((y1,y2))
+                x_base = max(float(means.get(a,0.0)), float(means.get(b,0.0))) + pad
+                # collision
+                x_br = x_base
+                while any((ylow<=yyh and yhigh>=yyl and x_br < xb + (cap+doff+sep)) for xb,yyl,yyh in placed):
+                    blockers=[xb for xb,yyl,yyh in placed if (ylow<=yyh and yhigh>=yyl)]
+                    x_br = max(x_br, max(blockers) + (cap+doff+sep))
+                placed.append((x_br, ylow, yhigh))
+                # draw
+                ax.plot([x_br, x_br], [ylow, yhigh], color="k", lw=1.0, alpha=1.0, zorder=9, clip_on=False)
+                ax.plot([x_br-cap, x_br], [yhigh, yhigh], color="k", lw=1.0, alpha=1.0, zorder=9, clip_on=False)
+                ax.plot([x_br-cap, x_br], [ylow,  ylow ], color="k", lw=1.0, alpha=1.0, zorder=9, clip_on=False)
+                # star a tad below center for readability
+                ymid = 0.5*(ylow+yhigh) - 0.30*0.5  # small downward nudge in data units
+                ax.text(x_br+doff, ymid, stars, rotation=270, rotation_mode="anchor",
+                        ha="left", va="center", fontsize=7, fontweight="bold", color="k")
 
-        # widen xlim
-        right_need = [xb + cap + doff for xb,_,_ in placed] or [xmax]
-        ax.set_xlim(xmin, max(xmax, max(right_need) + 0.02*xr))
+            # widen xlim
+            right_need = [xb + cap + doff for xb,_,_ in placed] or [xmax]
+            ax.set_xlim(xmin, max(xmax, max(right_need) + 0.02*xr))
 
-    # figure
-    fig3, ax3 = plt.subplots(figsize=(4, 2.2), dpi=150)
-    sns.barplot(data=pdf, x=cell, y='Cancer_Tissue', ax=ax3,
-                palette=cmapdic, order=order, estimator=np.mean,
-                linewidth=1, edgecolor='black',
-                errorbar='se', capsize=.2, errwidth=1, errcolor='black')
-    sns.despine()
+        # figure
+        fig3, ax3 = plt.subplots(figsize=(4, 2.2), dpi=150)
+        sns.barplot(data=pdf, x=cell, y='Cancer_Tissue', ax=ax3,
+                    palette=cmapdic, order=order, estimator=np.mean,
+                    linewidth=1, edgecolor='black',
+                    errorbar='se', capsize=.2, errwidth=1, errcolor='black')
+        sns.despine()
 
-    ctrls = [x for x in ['Control','Non-malignant disease','Cancer_AdjNorm'] if x in set(pdf['Cancer_Tissue'])]
-    comps = [('Cancer_Tumor', c) for c in ctrls]
-    annotate_barh_stars(ax3, cell, 'Cancer_Tissue', df1, comps, order)
+        ctrls = [x for x in ['Control','Non-malignant disease','Cancer_AdjNorm'] if x in set(pdf['Cancer_Tissue'])]
+        comps = [('Cancer_Tumor', c) for c in ctrls]
+        annotate_barh_stars(ax3, cell, 'Cancer_Tissue', df1, comps, order)
 
-    ax3.set_xlabel(cell); ax3.set_ylabel('')
-    add_fig_note(plt.gcf(), f"TME distribution", x=0.01, y=1.05, ha='left', va='bottom', fontsize=9)
+        ax3.set_xlabel(cell); ax3.set_ylabel('')
+        add_fig_note(plt.gcf(), f"TME distribution", x=0.01, y=1.05, ha='left', va='bottom', fontsize=9)
 
-    plt.tight_layout()
-    fig3buf = io.BytesIO()
-    plt.savefig(fig3buf, format="png", bbox_inches="tight", dpi=150)
-    plt.close(fig3)
+        plt.tight_layout()
+        fig3buf = io.BytesIO()
+        plt.savefig(fig3buf, format="png", bbox_inches="tight", dpi=150)
+        plt.close(fig3)
+except: pass
 
 # -------- Combine figs vertically into one PNG --------
 from PIL import Image
