@@ -1,6 +1,6 @@
 ---
 layout: home
-title: PANGEA: A cross-tissue cellular atlas of human diseases
+title: PANGEA
 permalink: /
 ---
 
