@@ -29,6 +29,8 @@ PANGEA database mainly consists of _re-aligned_ datasets from public repositorie
   - consistent cell QC standards
   - facilitate implementation of count-based models ([SCVI][4], ...)
 
+
+
 ### II. Reference cell atlases
 ![Image](/assets/images/Cellatlases_Level1and2.png)  
 Integration of expression profiles in PANGEA database identified
@@ -38,6 +40,9 @@ Integration of expression profiles in PANGEA database identified
 
 [Gene expression patterns][5] and [Organ distribution patterns][6] of these annotations
 can be explored here.
+<br>
+Based on this reference cell atlases, cell prediction models were constructed using the [CellTypist][7] pipeline. 
+The PANGEA cell annotation framework is fully implemented in python package, **PANGEApy**, <u>which can be installed via [github][1].</u>
 
 
 
@@ -270,3 +275,4 @@ Copyright 2019 Tao He.
 [4]: https://docs.scvi-tools.org/en/1.3.3/user_guide/models/scvi.html
 [5]: https://srkim727.github.io/pages/geneplot/
 [6]: https://srkim727.github.io/pages/cellplot/
+[7]: https://github.com/Teichlab/celltypist
