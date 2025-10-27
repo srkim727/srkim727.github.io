@@ -7,8 +7,8 @@ permalink: /
 PANGEA (Public ANotated Gene Expression Atlas) is a cell annotation framework based on a single-cell transcriptome database.
 PANGEA framework includes
 
-**1. Database curation**
-**2. Construction of reference cell atlases and cell annotation models**
+**1. Database curation**  
+**2. Construction of reference cell atlases and cell annotation models**  
 **3. Meta analyses based on integrated cell annotations**
 
 
@@ -28,12 +28,11 @@ PANGEA database mainly consists of re-aligned datasets from public repositories 
   - consistent cell QC standards
   - facilitate implementation of count-based models ([SCVI][4], ...)
 
-
-
-
-
 ### II. Reference cell atlases
 ![Image](/assets/images/Cellatlases_Level1and2.png)
+32 major cell types (Level1) were identified in 
+
+
 
 ### III. Meta analysis 
 
