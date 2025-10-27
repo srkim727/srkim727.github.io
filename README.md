@@ -18,15 +18,14 @@ PANGEA framework includes
 PANGEA database mainly consists of re-aligned datasets from public repositories (NCBI).
 
 * This re-aligned database encompasses 
-
   - 2,058 human _in vivo_ samples 
     (1,426 from non-malignant, and 632 from maligant disease donors)
   - 160 disease contexts
-  - 49 [organ identities](./assets/data/list_organs.csv)
+  - 49 organ identities
   
-  
-* Benefits of this re-aligned database includes
+<br/>
 
+* Benefits of this re-aligned database includes
   - minimized computational biases
   - consistent cell QC standards
   - facilitate implementation of count-based models ([SCVI][4], ...)
