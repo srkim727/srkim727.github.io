@@ -21,7 +21,7 @@ PANGEA database mainly consists of re-aligned datasets from public repositories 
   - 2,058 human _in vivo_ samples 
     (1,426 from non-malignant, and 632 from maligant disease donors)
   - 131 disease contexts
-  - 45 organ identities
+  - 45 organ identities  
   
 * Benefits of this re-aligned database includes
   - minimized computational biases
