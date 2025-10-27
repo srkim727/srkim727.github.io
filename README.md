@@ -15,13 +15,17 @@ PANGEA (Public ANotated Gene Expression Atlas) is a cell annotation framework ba
 
 
 ### Reference cell atlases
+![Image](/assets/images/Level1atlas.png)
+![Image](/assets/images/Level2atlas.png)
+
+
 
 
 
 ### Repositories
-1. PANGEApy: cell annotation package/pipeline: available via [github][1]
-2. representative cell atlases: available via [figshare][2]
-3. cell annotation models: available via [figshare][3]
+1. [PANGEApy: cell annotation package/pipeline][1]
+2. [representative cell atlases][2]
+3. [cell annotation models][3]
 
 
 ## Demo
