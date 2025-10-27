@@ -438,7 +438,7 @@ fig2buf = None
 if 'PANGEA_annotation' in mdf.columns and (cell in set(mdf['PANGEA_annotation'])):
     mdf1 = (mdf[mdf['PANGEA_annotation']==cell]
             .drop(columns=['PANGEA_annotation'], errors='ignore')
-            .head(10))
+            .head(5))
     metrics = ['SEN','PPV','CFS','score']
     metrics_scatter = metrics[:-1]
     metric_bar = metrics[-1]
