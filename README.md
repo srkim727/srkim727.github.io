@@ -4,20 +4,41 @@ title: PANGEA
 permalink: /
 ---
 
-
 PANGEA (Public ANotated Gene Expression Atlas) is a cell annotation framework based on a single-cell transcriptome database.
+PANGEA framework includes
+
+1. Curation of Database
+2. Construction of Reference Cell Atlases and Cell Annotation Models
+3. Meta Analyses
 
 
 
-
-### Database construction
+### I. Database curation
 ![Image](/assets/images/DBpipeline.png)
+PANGEA database mainly consists of re-aligned datasets from public repositories (NCBI).
+
+* This re-aligned database encompasses 
+
+  - 2,058 human _in vivo_ samples (1,426 from non-malignant, and 632 from maligant disease donors)
+  - 160 disease contexts
+  - 49 [organ identities](/assets/data/list_organs.csv)
+
+  
+
+* Benefits of this re-aligned database includes
+
+  - minimized computational biases
+  - consistent cell QC standards
+  - facilitate implementation of count-based models ([SCVI][4], ...)
 
 
-### Reference cell atlases
+
+
+
+### II. Reference cell atlases
 ![Image](/assets/images/Cellatlases_Level1and2.png)
 
-
+### III. Meta analysis 
 
 
 
@@ -243,5 +264,4 @@ Copyright 2019 Tao He.
 [1]: https://github.com/srkim727/pangeapy
 [2]: https://doi.org/10.6084/m9.figshare.28138364.v2
 [3]: https://doi.org/10.6084/m9.figshare.30335656.v6
-
-[
+[4]: https://docs.scvi-tools.org/en/1.3.3/user_guide/models/scvi.html
