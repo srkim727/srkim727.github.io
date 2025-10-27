@@ -15,22 +15,29 @@ PANGEA framework includes
 
 ### I. Database curation
 ![Image](/assets/images/DBpipeline.png)
-PANGEA database mainly consists of re-aligned datasets from public repositories (NCBI).
+PANGEA database mainly consists of _re-aligned_ datasets from public repositories (NCBI).
 
 * This re-aligned database encompasses 
   - 2,058 human _in vivo_ samples 
     (1,426 from non-malignant, and 632 from maligant disease donors)
   - 131 disease contexts
   - 45 organ identities  
-  
+<br>
+
 * Benefits of this re-aligned database includes
   - minimized computational biases
   - consistent cell QC standards
   - facilitate implementation of count-based models ([SCVI][4], ...)
 
 ### II. Reference cell atlases
-![Image](/assets/images/Cellatlases_Level1and2.png)
-32 major cell types (Level1) were identified in 
+![Image](/assets/images/Cellatlases_Level1and2.png)  
+Integration of expression profiles in PANGEA database identified
+
+1. 32 different major cell types (Level1)
+2. 165 different cellular subtypes (Level2)
+
+[Gene expression patterns][5] and [Organ distribution patterns][6] of these annotations
+can be explored here.
 
 
 
@@ -261,3 +268,5 @@ Copyright 2019 Tao He.
 [2]: https://doi.org/10.6084/m9.figshare.28138364.v2
 [3]: https://doi.org/10.6084/m9.figshare.30335656.v6
 [4]: https://docs.scvi-tools.org/en/1.3.3/user_guide/models/scvi.html
+[5]: https://srkim727.github.io/pages/geneplot/
+[6]: https://srkim727.github.io/pages/cellplot/
