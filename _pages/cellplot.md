@@ -56,14 +56,14 @@ excerpt: ""
     <li style="margin:2px 0;">Distribution patterns in tumor contexts
       <ul style="margin:6px 0 0 18px;">
         <li>shows results from PANGEA database (both Curated &amp; Re-aligned database)</li>
-        <li>stats: one-sided Mann–Whitney U test</li>
+        <!-- <li>stats: one-sided Mann–Whitney U test</li>
         <li>
           <code>ns</code>: p &ge; 0.05,
           <code>*</code>: p &ge; 0.01,
           <code>**</code>: p &ge; 0.001,
           <code>***</code>: p &ge; 0.0001,
           <code>****</code>: p &lt; 0.0001
-        </li>
+        </li> -->
       </ul>
     </li>
   </ol>
@@ -590,7 +590,7 @@ try:
 
         ctrls = [x for x in ['Control','Non-malignant disease','Cancer_AdjNorm'] if x in set(pdf['Cancer_Tissue'])]
         comps = [('Cancer_Tumor', c) for c in ctrls]
-        annotate_barh_stars(ax3, cell, 'Cancer_Tissue', df1, comps, order)
+        // annotate_barh_stars(ax3, cell, 'Cancer_Tissue', df1, comps, order)
 
         ax3.set_xlabel(cell); ax3.set_ylabel('')
         add_fig_note(plt.gcf(), f"TME distribution", x=0.01, y=1.05, ha='left', va='bottom', fontsize=9)
