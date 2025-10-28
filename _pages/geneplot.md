@@ -51,8 +51,8 @@ excerpt: ""
   <strong>Gene expression patterns of the cell types.</strong>
   <p style="margin:6px 0 8px 0;">This page shows various information including</p>
   <ol style="margin:0 0 0 18px;">
-    <li style="margin:2px 0;">Ratio of cells expressing each gene</li>
-    <li style="margin:2px 0;">Average expression level of each gene</li>
+    <li style="margin:2px 0;">Ratio of cells expressing each gene (dot sizes) </li>
+    <li style="margin:2px 0;">Average expression level of each gene (colors) </li>
   </ol>
   <p style="margin:8px 0 0 0;">
     Expression levels were evaluated in the representative cell atlases
