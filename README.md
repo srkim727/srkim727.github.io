@@ -46,11 +46,11 @@ Organ distribution patterns of these annotations can be explored [here][6].
 ### III. Cell annotation models 
 
 
-Based on this reference cell atlases, cell prediction models were constructed using [CellTypist][7]. 
+Based on reference cell atlases, annotation models were built using [CellTypist][7]. 
 <br>
-The PANGEA cell annotation framework is fully implemented in python package, [**PANGEApy**][1].
+Full version of PANGEA cell annotation framework is available via python package, [**PANGEApy**][1].
 <br>
-Web-app implementation of PANGEA annotation is available [here][8]. 
+Web-app implementation of PANGEA cell annotation model is available [here][8]. 
 
 
 
