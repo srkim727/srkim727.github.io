@@ -590,7 +590,7 @@ try:
 
         ctrls = [x for x in ['Control','Non-malignant disease','Cancer_AdjNorm'] if x in set(pdf['Cancer_Tissue'])]
         comps = [('Cancer_Tumor', c) for c in ctrls]
-        // annotate_barh_stars(ax3, cell, 'Cancer_Tissue', df1, comps, order)
+        # annotate_barh_stars(ax3, cell, 'Cancer_Tissue', df1, comps, order)
 
         ax3.set_xlabel(cell); ax3.set_ylabel('')
         add_fig_note(plt.gcf(), f"TME distribution", x=0.01, y=1.05, ha='left', va='bottom', fontsize=9)
