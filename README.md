@@ -5,12 +5,6 @@ permalink: /
 ---
 
 
-<p align="center">
-  <img src="/assets/images/PANGEApy_LOGO.png" alt="PANGEA" style="max-width: 500px; width: 100%; margin-top: 10px;"/>
-</p>
-
-
-
 **PANGEA (Public ANotated Gene Expression Atlas)** is a cell annotation framework based on a single-cell transcriptome database.
 <br>
 PANGEA framework includes
