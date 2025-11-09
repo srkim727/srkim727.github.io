@@ -458,7 +458,7 @@ if 'PANGEA_annotation' in mdf.columns and (cell in set(mdf['PANGEA_annotation'])
         norm01 = mpl.colors.Normalize(vmin=0.0, vmax=1.0)
         sizes = 250 * np.clip(vals, 0, 1)
 
-        fig2, ax = plt.subplots(figsize=(n_cols*1.7, n_rows*0.6), dpi=150)
+        fig2, ax = plt.subplots(figsize=(n_cols*2, n_rows*0.6), dpi=150)
         sc = ax.scatter(x, y, s=sizes, c=vals, cmap=cmap, norm=norm01,
                         edgecolor="black", linewidth=0.5)
 
