@@ -1,5 +1,5 @@
 ---
-title: Annotate cells online
+title: Annotate cells online (deprecated)
 author: S. Kim
 date: 2025-10-16
 layout: post
@@ -20,31 +20,16 @@ layout: post
   .meta-panel ol{margin:6px 0 0 20px}
   .meta-panel ul{margin:4px 0 0 18px}
   .meta-panel li{margin:2px 0}
-
-  /* Make the Model <select> match the other control buttons */
-  .ctrl-row button,
-  .ctrl-row select{
-    font: inherit;
-    height: 28px;
-    padding: 0 10px;
-    box-sizing: border-box;
-    line-height: normal;
-  }
 </style>
 
 <!-- Controls row -->
-<div class="ctrl-row" style="display:flex;flex-wrap:wrap;gap:10px;margin-bottom:8px;align-items:center;">
+<div style="display:flex;flex-wrap:wrap;gap:10px;margin-bottom:8px;align-items:center;">
   <button id="bootBtn" type="button">1:boot</button>
-
-  <label for="csvInput" style="display:inline-block;">
-    <input type="file" id="csvInput" accept=".csv,.gz,.csv.gz,text/csv,application/gzip,application/x-gzip" style="display:none;">
-    <button id="loadFileBtn" type="button" disabled>2:load file</button>
-  </label>
 
   <!-- Model selector -->
   <label style="display:flex;gap:6px;align-items:center;">
-    <span style="font-size:13px;color:#555;">3:model</span>
-    <select id="modelSel">
+    <span style="font-size:13px;color:#555;">Model</span>
+    <select id="modelSel" style="padding:4px 6px;">
       <option value="level1_Whole_model_portable.npz" selected>Whole (level1)</option>
       <option value="level2_B_mature_model_portable.npz">B_mature (level2)</option>
       <option value="level2_Dendritic_classical_model_portable.npz">Dendritic_classical (level2)</option>
@@ -63,7 +48,12 @@ layout: post
     <input type="checkbox" id="safe"> Safe mode
   </label>
 
-  <button id="runBtn" type="button" disabled>4:run</button>
+  <label for="csvInput" style="display:inline-block;">
+    <input type="file" id="csvInput" accept=".csv,.csv.gz,text/csv" style="display:none;">
+    <button id="loadFileBtn" type="button" disabled>2:load file</button>
+  </label>
+
+  <button id="runBtn" type="button" disabled>3:run</button>
 </div>
 
 <!-- Uploading progress -->
@@ -83,11 +73,7 @@ layout: post
 
 <!-- ✨ Annotations moved here: below controls & progress, just above the Log window -->
 <div class="meta-panel">
-  <strong>This page conducts cell annotations on the uploaded gene expression files
-  <div style="margin:4px 0 8px 0; font-size:13px; color:#555;">
-    This online-page is optimized small number of cells. Limited performance for datasets containing more than thousands of cells. For better and faster performance, use
-    <a href="https://github.com/srkim727/pangeapy" target="_blank" rel="noopener">pangeapy API</a>. </strong>
-  </div>
+  <strong>This page conducts cell annotations on the uploaded gene expression files</strong>
   <ol>
     <li><strong>Input file configuration</strong>
       <ul>
@@ -95,7 +81,7 @@ layout: post
         <li>Raw expression must be <code>1e4</code>-normalized &amp; <code>log1p</code>-transformed<br>
             <small>normalized up to 10,000 counts per cell, then log-transformed with 1 pseudocount</small>
         </li>
-        <li>File format: <code>.csv</code> or <strong><code>.csv.gz (recommended for faster performance)</code></strong></li>
+        <li>File format: <code>.csv</code> or <code>.csv.gz</code></li>
       </ul>
     </li>
     <li><strong>Cell annotation</strong>
@@ -192,37 +178,45 @@ layout: post
   let pyReady=false, libsReady=false, uploaded=false;
   let modelPath="/tmp_model";   // in Pyodide FS
   let modelFresh=false;         // set false when selection changes
-  let modelPromise=null;        // in-flight fetch, for dedupe
   let resultUrl=null;
 
   // Reset model state when selection changes
   $("modelSel").addEventListener("change", ()=>{
     modelFresh = false;
-    modelPromise = null;
     setDisabled("runBtn", !uploaded || !libsReady);
-    if (libsReady) {
-      ensureModelInFS().catch(err => log("❌ Model prefetch: " + (err?.message || err)));
-    }
+    log("🧭 Model selected: " + $("modelSel").selectedOptions[0].text + " → " + getModelURL());
   });
 
   // ---------- BOOT (with integrated sanity check) ----------
   $("bootBtn").addEventListener("click", async ()=>{
     try{
       setDisabled("bootBtn", true);
+      log("⏳ Boot: waiting for pyodide.js …");
       await waitForGlobal("loadPyodide", 20000);
+
+      log("⏳ Boot: initializing Pyodide…");
       pyodide = await globalThis.loadPyodide({ indexURL: "https://cdn.jsdelivr.net/pyodide/v0.26.3/full/" });
       FS = pyodide.FS;
       pyReady = true;
+      log("✅ Pyodide " + pyodide.version + " loaded.");
+
+      log("⏳ Boot: loading packages (numpy, pandas) …");
       await pyodide.loadPackage(["numpy","pandas"]);
-      await pyodide.runPythonAsync(`import numpy as np, pandas as pd, gzip, io, json, os`);
+      log("✅ Packages loaded.");
+
+      log("⏳ Boot: importing libs & running sanity check …");
+      const pingOut = await pyodide.runPythonAsync(`
+import numpy as np, pandas as pd, gzip, io, json, os
+print("numpy", np.__version__)
+print("pandas", pd.__version__)
+print("sum:", int(np.array([1,2,3]).sum()))
+"OK"
+      `);
       libsReady = true;
-      log(`✅ Ready (Pyodide ${pyodide.version})`);
+      log("✅ Sanity check OK: " + pingOut);
 
       setDisabled("loadFileBtn", false);
       setDisabled("runBtn", !uploaded);
-
-      // Prefetch the currently-selected model in the background
-      ensureModelInFS().catch(err => log("❌ Model prefetch: " + (err?.message || err)));
     }catch(err){
       log("❌ Boot failed: " + (err?.message || err));
       setDisabled("bootBtn", false);
@@ -241,6 +235,7 @@ layout: post
     const f = e.target.files && e.target.files[0];
     if(!f){ return; }
     try{
+      log("📁 Selected: " + f.name);
       $("uploadProg").value = 0;
       $("uploadStatus").textContent = "Reading…";
       const bytes = await readFileWithProgress(f);
@@ -248,8 +243,9 @@ layout: post
       uploaded = true;
       $("uploadProg").value = 100;
       $("uploadStatus").textContent = `✅ Upload complete • ${(bytes.length/1e6).toFixed(2)} MB`;
-      log(`📁 ${f.name} (${(bytes.length/1e6).toFixed(2)} MB)`);
+      log(`📤 Loaded into FS → /tmp_input (${(bytes.length/1e6).toFixed(2)} MB)`);
       setDisabled("runBtn", !libsReady);
+      if(!libsReady) log("ℹ️ Boot first, then Run will enable.");
     }catch(err){
       uploaded = false;
       $("uploadProg").value = 0;
@@ -262,27 +258,19 @@ layout: post
   // ---------- Fetch selected model into Pyodide FS (called from Run) ----------
   async function ensureModelInFS(){
     if (modelFresh) return;
-    if (modelPromise) return modelPromise;
     const url = getModelURL();
-    const modelName = $("modelSel").selectedOptions[0].text;
-    modelPromise = (async () => {
-      const resp = await fetch(url);
-      if(!resp.ok) throw new Error("Model HTTP " + resp.status);
-      const buf = new Uint8Array(await resp.arrayBuffer());
+    log("🔎 Fetching model: " + url);
+    const resp = await fetch(url, { cache: "no-store" });
+    if(!resp.ok) throw new Error("Model HTTP " + resp.status);
+    const buf = new Uint8Array(await resp.arrayBuffer());
 
-      // Basic ZIP magic check
-      const ok = (buf.length >= 4 && buf[0]===0x50 && buf[1]===0x4B && buf[2]===0x03 && buf[3]===0x04);
-      if(!ok) log("⚠️ Model doesn't look like a ZIP (npz) – continuing anyway.");
+    // Basic ZIP magic check
+    const ok = (buf.length >= 4 && buf[0]===0x50 && buf[1]===0x4B && buf[2]===0x03 && buf[3]===0x04);
+    if(!ok) log("⚠️ Model doesn't look like a ZIP (npz) – continuing anyway.");
 
-      FS.writeFile(modelPath, buf);
-      modelFresh = true;
-      log(`🧬 Model: ${modelName} (${(buf.length/1e6).toFixed(2)} MB)`);
-    })();
-    try {
-      await modelPromise;
-    } finally {
-      modelPromise = null;
-    }
+    FS.writeFile(modelPath, buf);
+    modelFresh = true;
+    log(`✅ Model cached at ${modelPath} (${(buf.length/1e6).toFixed(2)} MB)`);
   }
 
   // ---------- RUN ----------
@@ -300,7 +288,6 @@ layout: post
 
     const runT0 = performance.now();
     let currentMsg = "Starting…";
-    // Tick the elapsed time in the status line while we wait.
     const tickTimer = setInterval(()=>{
       $("procStatus").textContent = `${currentMsg} • ${fmtElapsed(performance.now() - runT0)}`;
     }, 200);
@@ -326,8 +313,18 @@ def stage(pct, msg):
     print(f"__STAGE__:{pct}:{msg}")
     sys.stdout.flush()
 
-# 1) Load model FIRST so we know which input columns are worth parsing.
-stage(10, "Reading model")
+def read_any(path):
+    try:
+        return pd.read_csv(gzip.open(path,'rt'), index_col=0)
+    except Exception:
+        return pd.read_csv(path, index_col=0)
+
+stage(10, "Loading input")
+X = read_any('/tmp_input')
+# Optional guard against non-numeric columns:
+# X = X.apply(pd.to_numeric, errors='coerce').fillna(0.0)
+
+stage(20, "Reading model")
 def load_npz_any(path):
     try:
         return np.load(path, allow_pickle=True)
@@ -339,68 +336,43 @@ def load_npz_any(path):
             raise EOFError(f"Failed to read model as npz. Direct: {e1}; Gzip-fallback: {e2}")
 _npz = load_npz_any('/tmp_model')
 
-feat_raw   = (_npz['features'] if 'features' in _npz.files else _npz['features_']).astype(str)
-feat_lower = np.char.lower(feat_raw)
-feat_set   = set(feat_lower.tolist())
-coef_full  = np.asarray(_npz['coef_'],        dtype=np.float32)
-intercept  = np.asarray(_npz['intercept_'],   dtype=np.float32)
-classes_   = _npz['classes_']
-mean_full  = np.asarray(_npz['scaler_mean_'], dtype=np.float32)
-scale_full = np.asarray(_npz['scaler_scale_'],dtype=np.float32)
-with_mean  = bool(_npz['with_mean'].flat[0]) if _npz['with_mean'].size else True
+stage(40, "Preparing features")
+loaded = {
+    'coef_': _npz['coef_'],
+    'intercept_': _npz['intercept_'],
+    'classes_': _npz['classes_'],
+    'features': _npz['features'] if 'features' in _npz.files else _npz['features_'],
+    'scaler_mean_': _npz['scaler_mean_'],
+    'scaler_scale_': _npz['scaler_scale_'],
+    'with_mean': bool(_npz['with_mean'].flat[0]) if _npz['with_mean'].size else True,
+}
 
-# 2) Peek the CSV header (handle gzip via magic bytes) to pick matching columns.
-stage(20, "Scanning input")
-with open('/tmp_input', 'rb') as fh:
-    magic = fh.read(2)
-is_gz = (magic == b'\\x1f\\x8b')
-_open_text = (lambda p: gzip.open(p, 'rt')) if is_gz else (lambda p: open(p, 'rt'))
-with _open_text('/tmp_input') as fh:
-    header_line = fh.readline()
-header_cols = header_line.rstrip().split(',')
-if len(header_cols) < 2:
-    raise ValueError('Input header has fewer than 2 columns.')
-
-# Keep the index column (pos 0) + any column whose name is a model feature.
-keep_idx = [0] + [i for i, c in enumerate(header_cols[1:], 1) if c.lower() in feat_set]
-if len(keep_idx) == 1:
+feat_lower = np.char.lower(loaded['features'].astype(str))
+cols_lower = {str(c).lower(): str(c) for c in X.columns.astype(str)}
+present = [cols_lower[g] for g in feat_lower if g in cols_lower]
+if len(present) == 0:
     raise ValueError('No overlapping features between input and model.')
 
-# 3) Parse only the kept columns, directly into float32.
-stage(30, "Loading input")
-X = pd.read_csv(
-    '/tmp_input',
-    index_col=0,
-    usecols=keep_idx,
-    compression=('gzip' if is_gz else None),
-)
-# Force float32 (cheaper than re-parsing; dict-based dtype= is brittle with positional usecols)
-X = X.astype(np.float32, copy=False)
+ordered_cols, keep_mask = [], []
+for g in feat_lower:
+    if g in cols_lower:
+        ordered_cols.append(cols_lower[g]); keep_mask.append(True)
+    else:
+        keep_mask.append(False)
 
-# 4) Align remaining columns to model feature order; gather model slices.
-stage(50, "Preparing features")
-X.columns = X.columns.astype(str).str.lower()
-keep_mask = np.isin(feat_lower, X.columns.values)
-if not keep_mask.any():
-    raise ValueError('No overlapping features between input and model.')
-
-coef_keep  = coef_full[:, keep_mask]
-mean_keep  = mean_full[keep_mask]
-scale_keep = scale_full[keep_mask]
-X2 = X.reindex(columns=feat_lower[keep_mask]).values
-if X2.dtype != np.float32:
-    X2 = X2.astype(np.float32, copy=False)
-
-stage(60, "Scaling input")
-inv_scale = (np.float32(1.0) / (scale_keep + np.float32(1e-8))).astype(np.float32, copy=False)
-if with_mean:
-    X2 = (X2 - mean_keep) * inv_scale
+stage(55, "Scaling input")
+coef_keep  = loaded['coef_'][:, keep_mask]
+mean_keep  = loaded['scaler_mean_'][keep_mask]
+scale_keep = loaded['scaler_scale_'][keep_mask]
+X2 = X[ordered_cols].values.astype('float32')
+if loaded['with_mean']:
+    X2 = (X2 - mean_keep) / (scale_keep + 1e-8)
 else:
-    X2 = X2 * inv_scale
-np.clip(X2, None, np.float32(10.0), out=X2)
+    X2 = X2 / (scale_keep + 1e-8)
+X2[X2 > 10] = 10
 
 stage(75, "Computing logits")
-logits = X2 @ coef_keep.T + intercept
+logits = X2 @ coef_keep.T + loaded['intercept_']
 if logits.ndim == 1:
     logits = np.column_stack([-logits, logits])
 
@@ -408,7 +380,7 @@ stage(85, "Softmax & labels")
 z = logits - logits.max(axis=1, keepdims=True)
 e = np.exp(z); P = e / e.sum(axis=1, keepdims=True)
 idx = np.argmax(P, axis=1)
-labels = classes_[idx]
+labels = loaded['classes_'][idx]
 top = P[np.arange(P.shape[0]), idx]
 part = np.partition(P, -2, axis=1)[:, -2:]
 cert = part[:,1] - part[:,0]
@@ -416,7 +388,7 @@ cert = part[:,1] - part[:,0]
 stage(95, "Writing output")
 out = pd.DataFrame({'cell_id': X.index, 'predicted_label': labels, 'conf_score': top, 'cert_score': cert})
 out.to_csv('/pred.csv', index=False)
-print('DONE', X.shape, len(classes_), 'features_used=', int(keep_mask.sum()))
+print('DONE', X.shape, len(loaded['classes_']))
 `;
 
     // capture staged progress
@@ -463,11 +435,8 @@ print('DONE', X.shape, len(classes_), 'features_used=', int(keep_mask.sum()))
     }
   });
 
-  log("Flow → 1) Boot  2) Load file  3) Model  4) Run");
+  log("Flow → 1) Boot  2) Load file  3) Run");
   log("🧭 Default model: " + $("modelSel").selectedOptions[0].text + " → " + getModelURL());
-
-  // Auto-boot: this script is inline to the annotate page, so it only runs here.
-  $("bootBtn").click();
 })();
 </script>
 
