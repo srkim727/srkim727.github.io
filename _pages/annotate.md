@@ -20,16 +20,31 @@ layout: post
   .meta-panel ol{margin:6px 0 0 20px}
   .meta-panel ul{margin:4px 0 0 18px}
   .meta-panel li{margin:2px 0}
+
+  /* Make the Model <select> match the other control buttons */
+  .ctrl-row button,
+  .ctrl-row select{
+    font: inherit;
+    height: 28px;
+    padding: 0 10px;
+    box-sizing: border-box;
+    line-height: normal;
+  }
 </style>
 
 <!-- Controls row -->
-<div style="display:flex;flex-wrap:wrap;gap:10px;margin-bottom:8px;align-items:center;">
+<div class="ctrl-row" style="display:flex;flex-wrap:wrap;gap:10px;margin-bottom:8px;align-items:center;">
   <button id="bootBtn" type="button">1:boot</button>
+
+  <label for="csvInput" style="display:inline-block;">
+    <input type="file" id="csvInput" accept=".csv,.csv.gz,text/csv" style="display:none;">
+    <button id="loadFileBtn" type="button" disabled>2:load file</button>
+  </label>
 
   <!-- Model selector -->
   <label style="display:flex;gap:6px;align-items:center;">
-    <span style="font-size:13px;color:#555;">Model</span>
-    <select id="modelSel" style="padding:4px 6px;">
+    <span style="font-size:13px;color:#555;">3:model</span>
+    <select id="modelSel">
       <option value="level1_Whole_model_portable.npz" selected>Whole (level1)</option>
       <option value="level2_B_mature_model_portable.npz">B_mature (level2)</option>
       <option value="level2_Dendritic_classical_model_portable.npz">Dendritic_classical (level2)</option>
@@ -48,12 +63,7 @@ layout: post
     <input type="checkbox" id="safe"> Safe mode
   </label>
 
-  <label for="csvInput" style="display:inline-block;">
-    <input type="file" id="csvInput" accept=".csv,.csv.gz,text/csv" style="display:none;">
-    <button id="loadFileBtn" type="button" disabled>2:load file</button>
-  </label>
-
-  <button id="runBtn" type="button" disabled>3:run</button>
+  <button id="runBtn" type="button" disabled>4:run</button>
 </div>
 
 <!-- Uploading progress -->
@@ -426,7 +436,7 @@ print('DONE', X.shape, len(loaded['classes_']))
     }
   });
 
-  log("Flow → 1) Boot  2) Load file  3) Run");
+  log("Flow → 1) Boot  2) Load file  3) Model  4) Run");
   log("🧭 Default model: " + $("modelSel").selectedOptions[0].text + " → " + getModelURL());
 
   // Auto-boot: this script is inline to the annotate page, so it only runs here.
