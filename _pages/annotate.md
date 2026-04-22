@@ -88,7 +88,7 @@ layout: post
 <div class="meta-panel">
   <strong>This page conducts cell annotations on the uploaded gene expression files</strong>
   <div style="margin:4px 0 8px 0; font-size:13px; color:#555;">
-    This online-page is optimized small number of cells <strong> (~1,000 cells) </strong>. This webpage uses users' resources, so performances can be limited by the user environment. For better and faster performance, use
+    This online-page is optimized for small number (~few thousand) of cells. This webpage uses users' resources, so performances can be limited by the user environment. For better and faster performance, use
     <a href="https://github.com/srkim727/pangeapy" target="_blank" rel="noopener">pangeapy API</a>.
   </div>
   <ol>
@@ -375,8 +375,14 @@ layout: post
     const f = e.target.files && e.target.files[0];
     if(!f){ return; }
     try{
+      // Reset any leftover state from a previous run
       $("uploadProg").value = 0;
       $("uploadStatus").textContent = "Reading…";
+      $("procProg").value = 0;
+      $("procStatus").textContent = "Idle";
+      $("downloadWrap").style.display = "none";
+      if (resultUrl) { URL.revokeObjectURL(resultUrl); resultUrl = null; }
+
       fileBytes = await readFileWithProgress(f);
       fileName = f.name;
       uploaded = true;
@@ -387,6 +393,7 @@ layout: post
     }catch(err){
       uploaded = false;
       fileBytes = null;
+      fileName = "";
       $("uploadProg").value = 0;
       $("uploadStatus").textContent = "❌ Upload failed";
       setDisabled("runBtn", true);
@@ -473,6 +480,10 @@ _npz = None  # release the ZIP reader
       $("procProg").value = pct;
       $("procStatus").textContent = `${msg} • ${fmtElapsed(performance.now() - runT0)}`;
     };
+
+    // Clear any previous result/download from a prior Run
+    $("downloadWrap").style.display = "none";
+    if (resultUrl) { URL.revokeObjectURL(resultUrl); resultUrl = null; }
 
     setStage(5, "Starting…");
     log("▶️ Running annotation …");
@@ -598,13 +609,21 @@ print('DONE', n_cells, 'cells,', len(_classes), 'classes, features_matched=', ma
       $("procProg").value = 100;
       $("procStatus").textContent = `Complete • ${elapsed}`;
 
+      // Build output filename: pred_{input_stem}.csv (strip .csv / .gz / .csv.gz)
+      const stem = (fileName || "input")
+        .replace(/\.(csv\.gz|gz|csv)$/i, "")
+        .replace(/[\s/\\]+/g, "_") || "input";
+      const outName = `pred_${stem}.csv`;
+
       const bytes = FS.readFile("/pred.csv");
       const blob  = new Blob([bytes], { type: "text/csv" });
       if(resultUrl){ URL.revokeObjectURL(resultUrl); }
       resultUrl = URL.createObjectURL(blob);
-      $("downloadWrap").style.display = "block";
       $("downloadLink").href = resultUrl;
-      log(`✅ pred.csv ready in ${elapsed}. Use the link above to download.`);
+      $("downloadLink").download = outName;
+      $("downloadLink").textContent = `Download ${outName}`;
+      $("downloadWrap").style.display = "block";
+      log(`✅ ${outName} ready in ${elapsed}. Use the link above to download.`);
     } catch(err) {
       const elapsed = fmtElapsed(performance.now() - runT0);
       $("procStatus").textContent = `❌ Error • ${elapsed}`;
