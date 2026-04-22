@@ -86,9 +86,9 @@ layout: post
 
 <!-- ✨ Annotations moved here: below controls & progress, just above the Log window -->
 <div class="meta-panel">
-  <strong>This page conducts cell annotations on the uploaded gene expression files></strong>
+  <strong>This page conducts cell annotations on the uploaded gene expression files</strong>
   <div style="margin:4px 0 8px 0; font-size:13px; color:#555;">
-    This online-page is optimized small number of cells. Limited performance for datasets containing more than thousands of cells. For better and faster performance, use
+    This online-page is optimized small number of cells <strong> (~1,000 cells) </strong>. This webpage uses users' resources, so performances can be limited by the user environment. For better and faster performance, use
     <a href="https://github.com/srkim727/pangeapy" target="_blank" rel="noopener">pangeapy API</a>.
   </div>
   <ol>
@@ -183,30 +183,23 @@ layout: post
     });
   }
 
-  // Decompress gzip (if magic bytes present) and decode to text.
-  async function decompressAndDecode(bytes){
+  // Decompress gzip (if magic bytes present) and return a Blob.
+  // Avoids materializing a giant string, which hits V8's ~512 MB single-string limit.
+  async function decompressToBlob(bytes){
     const isGz = bytes.length >= 2 && bytes[0] === 0x1f && bytes[1] === 0x8b;
     if(!isGz){
-      return new TextDecoder('utf-8').decode(bytes);
+      return new Blob([bytes], {type: 'text/csv'});
     }
     const ds = new DecompressionStream('gzip');
     const stream = new Blob([bytes]).stream().pipeThrough(ds);
-    return await new Response(stream).text();
+    return await new Response(stream).blob();
   }
 
-  // Count newlines without allocating a big array.
-  function countLines(text){
-    let count = 0;
-    for(let i = 0; i < text.length; i++){
-      if(text.charCodeAt(i) === 10) count++;
-    }
-    return count;
-  }
-
-  // Parse a CSV expression matrix (cell × gene) into a Float32Array.
-  async function parseCsvInJs(text, onRowProgress){
+  // Parse a CSV expression matrix (cell × gene) Blob into a Float32Array.
+  // Uses PapaParse's chunk mode so FileReader streams the blob in pieces —
+  // never holds the full decompressed text as a single JS string.
+  async function parseCsvInJs(blob, onRowProgress){
     await waitForGlobal("Papa", 10000);
-    const estRows = Math.max(1, countLines(text)); // includes header + possible trailing
     return new Promise((resolve, reject) => {
       const cellIds = [];
       let colNames = null;
@@ -216,34 +209,39 @@ layout: post
       let xFlat = null;
       let lastTick = performance.now();
 
-      Papa.parse(text, {
+      Papa.parse(blob, {
         header: false,
         skipEmptyLines: true,
         fastMode: true,
         delimiter: ',',
-        step: (row) => {
-          const data = row.data;
-          if (colNames === null) {
-            colNames = data.slice(1);
-            nCols = colNames.length;
-            capacity = estRows + 4;
-            xFlat = new Float32Array(capacity * nCols);
-            return;
+        worker: false,
+        chunk: (results) => {
+          const rows = results.data;
+          for (let r = 0; r < rows.length; r++) {
+            const row = rows[r];
+            if (colNames === null) {
+              colNames = row.slice(1);
+              nCols = colNames.length;
+              capacity = 2048;
+              xFlat = new Float32Array(capacity * nCols);
+              continue;
+            }
+            if (row.length < nCols + 1) continue; // skip short/malformed row
+            if (rowCount >= capacity) {
+              const newCap = Math.ceil(capacity * 1.5) + 1;
+              const newX = new Float32Array(newCap * nCols);
+              newX.set(xFlat);
+              xFlat = newX;
+              capacity = newCap;
+            }
+            cellIds.push(row[0]);
+            const off = rowCount * nCols;
+            for (let i = 0; i < nCols; i++) {
+              const v = +row[i + 1];
+              xFlat[off + i] = (v === v) ? v : 0;  // v === v is false only for NaN
+            }
+            rowCount++;
           }
-          if (rowCount >= capacity) {
-            const newCap = Math.ceil(capacity * 1.5) + 1;
-            const newX = new Float32Array(newCap * nCols);
-            newX.set(xFlat);
-            xFlat = newX;
-            capacity = newCap;
-          }
-          cellIds.push(data[0]);
-          const off = rowCount * nCols;
-          for (let i = 0; i < nCols; i++) {
-            const v = +data[i + 1];
-            xFlat[off + i] = (v === v) ? v : 0;  // v === v is false only for NaN
-          }
-          rowCount++;
           const now = performance.now();
           if (onRowProgress && now - lastTick > 100) {
             lastTick = now;
@@ -415,10 +413,10 @@ layout: post
       }
 
       setStage(20, "Decoding CSV");
-      const text = await decompressAndDecode(fileBytes);
+      const csvBlob = await decompressToBlob(fileBytes);
 
       setStage(30, "Parsing CSV");
-      const parsed = await parseCsvInJs(text, (n) => {
+      const parsed = await parseCsvInJs(csvBlob, (n) => {
         currentMsg = `Parsing CSV (${n.toLocaleString()} rows)`;
       });
       log(`📊 Parsed ${parsed.nCells.toLocaleString()} × ${parsed.nCols.toLocaleString()}`);
