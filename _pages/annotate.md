@@ -95,7 +95,7 @@ layout: post
         <li>Raw expression must be <code>1e4</code>-normalized &amp; <code>log1p</code>-transformed<br>
             <small>normalized up to 10,000 counts per cell, then log-transformed with 1 pseudocount</small>
         </li>
-        <li>File format: <code>.csv</code> or </strong><code>.csv.gz (recommended for faster performance)</code><strong></li>
+        <li>File format: <code>.csv</code> or <strong><code>.csv.gz (recommended for faster performance)</code></strong></li>
       </ul>
     </li>
     <li><strong>Cell annotation</strong>
@@ -200,9 +200,8 @@ layout: post
     modelFresh = false;
     modelPromise = null;
     setDisabled("runBtn", !uploaded || !libsReady);
-    log("🧭 Model selected: " + $("modelSel").selectedOptions[0].text + " → " + getModelURL());
     if (libsReady) {
-      ensureModelInFS().catch(err => log("⚠️ Model prefetch: " + (err?.message || err)));
+      ensureModelInFS().catch(err => log("❌ Model prefetch: " + (err?.message || err)));
     }
   });
 
@@ -210,35 +209,20 @@ layout: post
   $("bootBtn").addEventListener("click", async ()=>{
     try{
       setDisabled("bootBtn", true);
-      log("⏳ Boot: waiting for pyodide.js …");
       await waitForGlobal("loadPyodide", 20000);
-
-      log("⏳ Boot: initializing Pyodide…");
       pyodide = await globalThis.loadPyodide({ indexURL: "https://cdn.jsdelivr.net/pyodide/v0.26.3/full/" });
       FS = pyodide.FS;
       pyReady = true;
-      log("✅ Pyodide " + pyodide.version + " loaded.");
-
-      log("⏳ Boot: loading packages (numpy, pandas) …");
       await pyodide.loadPackage(["numpy","pandas"]);
-      log("✅ Packages loaded.");
-
-      log("⏳ Boot: importing libs & running sanity check …");
-      const pingOut = await pyodide.runPythonAsync(`
-import numpy as np, pandas as pd, gzip, io, json, os
-print("numpy", np.__version__)
-print("pandas", pd.__version__)
-print("sum:", int(np.array([1,2,3]).sum()))
-"OK"
-      `);
+      await pyodide.runPythonAsync(`import numpy as np, pandas as pd, gzip, io, json, os`);
       libsReady = true;
-      log("✅ Sanity check OK: " + pingOut);
+      log(`✅ Ready (Pyodide ${pyodide.version})`);
 
       setDisabled("loadFileBtn", false);
       setDisabled("runBtn", !uploaded);
 
       // Prefetch the currently-selected model in the background
-      ensureModelInFS().catch(err => log("⚠️ Model prefetch: " + (err?.message || err)));
+      ensureModelInFS().catch(err => log("❌ Model prefetch: " + (err?.message || err)));
     }catch(err){
       log("❌ Boot failed: " + (err?.message || err));
       setDisabled("bootBtn", false);
@@ -257,7 +241,6 @@ print("sum:", int(np.array([1,2,3]).sum()))
     const f = e.target.files && e.target.files[0];
     if(!f){ return; }
     try{
-      log("📁 Selected: " + f.name);
       $("uploadProg").value = 0;
       $("uploadStatus").textContent = "Reading…";
       const bytes = await readFileWithProgress(f);
@@ -265,9 +248,8 @@ print("sum:", int(np.array([1,2,3]).sum()))
       uploaded = true;
       $("uploadProg").value = 100;
       $("uploadStatus").textContent = `✅ Upload complete • ${(bytes.length/1e6).toFixed(2)} MB`;
-      log(`📤 Loaded into FS → /tmp_input (${(bytes.length/1e6).toFixed(2)} MB)`);
+      log(`📁 ${f.name} (${(bytes.length/1e6).toFixed(2)} MB)`);
       setDisabled("runBtn", !libsReady);
-      if(!libsReady) log("ℹ️ Boot first, then Run will enable.");
     }catch(err){
       uploaded = false;
       $("uploadProg").value = 0;
@@ -282,7 +264,7 @@ print("sum:", int(np.array([1,2,3]).sum()))
     if (modelFresh) return;
     if (modelPromise) return modelPromise;
     const url = getModelURL();
-    log("🔎 Fetching model: " + url);
+    const modelName = $("modelSel").selectedOptions[0].text;
     modelPromise = (async () => {
       const resp = await fetch(url);
       if(!resp.ok) throw new Error("Model HTTP " + resp.status);
@@ -294,7 +276,7 @@ print("sum:", int(np.array([1,2,3]).sum()))
 
       FS.writeFile(modelPath, buf);
       modelFresh = true;
-      log(`✅ Model cached at ${modelPath} (${(buf.length/1e6).toFixed(2)} MB)`);
+      log(`🧬 Model: ${modelName} (${(buf.length/1e6).toFixed(2)} MB)`);
     })();
     try {
       await modelPromise;
