@@ -12,47 +12,171 @@ excerpt: ""
 <script defer src="https://cdn.jsdelivr.net/pyodide/v0.26.3/full/pyodide.js"></script>
 
 <style>
-  .meta-panel{
-    background:#f8f9fb;border:1px solid #e5e7eb;border-radius:8px;
-    padding:10px 12px;margin:8px 0 12px 0;color:#111;font-size:14px;
+  .pg-wrap{
+    --accent:#3b82f6; --accent-dark:#2563eb; --accent-light:#dbeafe;
+    --ok:#10b981; --ok-dark:#059669; --ok-light:#ecfdf5; --ok-border:#a7f3d0;
+    --err:#ef4444; --err-light:#fef2f2; --err-border:#fecaca;
+    --muted:#6b7280; --text:#111827;
+    --border:#e5e7eb; --border-strong:#d1d5db;
+    --bg-panel:#fafbfc;
+    max-width:780px;margin:14px auto;
   }
-  .meta-panel code{background:#eef2f7;padding:1px 4px;border-radius:4px}
-  .meta-panel small{color:#666}
+  .pg-wrap .panel{
+    background:var(--bg-panel);border:1px solid var(--border);
+    border-radius:10px;padding:16px 18px;
+  }
+  .pg-wrap .ctrl-row{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-bottom:14px;}
+  .pg-wrap .btn{
+    font:inherit;height:32px;padding:0 14px;box-sizing:border-box;
+    border:1px solid var(--border);background:#fff;color:var(--text);
+    border-radius:6px;cursor:pointer;line-height:1;
+    transition:background .15s,border-color .15s,box-shadow .15s,color .15s;
+  }
+  .pg-wrap .btn:hover:not(:disabled){border-color:var(--border-strong);box-shadow:0 1px 2px rgba(0,0,0,.05);}
+  .pg-wrap .btn:disabled{color:#9ca3af;background:#f3f4f6;border-color:var(--border);cursor:not-allowed;}
+  .pg-wrap .btn-primary{background:var(--accent);border-color:var(--accent);color:#fff;}
+  .pg-wrap .btn-primary:hover:not(:disabled){background:var(--accent-dark);border-color:var(--accent-dark);}
+  .pg-wrap .btn-primary:disabled{background:#bfdbfe;border-color:#bfdbfe;color:#fff;}
+  .pg-wrap .inline-ctl{display:flex;gap:6px;align-items:center;font-size:13px;color:var(--muted);}
+  .pg-wrap .inline-ctl select,
+  .pg-wrap .inline-ctl input[type="text"]{
+    font:inherit;height:32px;padding:0 10px;box-sizing:border-box;
+    border:1px solid var(--border);background:#fff;color:var(--text);
+    border-radius:6px;
+  }
+  .pg-wrap .inline-ctl select{padding:0 28px 0 10px;cursor:pointer;}
+  .pg-wrap .inline-ctl select:hover,
+  .pg-wrap .inline-ctl input[type="text"]:focus{border-color:var(--border-strong);outline:none;}
+
+  /* Stepper */
+  .pg-wrap .stages{display:flex;align-items:center;gap:8px;margin:6px 0 10px 0;font-size:12px;color:var(--muted);}
+  .pg-wrap .stage{display:flex;align-items:center;gap:6px;}
+  .pg-wrap .stage-dot{
+    width:14px;height:14px;border-radius:50%;background:#fff;
+    border:2px solid #e5e7eb;display:flex;align-items:center;justify-content:center;
+    font-size:9px;color:#fff;line-height:1;transition:all .2s;
+  }
+  .pg-wrap .stage.active .stage-dot{border-color:var(--accent);box-shadow:0 0 0 4px var(--accent-light);}
+  .pg-wrap .stage.done .stage-dot{background:var(--ok);border-color:var(--ok);}
+  .pg-wrap .stage.done .stage-dot::after{content:"✓";color:#fff;font-weight:700;}
+  .pg-wrap .stage.err .stage-dot{background:var(--err);border-color:var(--err);}
+  .pg-wrap .stage.err .stage-dot::after{content:"×";color:#fff;font-weight:700;font-size:11px;}
+  .pg-wrap .stage.active .stage-label,
+  .pg-wrap .stage.done .stage-label,
+  .pg-wrap .stage.err .stage-label{color:var(--text);font-weight:500;}
+  .pg-wrap .stage-sep{flex:1;height:1px;background:var(--border);}
+
+  /* Progress bar */
+  .pg-wrap progress#progBar{
+    width:100%;height:6px;border:none;background:#f3f4f6;border-radius:3px;overflow:hidden;display:block;
+  }
+  .pg-wrap progress#progBar::-webkit-progress-bar{background:#f3f4f6;border-radius:3px;}
+  .pg-wrap progress#progBar::-webkit-progress-value{background:var(--accent);border-radius:3px;transition:width .2s;}
+  .pg-wrap progress#progBar::-moz-progress-bar{background:var(--accent);border-radius:3px;}
+  .pg-wrap .status-line{font-size:12px;color:var(--muted);margin:6px 0 0 0;min-height:1em;}
+
+  /* Result card (plot output) */
+  .pg-wrap .result-card{
+    margin-top:14px;padding:12px 14px;border-radius:8px;
+    background:var(--ok-light);border:1px solid var(--ok-border);
+  }
+  .pg-wrap .result-card.err{background:var(--err-light);border-color:var(--err-border);}
+  .pg-wrap .result-card .result-head{
+    display:flex;align-items:center;justify-content:space-between;gap:12px;
+    flex-wrap:wrap;margin-bottom:10px;
+  }
+  .pg-wrap .result-summary{font-size:14px;color:var(--text);font-weight:500;flex:1;min-width:180px;}
+  .pg-wrap .result-summary .stat{color:var(--muted);font-weight:400;font-size:12px;margin-left:6px;}
+  .pg-wrap .btn-download{
+    background:var(--ok);border-color:var(--ok);color:#fff;padding:0 16px;height:34px;
+    display:inline-flex;align-items:center;gap:6px;text-decoration:none;font-weight:500;
+    border:1px solid var(--ok);border-radius:6px;transition:background .15s,border-color .15s;
+  }
+  .pg-wrap .btn-download:hover{background:var(--ok-dark);border-color:var(--ok-dark);color:#fff;text-decoration:none;}
+  .pg-wrap .plot-img{max-width:100%;border:1px solid var(--border);border-radius:6px;background:#fff;display:block;}
+
+  /* Info meta-panel */
+  .pg-wrap .meta-panel{
+    background:var(--bg-panel);border:1px solid var(--border);border-radius:10px;
+    padding:14px 16px;margin:14px 0 0 0;color:var(--text);font-size:13px;
+  }
+  .pg-wrap .meta-panel code{background:#eef2f7;padding:1px 4px;border-radius:4px;}
+  .pg-wrap .meta-panel small{color:var(--muted);}
+
+  /* Log */
+  .pg-wrap details.log-wrap{margin-top:12px;}
+  .pg-wrap details.log-wrap summary{cursor:pointer;font-size:12px;color:var(--muted);padding:4px 0;}
+  .pg-wrap details.log-wrap summary:hover{color:var(--text);}
+
+  @media (max-width:620px){
+    .pg-wrap{margin:8px;}
+    .pg-wrap .panel{padding:12px;}
+    .pg-wrap .stages{font-size:11px;}
+  }
 </style>
 
-<div style="display:flex;gap:10px;flex-wrap:wrap;margin:12px 0;">
-  <button id="bootBtn" type="button">1: boot</button>
-  <button id="assetsBtn" type="button" disabled>2: load assets</button>
+<div class="pg-wrap">
 
-  <label>Cell:
-    <select id="cellSelect" style="width:180px;">
-      <option selected>Whole</option>
-      <option>B_mature</option>
-      <option>Dendritic_classical</option>
-      <option>Ductal</option>
-      <option>Endothelial</option>
-      <option>Fibroblast</option>
-      <option>Macrophage</option>
-      <option>Monocyte</option>
-      <option>Mural</option>
-      <option>Squamous</option>
-      <option>T&NK</option>
-    </select>
-  </label>
+<!-- Interactive panel -->
+<div class="panel">
+  <div class="ctrl-row">
+    <button class="btn" id="bootBtn" type="button">1:boot</button>
+    <button class="btn" id="assetsBtn" type="button" disabled>2:load assets</button>
 
-  <label>Genes (comma-sep):
-    <input id="geneInput" type="text" value="CD3D,KRT5,CDH19,PTPRC,CD79A,MS4A1" style="width:360px;">
-  </label>
-  <button id="runBtn" type="button" disabled>3: run plot</button>
+    <label class="inline-ctl">
+      <span>Cell</span>
+      <select id="cellSelect" style="min-width:160px;">
+        <option selected>Whole</option>
+        <option>B_mature</option>
+        <option>Dendritic_classical</option>
+        <option>Ductal</option>
+        <option>Endothelial</option>
+        <option>Fibroblast</option>
+        <option>Macrophage</option>
+        <option>Monocyte</option>
+        <option>Mural</option>
+        <option>Squamous</option>
+        <option>T&NK</option>
+      </select>
+    </label>
+
+    <label class="inline-ctl" style="flex:1;min-width:240px;">
+      <span>Genes</span>
+      <input id="geneInput" type="text" value="CD3D,KRT5,CDH19,PTPRC,CD79A,MS4A1" style="flex:1;min-width:200px;">
+    </label>
+
+    <button class="btn btn-primary" id="runBtn" type="button" disabled>3:run plot</button>
+  </div>
+
+  <!-- Stepper: Boot → Data → Plot -->
+  <div class="stages" id="stages">
+    <span class="stage" id="stage-boot"><span class="stage-dot"></span><span class="stage-label">Boot</span></span>
+    <span class="stage-sep"></span>
+    <span class="stage" id="stage-data"><span class="stage-dot"></span><span class="stage-label">Data</span></span>
+    <span class="stage-sep"></span>
+    <span class="stage" id="stage-plot"><span class="stage-dot"></span><span class="stage-label">Plot</span></span>
+  </div>
+
+  <progress id="progBar" max="100" value="0"></progress>
+  <div class="status-line" id="progStatus">Idle</div>
+
+  <!-- Result card (plot output + download) -->
+  <div class="result-card" id="resultCard" style="display:none;">
+    <div class="result-head">
+      <div class="result-summary" id="resultSummary"></div>
+      <a class="btn-download" id="downloadPNG" download="plot.png" style="display:none;">⬇ Download PNG</a>
+    </div>
+    <img class="plot-img" id="plotImg" alt="plot" style="display:none;">
+  </div>
 </div>
 
-<!-- Annotation panel -->
+<!-- Info panel -->
 <div class="meta-panel">
-  <strong>Gene expression patterns of the cell types.</strong>
+  <strong>Gene expression patterns of the cell types</strong>
   <p style="margin:6px 0 8px 0;">This page shows various information including</p>
   <ol style="margin:0 0 0 18px;">
-    <li style="margin:2px 0;">Ratio of cells expressing each gene (dot sizes) </li>
-    <li style="margin:2px 0;">Average expression level of each gene (colors) </li>
+    <li style="margin:2px 0;">Ratio of cells expressing each gene (dot sizes)</li>
+    <li style="margin:2px 0;">Average expression level of each gene (colors)</li>
   </ol>
   <p style="margin:8px 0 0 0;">
     Expression levels were evaluated in the representative cell atlases
@@ -63,26 +187,16 @@ excerpt: ""
   </div>
 </div>
 
-<!-- Processing progress -->
-<div style="margin:8px 0 4px 0; font-size:13px; color:#555;">Processing</div>
-<progress id="procProg" max="100" value="0" style="width:100%;"></progress>
-<div id="procStatus" style="font-size:12px;color:#777;margin:4px 0 8px 0;">Idle</div>
-
-<!-- Output image -->
-<div id="imgWrap" style="display:none;margin:10px 0;">
-  <img id="plotImg" alt="plot" style="max-width:100%;border:1px solid #e5e7eb;border-radius:6px;">
-  <div style="margin-top:6px;">
-    <a id="downloadPNG" download="plot.png">Download PNG</a>
-  </div>
-</div>
-
-<details open style="margin-top:10px;">
-  <summary><strong>Log</strong></summary>
+<!-- Log (collapsed by default) -->
+<details class="log-wrap">
+  <summary>Log</summary>
   <pre id="log" style="
-    background:#0a0f17;color:#e8eef7;padding:6px;border-radius:6px;overflow:auto;height:260px;
-    white-space:pre-wrap;font-size:11px;line-height:1.25;font-family:ui-monospace,Menlo,Consolas,monospace;">
+    background:#0a0f17;color:#e8eef7;padding:8px 10px;border-radius:6px;overflow:auto;height:200px;
+    white-space:pre-wrap;font-size:11px;line-height:1.3;font-family:ui-monospace,Menlo,Consolas,monospace;margin-top:6px;">
   </pre>
 </details>
+
+</div><!-- /.pg-wrap -->
 
 <script>
 (function(){
@@ -100,8 +214,24 @@ excerpt: ""
     el.scrollTop = el.scrollHeight;
   }
   function stage(pct, msg){
-    $("procProg").value = pct;
-    $("procStatus").textContent = msg;
+    $("progBar").value = pct;
+    $("progStatus").textContent = msg;
+  }
+  function setStageState(name, state){
+    const el = $("stage-" + name); if(!el) return;
+    el.classList.remove("active","done","err");
+    if(state && state !== "pending") el.classList.add(state);
+  }
+  function resetStages(){
+    setStageState("boot","pending"); setStageState("data","pending"); setStageState("plot","pending");
+  }
+  function hideResultCard(){
+    $("resultCard").style.display = "none";
+    $("resultCard").classList.remove("err");
+    $("resultSummary").textContent = "";
+    $("plotImg").style.display = "none";
+    $("plotImg").removeAttribute("src");
+    $("downloadPNG").style.display = "none";
   }
   async function fetchToFS(path, fsPath){
     const u = (path.includes("?") ? path : path + "?t=" + Date.now()); // bust cache
@@ -115,8 +245,10 @@ excerpt: ""
     try{ pyodide.FS.stat(path); return true; }catch(_){ return false; }
   }
   function clearImage(){
-    $("imgWrap").style.display = "none";
+    $("plotImg").style.display = "none";
     $("plotImg").removeAttribute("src");
+    $("resultCard").style.display = "none";
+    $("downloadPNG").style.display = "none";
   }
 
   // --- state ---
@@ -134,6 +266,8 @@ excerpt: ""
       setDisabled("assetsBtn", true);
       setDisabled("runBtn", true);
       clearImage();
+      setStageState("data","active");
+      setStageState("plot","pending");
 
       // ensure fdic is available once
       if(!fdicLoaded || !existsInFS("/fdic.pkl")){
@@ -165,12 +299,14 @@ list(_fd.keys())[:5]
 
       assetsLoaded = true;
       setDisabled("runBtn", false);
-      stage(45, `Assets for '${cell}' loaded. Ready.`);
+      setStageState("data","done");
+      stage(45, `Assets for '${cell}' ready.`);
     }catch(e){
       log("❌ Asset load failed: " + (e?.message||e));
       assetsLoaded = false;
       setDisabled("runBtn", true);
-      stage(0, "Idle");
+      setStageState("data","err");
+      stage(0, "Asset load failed");
     }finally{
       isLoadingAssets = false;
       setDisabled("assetsBtn", false);
@@ -181,6 +317,7 @@ list(_fd.keys())[:5]
   $("bootBtn").addEventListener("click", async ()=>{
     try{
       setDisabled("bootBtn", true);
+      setStageState("boot","active");
       log("⏳ Boot: waiting for pyodide.js …");
       await new Promise((res, rej)=>{
         const t0=performance.now();
@@ -212,6 +349,7 @@ print("matplotlib", mpl.__version__)
       `);
       log("✅ Python libs imported & backend set.");
       booted = true;
+      setStageState("boot","done");
       setDisabled("assetsBtn", false);
 
       // auto-load for the initially selected cell
@@ -220,6 +358,7 @@ print("matplotlib", mpl.__version__)
       await loadAssetsForCell(initialCell);
     }catch(e){
       log("❌ Boot failed: " + (e?.message||e));
+      setStageState("boot","err");
       setDisabled("bootBtn", false);
       return;
     }
@@ -252,6 +391,7 @@ print("matplotlib", mpl.__version__)
     stage(50, "Plotting …");
     log(`▶️ Plot: cell=${cell}, genes=${geneStr}`);
     clearImage();
+    setStageState("plot","active");
 
     const unhookOut = pyodide.setStdout({
       batched: (s)=>{
@@ -362,19 +502,37 @@ open("/plot.png","wb").write(buf.getbuffer())
       `;
       await pyodide.runPythonAsync(code);
       stage(100, "Done");
+      setStageState("plot","done");
 
       const bytes = FS.readFile("/plot.png");
       const blob  = new Blob([bytes], { type: "image/png" });
       if(pngURL) URL.revokeObjectURL(pngURL);
       pngURL = URL.createObjectURL(blob);
+
+      // Build output filename: {cell}_{first-few-genes}.png
+      const stem = (geneStr.split(",").map(g=>g.trim()).filter(Boolean).slice(0,4).join("_") || "plot")
+        .replace(/[\s/\\]+/g,"_");
+      const outName = `${cell}_${stem}.png`;
+
       $("plotImg").src = pngURL;
-      $("imgWrap").style.display = "block";
+      $("plotImg").style.display = "block";
       $("downloadPNG").href = pngURL;
+      $("downloadPNG").download = outName;
+      $("downloadPNG").textContent = `⬇ Download ${outName}`;
+      $("downloadPNG").style.display = "inline-flex";
+      $("resultSummary").innerHTML = `✓ ${cell} · ${geneStr.split(',').length} genes <span class="stat">plot rendered</span>`;
+      $("resultCard").classList.remove("err");
+      $("resultCard").style.display = "block";
       log("✅ Plot ready.");
     }catch(e){
       stage(0, "Error");
+      setStageState("plot","err");
+      $("resultSummary").innerHTML = `❌ ${e?.message || e}`;
+      $("resultCard").classList.add("err");
+      $("resultCard").style.display = "block";
+      $("plotImg").style.display = "none";
+      $("downloadPNG").style.display = "none";
       log("❌ Run error: " + (e?.message||e));
-      $("imgWrap").style.display = "none";
     }finally{
       try{ unhookOut && unhookOut(); }catch(_){}
       try{ unhookErr && unhookErr(); }catch(_){}
@@ -382,6 +540,7 @@ open("/plot.png","wb").write(buf.getbuffer())
   });
 
   log("Flow → 1) boot → 2) load assets → 3) run plot");
+  resetStages();
 })();
 </script>
 

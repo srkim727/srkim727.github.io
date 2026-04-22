@@ -12,35 +12,157 @@ excerpt: ""
 <script defer src="https://cdn.jsdelivr.net/pyodide/v0.26.3/full/pyodide.js"></script>
 
 <style>
-  .ctl-row{display:flex;gap:10px;flex-wrap:wrap;margin:12px 0;}
-  label.inline{display:inline-flex;align-items:center;gap:6px}
-  select,input{padding:4px 6px}
-  .meta-panel{
-    background:#f8f9fb;border:1px solid #e5e7eb;border-radius:8px;
-    padding:10px 12px;margin:8px 0 12px 0; color:#111; font-size:14px;
+  .pg-wrap{
+    --accent:#3b82f6; --accent-dark:#2563eb; --accent-light:#dbeafe;
+    --ok:#10b981; --ok-dark:#059669; --ok-light:#ecfdf5; --ok-border:#a7f3d0;
+    --err:#ef4444; --err-light:#fef2f2; --err-border:#fecaca;
+    --muted:#6b7280; --text:#111827;
+    --border:#e5e7eb; --border-strong:#d1d5db;
+    --bg-panel:#fafbfc;
+    max-width:780px;margin:14px auto;
   }
-  .meta-panel code{background:#eef2f7;padding:1px 4px;border-radius:4px}
-  .meta-panel small{color:#666}
+  .pg-wrap .panel{
+    background:var(--bg-panel);border:1px solid var(--border);
+    border-radius:10px;padding:16px 18px;
+  }
+  .pg-wrap .ctrl-row{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-bottom:14px;}
+  .pg-wrap .btn{
+    font:inherit;height:32px;padding:0 14px;box-sizing:border-box;
+    border:1px solid var(--border);background:#fff;color:var(--text);
+    border-radius:6px;cursor:pointer;line-height:1;
+    transition:background .15s,border-color .15s,box-shadow .15s,color .15s;
+  }
+  .pg-wrap .btn:hover:not(:disabled){border-color:var(--border-strong);box-shadow:0 1px 2px rgba(0,0,0,.05);}
+  .pg-wrap .btn:disabled{color:#9ca3af;background:#f3f4f6;border-color:var(--border);cursor:not-allowed;}
+  .pg-wrap .btn-primary{background:var(--accent);border-color:var(--accent);color:#fff;}
+  .pg-wrap .btn-primary:hover:not(:disabled){background:var(--accent-dark);border-color:var(--accent-dark);}
+  .pg-wrap .btn-primary:disabled{background:#bfdbfe;border-color:#bfdbfe;color:#fff;}
+  .pg-wrap .inline-ctl{display:flex;gap:6px;align-items:center;font-size:13px;color:var(--muted);}
+  .pg-wrap .inline-ctl select,
+  .pg-wrap .inline-ctl input[type="text"]{
+    font:inherit;height:32px;padding:0 10px;box-sizing:border-box;
+    border:1px solid var(--border);background:#fff;color:var(--text);
+    border-radius:6px;
+  }
+  .pg-wrap .inline-ctl select{padding:0 28px 0 10px;cursor:pointer;}
+  .pg-wrap .inline-ctl select:hover,
+  .pg-wrap .inline-ctl input[type="text"]:focus{border-color:var(--border-strong);outline:none;}
+
+  /* Stepper */
+  .pg-wrap .stages{display:flex;align-items:center;gap:8px;margin:6px 0 10px 0;font-size:12px;color:var(--muted);}
+  .pg-wrap .stage{display:flex;align-items:center;gap:6px;}
+  .pg-wrap .stage-dot{
+    width:14px;height:14px;border-radius:50%;background:#fff;
+    border:2px solid #e5e7eb;display:flex;align-items:center;justify-content:center;
+    font-size:9px;color:#fff;line-height:1;transition:all .2s;
+  }
+  .pg-wrap .stage.active .stage-dot{border-color:var(--accent);box-shadow:0 0 0 4px var(--accent-light);}
+  .pg-wrap .stage.done .stage-dot{background:var(--ok);border-color:var(--ok);}
+  .pg-wrap .stage.done .stage-dot::after{content:"✓";color:#fff;font-weight:700;}
+  .pg-wrap .stage.err .stage-dot{background:var(--err);border-color:var(--err);}
+  .pg-wrap .stage.err .stage-dot::after{content:"×";color:#fff;font-weight:700;font-size:11px;}
+  .pg-wrap .stage.active .stage-label,
+  .pg-wrap .stage.done .stage-label,
+  .pg-wrap .stage.err .stage-label{color:var(--text);font-weight:500;}
+  .pg-wrap .stage-sep{flex:1;height:1px;background:var(--border);}
+
+  /* Progress bar */
+  .pg-wrap progress#progBar{
+    width:100%;height:6px;border:none;background:#f3f4f6;border-radius:3px;overflow:hidden;display:block;
+  }
+  .pg-wrap progress#progBar::-webkit-progress-bar{background:#f3f4f6;border-radius:3px;}
+  .pg-wrap progress#progBar::-webkit-progress-value{background:var(--accent);border-radius:3px;transition:width .2s;}
+  .pg-wrap progress#progBar::-moz-progress-bar{background:var(--accent);border-radius:3px;}
+  .pg-wrap .status-line{font-size:12px;color:var(--muted);margin:6px 0 0 0;min-height:1em;}
+
+  /* Result card (plot output) */
+  .pg-wrap .result-card{
+    margin-top:14px;padding:12px 14px;border-radius:8px;
+    background:var(--ok-light);border:1px solid var(--ok-border);
+  }
+  .pg-wrap .result-card.err{background:var(--err-light);border-color:var(--err-border);}
+  .pg-wrap .result-card .result-head{
+    display:flex;align-items:center;justify-content:space-between;gap:12px;
+    flex-wrap:wrap;margin-bottom:10px;
+  }
+  .pg-wrap .result-summary{font-size:14px;color:var(--text);font-weight:500;flex:1;min-width:180px;}
+  .pg-wrap .result-summary .stat{color:var(--muted);font-weight:400;font-size:12px;margin-left:6px;}
+  .pg-wrap .btn-download{
+    background:var(--ok);border-color:var(--ok);color:#fff;padding:0 16px;height:34px;
+    display:inline-flex;align-items:center;gap:6px;text-decoration:none;font-weight:500;
+    border:1px solid var(--ok);border-radius:6px;transition:background .15s,border-color .15s;
+  }
+  .pg-wrap .btn-download:hover{background:var(--ok-dark);border-color:var(--ok-dark);color:#fff;text-decoration:none;}
+  .pg-wrap .plot-img{max-width:100%;border:1px solid var(--border);border-radius:6px;background:#fff;display:block;}
+
+  /* Info meta-panel */
+  .pg-wrap .meta-panel{
+    background:var(--bg-panel);border:1px solid var(--border);border-radius:10px;
+    padding:14px 16px;margin:14px 0 0 0;color:var(--text);font-size:13px;
+  }
+  .pg-wrap .meta-panel code{background:#eef2f7;padding:1px 4px;border-radius:4px;}
+  .pg-wrap .meta-panel small{color:var(--muted);}
+
+  /* Log */
+  .pg-wrap details.log-wrap{margin-top:12px;}
+  .pg-wrap details.log-wrap summary{cursor:pointer;font-size:12px;color:var(--muted);padding:4px 0;}
+  .pg-wrap details.log-wrap summary:hover{color:var(--text);}
+
+  @media (max-width:620px){
+    .pg-wrap{margin:8px;}
+    .pg-wrap .panel{padding:12px;}
+    .pg-wrap .stages{font-size:11px;}
+  }
 </style>
 
-<div class="ctl-row">
-  <button id="bootBtn" type="button">1: boot</button>
-  <button id="runBtn" type="button" disabled>2: run</button>
+<div class="pg-wrap">
 
-  <label class="inline">Level:
-    <select id="levelSelect" style="width:140px;">
-      <option>level1</option>
-      <option>level2</option>
-    </select>
-  </label>
+<!-- Interactive panel -->
+<div class="panel">
+  <div class="ctrl-row">
+    <button class="btn" id="bootBtn" type="button">1:boot</button>
 
-  <label class="inline">Cell:
-    <select id="cellSelect" style="width:260px;"></select>
-  </label>
+    <label class="inline-ctl">
+      <span>Level</span>
+      <select id="levelSelect" style="min-width:120px;">
+        <option>level1</option>
+        <option>level2</option>
+      </select>
+    </label>
+
+    <label class="inline-ctl" style="flex:1;min-width:220px;">
+      <span>Cell</span>
+      <select id="cellSelect" style="flex:1;min-width:180px;"></select>
+    </label>
+
+    <button class="btn btn-primary" id="runBtn" type="button" disabled>2:run</button>
+  </div>
+
+  <!-- Stepper: Boot → Data → Plot -->
+  <div class="stages" id="stages">
+    <span class="stage" id="stage-boot"><span class="stage-dot"></span><span class="stage-label">Boot</span></span>
+    <span class="stage-sep"></span>
+    <span class="stage" id="stage-data"><span class="stage-dot"></span><span class="stage-label">Data</span></span>
+    <span class="stage-sep"></span>
+    <span class="stage" id="stage-plot"><span class="stage-dot"></span><span class="stage-label">Plot</span></span>
+  </div>
+
+  <progress id="progBar" max="100" value="0"></progress>
+  <div class="status-line" id="progStatus">Idle</div>
+
+  <!-- Result card (plot + download) -->
+  <div class="result-card" id="resultCard" style="display:none;">
+    <div class="result-head">
+      <div class="result-summary" id="resultSummary"></div>
+      <a class="btn-download" id="downloadPNG" download="explore.png" style="display:none;">⬇ Download PNG</a>
+    </div>
+    <img class="plot-img" id="plotImg" alt="plot" style="display:none;">
+  </div>
 </div>
 
+<!-- Info panel -->
 <div class="meta-panel" id="metaPanel">
-  <strong>Meta information of the cell types.</strong>
+  <strong>Meta information of the cell types</strong>
   <p style="margin:6px 0 8px 0;">This page shows various information including</p>
   <ol style="margin:0 0 0 18px;">
     <li style="margin:2px 0;">Organ distribution patterns</li>
@@ -56,14 +178,6 @@ excerpt: ""
     <li style="margin:2px 0;">Distribution patterns in tumor contexts
       <ul style="margin:6px 0 0 18px;">
         <li>shows results from PANGEA database (both Curated &amp; Re-aligned database)</li>
-        <!-- <li>stats: one-sided Mann–Whitney U test</li>
-        <li>
-          <code>ns</code>: p &ge; 0.05,
-          <code>*</code>: p &ge; 0.01,
-          <code>**</code>: p &ge; 0.001,
-          <code>***</code>: p &ge; 0.0001,
-          <code>****</code>: p &lt; 0.0001
-        </li> -->
       </ul>
     </li>
   </ol>
@@ -75,26 +189,16 @@ excerpt: ""
   </div>
 </div>
 
-<!-- Processing progress -->
-<div style="margin:8px 0 4px 0; font-size:13px; color:#555;">Processing</div>
-<progress id="procProg" max="100" value="0" style="width:100%;"></progress>
-<div id="procStatus" style="font-size:12px;color:#777;margin:4px 0 8px 0;">Idle</div>
-
-<!-- Output image -->
-<div id="imgWrap" style="display:none;margin:10px 0;">
-  <img id="plotImg" alt="plot" style="max-width:100%;border:1px solid #e5e7eb;border-radius:6px;">
-  <div style="margin-top:6px;">
-    <a id="downloadPNG" download="explore.png">Download PNG</a>
-  </div>
-</div>
-
-<details open style="margin-top:10px;">
-  <summary><strong>Log</strong></summary>
+<!-- Log (collapsed by default) -->
+<details class="log-wrap">
+  <summary>Log</summary>
   <pre id="log" style="
-    background:#0a0f17;color:#e8eef7;padding:6px;border-radius:6px;overflow:auto;height:260px;
-    white-space:pre-wrap;font-size:11px;line-height:1.25;font-family:ui-monospace,Menlo,Consolas,monospace;">
+    background:#0a0f17;color:#e8eef7;padding:8px 10px;border-radius:6px;overflow:auto;height:200px;
+    white-space:pre-wrap;font-size:11px;line-height:1.3;font-family:ui-monospace,Menlo,Consolas,monospace;margin-top:6px;">
   </pre>
 </details>
+
+</div><!-- /.pg-wrap -->
 
 <script>
 (function(){
@@ -112,8 +216,16 @@ excerpt: ""
     el.scrollTop = el.scrollHeight;
   }
   function stage(pct, msg){
-    $("procProg").value = pct;
-    $("procStatus").textContent = msg;
+    $("progBar").value = pct;
+    $("progStatus").textContent = msg;
+  }
+  function setStageState(name, state){
+    const el = $("stage-" + name); if(!el) return;
+    el.classList.remove("active","done","err");
+    if(state && state !== "pending") el.classList.add(state);
+  }
+  function resetStages(){
+    setStageState("boot","pending"); setStageState("data","pending"); setStageState("plot","pending");
   }
   async function fetchToFS(url, fsPath, {optional=false,label=null}={}){
     try{
@@ -136,9 +248,12 @@ excerpt: ""
     }
   }
   function clearImage(){
-    const img=$("plotImg");
-    $("imgWrap").style.display = "none";
-    img.removeAttribute("src");
+    $("plotImg").style.display = "none";
+    $("plotImg").removeAttribute("src");
+    $("resultCard").style.display = "none";
+    $("resultCard").classList.remove("err");
+    $("resultSummary").textContent = "";
+    $("downloadPNG").style.display = "none";
   }
 
   // -------- static dropdown lists (alphabetical) --------
@@ -219,6 +334,7 @@ excerpt: ""
   $("bootBtn").addEventListener("click", async ()=>{
     try{
       setDisabled("bootBtn", true);
+      setStageState("boot","active");
       log("⏳ Boot: waiting for pyodide.js …");
       await new Promise((res, rej)=>{
         const t0=performance.now();
@@ -278,9 +394,12 @@ def add_fig_note(fig, text, x=0.01, y=0.99, fontsize=9, mono=True, ha='left', va
       `);
       log("✅ Python libs imported & backend set.");
       booted = true;
+      setStageState("boot","done");
       setDisabled("runBtn", false);
+      stage(0, "Ready — choose level/cell and click Run.");
     }catch(e){
       log("❌ Boot failed: " + (e?.message||e));
+      setStageState("boot","err");
       setDisabled("bootBtn", false);
       return;
     }
@@ -291,6 +410,8 @@ def add_fig_note(fig, text, x=0.01, y=0.99, fontsize=9, mono=True, ha='left', va
   $("runBtn").addEventListener("click", async ()=>{
     if(!booted){ alert("Boot first."); return; }
     clearImage();
+    setStageState("data","active");
+    setStageState("plot","pending");
 
     const level = $("levelSelect").value.trim();
     const cell  = $("cellSelect").value.trim();
@@ -332,12 +453,15 @@ def add_fig_note(fig, text, x=0.01, y=0.99, fontsize=9, mono=True, ha='left', va
       await fetchToFS(f_prop, "/work/prop.csv", {optional:true,label:`TME prop_${cell1}.csv`});
       await fetchToFS(f_pval, "/work/pval.csv", {optional:true,label:`TME pval_${cell1}.csv`});
       await fetchToFS(f_cmap, "/work/cmap.pkl", {optional:true,label:`TME cmapdic_cat.pkl`});
+      setStageState("data","done");
     }catch(e){
       stage(0,"Error");
+      setStageState("data","err");
       log("❌ Fetch failed: " + (e?.message||e));
       return;
     }
 
+    setStageState("plot","active");
     stage(40, "Running Python …");
 
     // capture staged prints
@@ -644,15 +768,32 @@ with open("/work/explore.png","wb") as fh:
       const blob  = new Blob([bytes], { type: "image/png" });
       if(pngURL) URL.revokeObjectURL(pngURL);
       pngURL = URL.createObjectURL(blob);
+
+      const safeCell = cell.replace(/[\s/\\&]+/g, "_");
+      const outName = `${level}_${safeCell}.png`;
+
       $("plotImg").src = pngURL;
-      $("imgWrap").style.display = "block";
+      $("plotImg").style.display = "block";
       $("downloadPNG").href = pngURL;
+      $("downloadPNG").download = outName;
+      $("downloadPNG").textContent = `⬇ Download ${outName}`;
+      $("downloadPNG").style.display = "inline-flex";
+      $("resultSummary").innerHTML = `✓ ${level} · ${cell} <span class="stat">plot rendered</span>`;
+      $("resultCard").classList.remove("err");
+      $("resultCard").style.display = "block";
+
       stage(100, "Done");
+      setStageState("plot","done");
       log("✅ Plot ready.");
     }catch(e){
       stage(0,"Error");
+      setStageState("plot","err");
+      $("resultSummary").innerHTML = `❌ ${e?.message || e}`;
+      $("resultCard").classList.add("err");
+      $("resultCard").style.display = "block";
+      $("plotImg").style.display = "none";
+      $("downloadPNG").style.display = "none";
       log("❌ Run error: " + (e?.message||e));
-      $("imgWrap").style.display = "none";
     }finally{
       try{ unhookOut && unhookOut(); }catch(_){}
       try{ unhookErr && unhookErr(); }catch(_){}
@@ -660,6 +801,7 @@ with open("/work/explore.png","wb") as fh:
   });
 
   log("Flow → 1) boot → 2) run");
+  resetStages();
 })();
 </script>
 
