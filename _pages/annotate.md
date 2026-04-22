@@ -195,15 +195,16 @@ layout: post
     return await new Response(stream).blob();
   }
 
-  // Parse a CSV expression matrix (cell × gene) Blob into a Float32Array.
-  // Uses PapaParse's chunk mode so FileReader streams the blob in pieces —
-  // never holds the full decompressed text as a single JS string.
-  async function parseCsvInJs(blob, onRowProgress){
+  // Parse a CSV expression matrix (cell × gene) Blob, keeping ONLY columns
+  // that are in the model's feature map. The output Float32Array is already
+  // n_cells × n_feat in model feature order — much smaller than the original
+  // input (typically 10–15× smaller), and Python needs no column re-indexing.
+  async function parseCsvInJs(blob, featureMap, nFeat, onRowProgress){
     await waitForGlobal("Papa", 10000);
     return new Promise((resolve, reject) => {
       const cellIds = [];
-      let colNames = null;
-      let nCols = 0;
+      let colToFeatIdx = null;   // Int32Array: for each CSV data-col, the feature index (or -1)
+      const keepMask = new Uint8Array(nFeat);  // 1 if feature has input column
       let rowCount = 0;
       let capacity = 0;
       let xFlat = null;
@@ -219,26 +220,40 @@ layout: post
           const rows = results.data;
           for (let r = 0; r < rows.length; r++) {
             const row = rows[r];
-            if (colNames === null) {
-              colNames = row.slice(1);
-              nCols = colNames.length;
+            if (colToFeatIdx === null) {
+              // Header: [indexCol, gene1, gene2, ...]
+              const nDataCols = row.length - 1;
+              colToFeatIdx = new Int32Array(nDataCols);
+              for (let i = 0; i < nDataCols; i++) {
+                const g = String(row[i + 1] || "").toLowerCase();
+                const fi = featureMap.get(g);
+                if (fi === undefined) {
+                  colToFeatIdx[i] = -1;
+                } else {
+                  colToFeatIdx[i] = fi;
+                  keepMask[fi] = 1;
+                }
+              }
               capacity = 2048;
-              xFlat = new Float32Array(capacity * nCols);
+              xFlat = new Float32Array(capacity * nFeat);
               continue;
             }
-            if (row.length < nCols + 1) continue; // skip short/malformed row
+            if (row.length < colToFeatIdx.length + 1) continue; // short row
             if (rowCount >= capacity) {
               const newCap = Math.ceil(capacity * 1.5) + 1;
-              const newX = new Float32Array(newCap * nCols);
+              const newX = new Float32Array(newCap * nFeat);
               newX.set(xFlat);
               xFlat = newX;
               capacity = newCap;
             }
             cellIds.push(row[0]);
-            const off = rowCount * nCols;
-            for (let i = 0; i < nCols; i++) {
+            const off = rowCount * nFeat;
+            const nDataCols = colToFeatIdx.length;
+            for (let i = 0; i < nDataCols; i++) {
+              const fi = colToFeatIdx[i];
+              if (fi < 0) continue; // gene not in model — skip
               const v = +row[i + 1];
-              xFlat[off + i] = (v === v) ? v : 0;  // v === v is false only for NaN
+              xFlat[off + fi] = (v === v) ? v : 0;
             }
             rowCount++;
           }
@@ -249,16 +264,17 @@ layout: post
           }
         },
         complete: () => {
-          if (colNames === null) {
+          if (colToFeatIdx === null) {
             reject(new Error("CSV appears to be empty."));
             return;
           }
           resolve({
             cellIds,
-            colNames,
-            xFlat: xFlat.subarray(0, rowCount * nCols),
+            xFlat: xFlat.subarray(0, rowCount * nFeat),
+            keepMask,
             nCells: rowCount,
-            nCols,
+            nFeat,
+            nMatched: keepMask.reduce((a,b) => a+b, 0),
           });
         },
         error: (err) => reject(err)
@@ -278,14 +294,18 @@ layout: post
   let pyReady=false, libsReady=false, uploaded=false;
   let fileBytes=null, fileName="";
   let modelPath="/tmp_model";   // in Pyodide FS
-  let modelFresh=false;         // set false when selection changes
-  let modelPromise=null;        // in-flight fetch, for dedupe
+  let modelReady=false;         // model fetched + parsed in Python + features known in JS
+  let modelPromise=null;        // in-flight, for dedupe
+  let modelFeatures=null;       // Array<string> lowercased feature names, in model order
+  let modelFeatureMap=null;     // Map<string, number> feature-name → index
   let resultUrl=null;
 
   // Reset model state when selection changes
   $("modelSel").addEventListener("change", ()=>{
-    modelFresh = false;
+    modelReady = false;
     modelPromise = null;
+    modelFeatures = null;
+    modelFeatureMap = null;
     setDisabled("runBtn", !uploaded || !libsReady);
     if (libsReady) {
       ensureModelInFS().catch(err => log("❌ Model prefetch: " + (err?.message || err)));
@@ -347,10 +367,15 @@ layout: post
     }
   });
 
-  // ---------- Fetch selected model into Pyodide FS (called from Run) ----------
+  // ---------- Fetch + parse selected model (called on prefetch / Run) ----------
+  // After this runs: /tmp_model has the .npz, Python globals hold the parsed
+  // arrays (_coef/_intercept/_classes/_scaler_*/_with_mean/_feat_lower), and
+  // JS side has `modelFeatures` + `modelFeatureMap` so CSV parsing can filter
+  // columns to only the model's ~2k features.
   async function ensureModelInFS(){
-    if (modelFresh) return;
+    if (modelReady) return;
     if (modelPromise) return modelPromise;
+    if (!libsReady) return; // Python not up yet — don't even start
     const url = getModelURL();
     const modelName = $("modelSel").selectedOptions[0].text;
     modelPromise = (async () => {
@@ -358,13 +383,38 @@ layout: post
       if(!resp.ok) throw new Error("Model HTTP " + resp.status);
       const buf = new Uint8Array(await resp.arrayBuffer());
 
-      // Basic ZIP magic check
       const ok = (buf.length >= 4 && buf[0]===0x50 && buf[1]===0x4B && buf[2]===0x03 && buf[3]===0x04);
       if(!ok) log("⚠️ Model doesn't look like a ZIP (npz) – continuing anyway.");
 
       FS.writeFile(modelPath, buf);
-      modelFresh = true;
-      log(`🧬 Model: ${modelName} (${(buf.length/1e6).toFixed(2)} MB)`);
+
+      // Parse model once and cache parts in Python globals so Run doesn't re-parse.
+      await pyodide.runPythonAsync(`
+import numpy as np, gzip, io
+def _load_npz_any(path):
+    try:
+        return np.load(path, allow_pickle=True)
+    except Exception:
+        with gzip.open(path, 'rb') as fh: data = fh.read()
+        return np.load(io.BytesIO(data), allow_pickle=True)
+_npz = _load_npz_any('/tmp_model')
+_feat_arr     = (_npz['features'] if 'features' in _npz.files else _npz['features_']).astype(str)
+_feat_lower   = [str(c).lower() for c in _feat_arr]
+_coef         = np.asarray(_npz['coef_'],         dtype=np.float32)
+_intercept    = np.asarray(_npz['intercept_'],    dtype=np.float32)
+_classes      = _npz['classes_']
+_scaler_mean  = np.asarray(_npz['scaler_mean_'],  dtype=np.float32)
+_scaler_scale = np.asarray(_npz['scaler_scale_'], dtype=np.float32)
+_with_mean    = bool(_npz['with_mean'].flat[0]) if _npz['with_mean'].size else True
+_npz = None  # release the ZIP reader
+`);
+
+      const featList = pyodide.globals.get('_feat_lower').toJs();
+      modelFeatures = featList;
+      modelFeatureMap = new Map();
+      for(let i = 0; i < featList.length; i++) modelFeatureMap.set(featList[i], i);
+      modelReady = true;
+      log(`🧬 Model: ${modelName} (${(buf.length/1e6).toFixed(2)} MB, ${featList.length} features)`);
     })();
     try {
       await modelPromise;
@@ -416,18 +466,25 @@ layout: post
       const csvBlob = await decompressToBlob(fileBytes);
 
       setStage(30, "Parsing CSV");
-      const parsed = await parseCsvInJs(csvBlob, (n) => {
+      const parsed = await parseCsvInJs(csvBlob, modelFeatureMap, modelFeatures.length, (n) => {
         currentMsg = `Parsing CSV (${n.toLocaleString()} rows)`;
       });
-      log(`📊 Parsed ${parsed.nCells.toLocaleString()} × ${parsed.nCols.toLocaleString()}`);
+      log(`📊 Parsed ${parsed.nCells.toLocaleString()} cells × ${parsed.nMatched.toLocaleString()}/${parsed.nFeat.toLocaleString()} model features matched`);
+
+      if (parsed.nMatched === 0) {
+        throw new Error("No overlapping features between input CSV and model. Check that column names are gene symbols/IDs matching the model.");
+      }
 
       setStage(55, "Transferring to Python");
       const xBytes = new Uint8Array(parsed.xFlat.buffer, parsed.xFlat.byteOffset, parsed.xFlat.byteLength);
       FS.writeFile('/tmp_X.bin', xBytes);
-      pyodide.globals.set('col_names_js', parsed.colNames);
-      pyodide.globals.set('cell_ids_js', parsed.cellIds);
-      pyodide.globals.set('n_cells_js', parsed.nCells);
-      pyodide.globals.set('n_cols_js', parsed.nCols);
+      pyodide.globals.set('cell_ids_js',  parsed.cellIds);
+      pyodide.globals.set('keep_mask_js', parsed.keepMask);
+      pyodide.globals.set('n_cells_js',   parsed.nCells);
+      pyodide.globals.set('n_feat_js',    parsed.nFeat);
+      // Release large JS-side buffers now that they're in Pyodide/MEMFS
+      parsed.xFlat = null;
+      parsed.keepMask = null;
 
       unhookOut = pyodide.setStdout({
         batched: (s) => {
@@ -447,81 +504,69 @@ layout: post
       unhookErr = pyodide.setStderr({ batched: (s) => { s && s.trim() && log("ERR: " + s); } });
 
       const code = `
-import numpy as np, gzip, io, sys
+import numpy as np, sys, os
 
 def stage(pct, msg):
     print(f"__STAGE__:{pct}:{msg}")
     sys.stdout.flush()
 
-stage(60, "Reading model")
-def load_npz_any(path):
-    try:
-        return np.load(path, allow_pickle=True)
-    except Exception as e1:
-        try:
-            with gzip.open(path, 'rb') as fh: data = fh.read()
-            return np.load(io.BytesIO(data), allow_pickle=True)
-        except Exception as e2:
-            raise EOFError(f"Failed to read model as npz. Direct: {e1}; Gzip-fallback: {e2}")
-_npz = load_npz_any('/tmp_model')
+# Model already parsed into globals by ensureModelInFS:
+#   _coef, _intercept, _classes, _scaler_mean, _scaler_scale, _with_mean
+# CSV already filtered to model features by parseCsvInJs; xFlat is
+# (n_cells, n_feat) in model feature order. Missing features are zeros,
+# and keep_mask_js marks which features have any input.
 
-stage(65, "Loading matrix")
+stage(60, "Loading matrix")
 n_cells = int(n_cells_js)
-n_cols  = int(n_cols_js)
-X = np.fromfile('/tmp_X.bin', dtype=np.float32).reshape(n_cells, n_cols)
-col_names = [str(c) for c in col_names_js]
+n_feat  = int(n_feat_js)
+X2 = np.fromfile('/tmp_X.bin', dtype=np.float32).reshape(n_cells, n_feat)
 cell_ids  = [str(c) for c in cell_ids_js]
-
-stage(70, "Preparing features")
-feat_arr = (_npz['features'] if 'features' in _npz.files else _npz['features_']).astype(str)
-feat_lower = np.char.lower(feat_arr)
-
-col_idx = {}
-for i, c in enumerate(col_names):
-    lc = c.lower()
-    if lc not in col_idx:
-        col_idx[lc] = i
-
-keep_mask = np.array([c in col_idx for c in feat_lower], dtype=bool)
-if not keep_mask.any():
+keep_mask = np.frombuffer(bytes(keep_mask_js), dtype=np.uint8).astype(bool)
+matched   = int(keep_mask.sum())
+if matched == 0:
     raise ValueError('No overlapping features between input and model.')
 
-x_indices = np.array([col_idx[feat_lower[i]] for i in range(len(feat_lower)) if keep_mask[i]], dtype=np.int64)
+# Done with /tmp_X.bin — free MEMFS space.
+try: os.remove('/tmp_X.bin')
+except Exception: pass
 
-coef_keep  = _npz['coef_'][:, keep_mask]
-mean_keep  = _npz['scaler_mean_'][keep_mask]
-scale_keep = _npz['scaler_scale_'][keep_mask]
-with_mean  = bool(_npz['with_mean'].flat[0]) if _npz['with_mean'].size else True
-intercept  = _npz['intercept_']
-classes_   = _npz['classes_']
+stage(72, "Scaling input")
+# In-place scaling: X2 is already writable float32
+if _with_mean:
+    np.subtract(X2, _scaler_mean, out=X2)
+# Multiply by precomputed 1/(scale+eps) — cheaper than division
+_inv_scale = (np.float32(1.0) / (_scaler_scale + np.float32(1e-8))).astype(np.float32)
+np.multiply(X2, _inv_scale, out=X2)
+np.clip(X2, None, np.float32(10.0), out=X2)
 
-stage(78, "Scaling input")
-X2 = X[:, x_indices]
-if with_mean:
-    X2 = (X2 - mean_keep) / (scale_keep + 1e-8)
-else:
-    X2 = X2 / (scale_keep + 1e-8)
-X2[X2 > 10] = 10
+# Zero out columns for features not present in input so they contribute 0 to logits
+# (matches the keep_mask semantics of the deprecated/original pipeline).
+if matched < n_feat:
+    X2[:, ~keep_mask] = 0
 
-stage(86, "Computing logits")
-logits = X2 @ coef_keep.T + intercept
+stage(82, "Computing logits")
+logits = X2 @ _coef.T + _intercept
+del X2
 if logits.ndim == 1:
     logits = np.column_stack([-logits, logits])
 
-stage(92, "Softmax & labels")
+stage(90, "Softmax & labels")
 z = logits - logits.max(axis=1, keepdims=True)
-e = np.exp(z); P = e / e.sum(axis=1, keepdims=True)
+np.exp(z, out=z)
+P = z / z.sum(axis=1, keepdims=True)
+del z, logits
 idx = np.argmax(P, axis=1)
-labels = classes_[idx]
+labels = _classes[idx]
 top = P[np.arange(P.shape[0]), idx]
 part = np.partition(P, -2, axis=1)[:, -2:]
+del P
 cert = part[:,1] - part[:,0]
 
 stage(97, "Writing output")
 import pandas as pd
 out = pd.DataFrame({'cell_id': cell_ids, 'predicted_label': labels, 'conf_score': top, 'cert_score': cert})
 out.to_csv('/pred.csv', index=False)
-print('DONE', X.shape, len(classes_), 'features_used=', int(keep_mask.sum()))
+print('DONE', n_cells, 'cells,', len(_classes), 'classes, features_matched=', matched, '/', n_feat)
 `;
 
       await pyodide.runPythonAsync(code);
