@@ -1,5 +1,5 @@
 ---
-title: Annotate cells online
+title: Annotate cells online (current version)
 author: S. Kim
 date: 2025-10-16
 layout: post
@@ -9,9 +9,6 @@ layout: post
 
 <!-- Load Pyodide from the official CDN -->
 <script defer src="https://cdn.jsdelivr.net/pyodide/v0.26.3/full/pyodide.js"></script>
-
-<!-- PapaParse: fast browser-side CSV parser -->
-<script defer src="https://cdn.jsdelivr.net/npm/papaparse@5.4.1/papaparse.min.js"></script>
 
 <!-- Annotation panel styles -->
 <style>
@@ -183,91 +180,6 @@ layout: post
     });
   }
 
-  // Decompress gzip (if magic bytes present) and decode to text.
-  async function decompressAndDecode(bytes){
-    const isGz = bytes.length >= 2 && bytes[0] === 0x1f && bytes[1] === 0x8b;
-    if(!isGz){
-      return new TextDecoder('utf-8').decode(bytes);
-    }
-    const ds = new DecompressionStream('gzip');
-    const stream = new Blob([bytes]).stream().pipeThrough(ds);
-    return await new Response(stream).text();
-  }
-
-  // Count newlines without allocating a big array.
-  function countLines(text){
-    let count = 0;
-    for(let i = 0; i < text.length; i++){
-      if(text.charCodeAt(i) === 10) count++;
-    }
-    return count;
-  }
-
-  // Parse a CSV expression matrix (cell × gene) into a Float32Array.
-  async function parseCsvInJs(text, onRowProgress){
-    await waitForGlobal("Papa", 10000);
-    const estRows = Math.max(1, countLines(text)); // includes header + possible trailing
-    return new Promise((resolve, reject) => {
-      const cellIds = [];
-      let colNames = null;
-      let nCols = 0;
-      let rowCount = 0;
-      let capacity = 0;
-      let xFlat = null;
-      let lastTick = performance.now();
-
-      Papa.parse(text, {
-        header: false,
-        skipEmptyLines: true,
-        fastMode: true,
-        delimiter: ',',
-        step: (row) => {
-          const data = row.data;
-          if (colNames === null) {
-            colNames = data.slice(1);
-            nCols = colNames.length;
-            capacity = estRows + 4;
-            xFlat = new Float32Array(capacity * nCols);
-            return;
-          }
-          if (rowCount >= capacity) {
-            const newCap = Math.ceil(capacity * 1.5) + 1;
-            const newX = new Float32Array(newCap * nCols);
-            newX.set(xFlat);
-            xFlat = newX;
-            capacity = newCap;
-          }
-          cellIds.push(data[0]);
-          const off = rowCount * nCols;
-          for (let i = 0; i < nCols; i++) {
-            const v = +data[i + 1];
-            xFlat[off + i] = (v === v) ? v : 0;  // v === v is false only for NaN
-          }
-          rowCount++;
-          const now = performance.now();
-          if (onRowProgress && now - lastTick > 100) {
-            lastTick = now;
-            onRowProgress(rowCount);
-          }
-        },
-        complete: () => {
-          if (colNames === null) {
-            reject(new Error("CSV appears to be empty."));
-            return;
-          }
-          resolve({
-            cellIds,
-            colNames,
-            xFlat: xFlat.subarray(0, rowCount * nCols),
-            nCells: rowCount,
-            nCols,
-          });
-        },
-        error: (err) => reject(err)
-      });
-    });
-  }
-
   // ---------- Model selection ----------
   const MODEL_BASE = "/assets/models/";
   function getModelURL(){
@@ -278,7 +190,6 @@ layout: post
   // ---------- State ----------
   let pyodide=null, FS=null;
   let pyReady=false, libsReady=false, uploaded=false;
-  let fileBytes=null, fileName="";
   let modelPath="/tmp_model";   // in Pyodide FS
   let modelFresh=false;         // set false when selection changes
   let modelPromise=null;        // in-flight fetch, for dedupe
@@ -332,16 +243,15 @@ layout: post
     try{
       $("uploadProg").value = 0;
       $("uploadStatus").textContent = "Reading…";
-      fileBytes = await readFileWithProgress(f);
-      fileName = f.name;
+      const bytes = await readFileWithProgress(f);
+      FS.writeFile("/tmp_input", bytes);
       uploaded = true;
       $("uploadProg").value = 100;
-      $("uploadStatus").textContent = `✅ Upload complete • ${(fileBytes.length/1e6).toFixed(2)} MB`;
-      log(`📁 ${f.name} (${(fileBytes.length/1e6).toFixed(2)} MB)`);
+      $("uploadStatus").textContent = `✅ Upload complete • ${(bytes.length/1e6).toFixed(2)} MB`;
+      log(`📁 ${f.name} (${(bytes.length/1e6).toFixed(2)} MB)`);
       setDisabled("runBtn", !libsReady);
     }catch(err){
       uploaded = false;
-      fileBytes = null;
       $("uploadProg").value = 0;
       $("uploadStatus").textContent = "❌ Upload failed";
       setDisabled("runBtn", true);
@@ -385,77 +295,49 @@ layout: post
   }
 
   $("runBtn").addEventListener("click", async ()=>{
-    if(!uploaded || !fileBytes){ alert("Load a CSV first."); return; }
+    if(!uploaded){ alert("Load a CSV first."); return; }
     if(!libsReady){ alert("Boot first."); return; }
 
     const runT0 = performance.now();
     let currentMsg = "Starting…";
+    // Tick the elapsed time in the status line while we wait.
     const tickTimer = setInterval(()=>{
       $("procStatus").textContent = `${currentMsg} • ${fmtElapsed(performance.now() - runT0)}`;
     }, 200);
-    const setStage = (pct, msg) => {
-      currentMsg = msg;
-      $("procProg").value = pct;
-      $("procStatus").textContent = `${msg} • ${fmtElapsed(performance.now() - runT0)}`;
-    };
 
-    setStage(5, "Starting…");
+    $("procProg").value = 5;
+    $("procStatus").textContent = currentMsg;
     log("▶️ Running annotation …");
 
-    let unhookOut = null, unhookErr = null;
-    try {
-      setStage(10, "Fetching model");
-      try {
-        await ensureModelInFS();
-      } catch(err) {
-        clearInterval(tickTimer);
-        $("procStatus").textContent = "❌ Model fetch error";
-        log("❌ Model fetch error: " + (err?.message || err));
-        return;
-      }
+    // fetch model for current selection
+    try{
+      await ensureModelInFS();
+    }catch(err){
+      clearInterval(tickTimer);
+      $("procStatus").textContent = "❌ Model fetch error";
+      log("❌ Model fetch error: " + (err?.message || err));
+      return;
+    }
 
-      setStage(20, "Decoding CSV");
-      const text = await decompressAndDecode(fileBytes);
-
-      setStage(30, "Parsing CSV");
-      const parsed = await parseCsvInJs(text, (n) => {
-        currentMsg = `Parsing CSV (${n.toLocaleString()} rows)`;
-      });
-      log(`📊 Parsed ${parsed.nCells.toLocaleString()} × ${parsed.nCols.toLocaleString()}`);
-
-      setStage(55, "Transferring to Python");
-      const xBytes = new Uint8Array(parsed.xFlat.buffer, parsed.xFlat.byteOffset, parsed.xFlat.byteLength);
-      FS.writeFile('/tmp_X.bin', xBytes);
-      pyodide.globals.set('col_names_js', parsed.colNames);
-      pyodide.globals.set('cell_ids_js', parsed.cellIds);
-      pyodide.globals.set('n_cells_js', parsed.nCells);
-      pyodide.globals.set('n_cols_js', parsed.nCols);
-
-      unhookOut = pyodide.setStdout({
-        batched: (s) => {
-          (s || "").split(/\r?\n/).forEach(line=>{
-            if(!line) return;
-            if(line.startsWith("__STAGE__:")){
-              const parts = line.trim().split(":");
-              const pct = Math.max(0, Math.min(100, parseInt(parts[1]||"0",10)));
-              const msg = parts.slice(2).join(":") || "Working…";
-              setStage(pct, msg);
-            } else {
-              log(line);
-            }
-          });
-        }
-      });
-      unhookErr = pyodide.setStderr({ batched: (s) => { s && s.trim() && log("ERR: " + s); } });
-
-      const code = `
-import numpy as np, gzip, io, sys
+    const code = `
+import numpy as np, pandas as pd, gzip, json, os, io, sys
 
 def stage(pct, msg):
     print(f"__STAGE__:{pct}:{msg}")
     sys.stdout.flush()
 
-stage(60, "Reading model")
+def read_any(path):
+    try:
+        return pd.read_csv(gzip.open(path,'rt'), index_col=0)
+    except Exception:
+        return pd.read_csv(path, index_col=0)
+
+stage(10, "Loading input")
+X = read_any('/tmp_input')
+# Optional guard against non-numeric columns:
+# X = X.apply(pd.to_numeric, errors='coerce').fillna(0.0)
+
+stage(20, "Reading model")
 def load_npz_any(path):
     try:
         return np.load(path, allow_pickle=True)
@@ -467,65 +349,82 @@ def load_npz_any(path):
             raise EOFError(f"Failed to read model as npz. Direct: {e1}; Gzip-fallback: {e2}")
 _npz = load_npz_any('/tmp_model')
 
-stage(65, "Loading matrix")
-n_cells = int(n_cells_js)
-n_cols  = int(n_cols_js)
-X = np.fromfile('/tmp_X.bin', dtype=np.float32).reshape(n_cells, n_cols)
-col_names = [str(c) for c in col_names_js]
-cell_ids  = [str(c) for c in cell_ids_js]
+stage(40, "Preparing features")
+loaded = {
+    'coef_': _npz['coef_'],
+    'intercept_': _npz['intercept_'],
+    'classes_': _npz['classes_'],
+    'features': _npz['features'] if 'features' in _npz.files else _npz['features_'],
+    'scaler_mean_': _npz['scaler_mean_'],
+    'scaler_scale_': _npz['scaler_scale_'],
+    'with_mean': bool(_npz['with_mean'].flat[0]) if _npz['with_mean'].size else True,
+}
 
-stage(70, "Preparing features")
-feat_arr = (_npz['features'] if 'features' in _npz.files else _npz['features_']).astype(str)
-feat_lower = np.char.lower(feat_arr)
-
-col_idx = {}
-for i, c in enumerate(col_names):
-    lc = c.lower()
-    if lc not in col_idx:
-        col_idx[lc] = i
-
-keep_mask = np.array([c in col_idx for c in feat_lower], dtype=bool)
-if not keep_mask.any():
+feat_lower = np.char.lower(loaded['features'].astype(str))
+cols_lower = {str(c).lower(): str(c) for c in X.columns.astype(str)}
+present = [cols_lower[g] for g in feat_lower if g in cols_lower]
+if len(present) == 0:
     raise ValueError('No overlapping features between input and model.')
 
-x_indices = np.array([col_idx[feat_lower[i]] for i in range(len(feat_lower)) if keep_mask[i]], dtype=np.int64)
+ordered_cols, keep_mask = [], []
+for g in feat_lower:
+    if g in cols_lower:
+        ordered_cols.append(cols_lower[g]); keep_mask.append(True)
+    else:
+        keep_mask.append(False)
 
-coef_keep  = _npz['coef_'][:, keep_mask]
-mean_keep  = _npz['scaler_mean_'][keep_mask]
-scale_keep = _npz['scaler_scale_'][keep_mask]
-with_mean  = bool(_npz['with_mean'].flat[0]) if _npz['with_mean'].size else True
-intercept  = _npz['intercept_']
-classes_   = _npz['classes_']
-
-stage(78, "Scaling input")
-X2 = X[:, x_indices]
-if with_mean:
+stage(55, "Scaling input")
+coef_keep  = loaded['coef_'][:, keep_mask]
+mean_keep  = loaded['scaler_mean_'][keep_mask]
+scale_keep = loaded['scaler_scale_'][keep_mask]
+X2 = X[ordered_cols].values.astype('float32')
+if loaded['with_mean']:
     X2 = (X2 - mean_keep) / (scale_keep + 1e-8)
 else:
     X2 = X2 / (scale_keep + 1e-8)
 X2[X2 > 10] = 10
 
-stage(86, "Computing logits")
-logits = X2 @ coef_keep.T + intercept
+stage(75, "Computing logits")
+logits = X2 @ coef_keep.T + loaded['intercept_']
 if logits.ndim == 1:
     logits = np.column_stack([-logits, logits])
 
-stage(92, "Softmax & labels")
+stage(85, "Softmax & labels")
 z = logits - logits.max(axis=1, keepdims=True)
 e = np.exp(z); P = e / e.sum(axis=1, keepdims=True)
 idx = np.argmax(P, axis=1)
-labels = classes_[idx]
+labels = loaded['classes_'][idx]
 top = P[np.arange(P.shape[0]), idx]
 part = np.partition(P, -2, axis=1)[:, -2:]
 cert = part[:,1] - part[:,0]
 
-stage(97, "Writing output")
-import pandas as pd
-out = pd.DataFrame({'cell_id': cell_ids, 'predicted_label': labels, 'conf_score': top, 'cert_score': cert})
+stage(95, "Writing output")
+out = pd.DataFrame({'cell_id': X.index, 'predicted_label': labels, 'conf_score': top, 'cert_score': cert})
 out.to_csv('/pred.csv', index=False)
-print('DONE', X.shape, len(classes_), 'features_used=', int(keep_mask.sum()))
+print('DONE', X.shape, len(loaded['classes_']))
 `;
 
+    // capture staged progress
+    const unhookOut = pyodide.setStdout({
+      batched: (s) => {
+        (s || "").split(/\r?\n/).forEach(line=>{
+          if(!line) return;
+          if(line.startsWith("__STAGE__:")){
+            const parts = line.trim().split(":");
+            const pct = Math.max(0, Math.min(100, parseInt(parts[1]||"0",10)));
+            const msg = parts.slice(2).join(":") || "Working…";
+            currentMsg = msg;
+            $("procProg").value = pct;
+            $("procStatus").textContent = `${msg} • ${fmtElapsed(performance.now() - runT0)}`;
+          } else {
+            log(line);
+          }
+        });
+      }
+    });
+    const unhookErr = pyodide.setStderr({ batched: (s) => { s && s.trim() && log("ERR: " + s); } });
+
+    try{
       await pyodide.runPythonAsync(code);
       const elapsed = fmtElapsed(performance.now() - runT0);
       $("procProg").value = 100;
@@ -538,11 +437,11 @@ print('DONE', X.shape, len(classes_), 'features_used=', int(keep_mask.sum()))
       $("downloadWrap").style.display = "block";
       $("downloadLink").href = resultUrl;
       log(`✅ pred.csv ready in ${elapsed}. Use the link above to download.`);
-    } catch(err) {
+    }catch(err){
       const elapsed = fmtElapsed(performance.now() - runT0);
       $("procStatus").textContent = `❌ Error • ${elapsed}`;
       log(`❌ Run error after ${elapsed}: ` + (err?.message || err));
-    } finally {
+    }finally{
       clearInterval(tickTimer);
       try{ unhookOut && unhookOut(); }catch(_){}
       try{ unhookErr && unhookErr(); }catch(_){}
