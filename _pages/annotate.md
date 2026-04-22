@@ -66,10 +66,15 @@ layout: post
   <button id="runBtn" type="button" disabled>4:run</button>
 </div>
 
-<!-- Unified status bar (upload + processing) -->
-<div id="progLabel" style="margin:8px 0 4px 0; font-size:13px; color:#555;">Status</div>
-<progress id="progBar" max="100" value="0" style="width:100%;"></progress>
-<div id="progStatus" style="font-size:12px;color:#777;margin:4px 0 8px 0;">Waiting for file…</div>
+<!-- Uploading progress -->
+<div style="margin:8px 0 4px 0; font-size:13px; color:#555;">Uploading</div>
+<progress id="uploadProg" max="100" value="0" style="width:100%;"></progress>
+<div id="uploadStatus" style="font-size:12px;color:#777;margin:4px 0 12px 0;">Waiting for file…</div>
+
+<!-- Processing progress -->
+<div style="margin:8px 0 4px 0; font-size:13px; color:#555;">Processing</div>
+<progress id="procProg" max="100" value="0" style="width:100%;"></progress>
+<div id="procStatus" style="font-size:12px;color:#777;margin:4px 0 8px 0;">Idle</div>
 
 <!-- Download link -->
 <p id="downloadWrap" style="display:none;margin-top:8px;">
@@ -79,6 +84,10 @@ layout: post
 <!-- ✨ Annotations moved here: below controls & progress, just above the Log window -->
 <div class="meta-panel">
   <strong>This page conducts cell annotations on the uploaded gene expression files</strong>
+  <div style="margin:4px 0 8px 0; font-size:13px; color:#555;">
+    This online-page is optimized small number of cells. Limited performance for datasets containing more than thousands of cells. For better and faster performance, use
+    <a href="https://github.com/srkim727/pangeapy" target="_blank" rel="noopener">pangeapy API</a>.
+  </div>
   <ol>
     <li><strong>Input file configuration</strong>
       <ul>
@@ -319,19 +328,8 @@ def stage(pct, msg):
     print(f"__STAGE__:{pct}:{msg}")
     sys.stdout.flush()
 
-def read_any(path):
-    with open(path, 'rb') as fh:
-        magic = fh.read(2)
-    if magic == b'\\x1f\\x8b':
-        return pd.read_csv(gzip.open(path, 'rt'), index_col=0)
-    return pd.read_csv(path, index_col=0)
-
-stage(10, "Loading input")
-X = read_any('/tmp_input')
-# Optional guard against non-numeric columns:
-# X = X.apply(pd.to_numeric, errors='coerce').fillna(0.0)
-
-stage(20, "Reading model")
+# 1) Load model FIRST so we know which input columns are worth parsing.
+stage(10, "Reading model")
 def load_npz_any(path):
     try:
         return np.load(path, allow_pickle=True)
@@ -343,36 +341,68 @@ def load_npz_any(path):
             raise EOFError(f"Failed to read model as npz. Direct: {e1}; Gzip-fallback: {e2}")
 _npz = load_npz_any('/tmp_model')
 
-stage(40, "Preparing features")
-loaded = {
-    'coef_': _npz['coef_'],
-    'intercept_': _npz['intercept_'],
-    'classes_': _npz['classes_'],
-    'features': _npz['features'] if 'features' in _npz.files else _npz['features_'],
-    'scaler_mean_': _npz['scaler_mean_'],
-    'scaler_scale_': _npz['scaler_scale_'],
-    'with_mean': bool(_npz['with_mean'].flat[0]) if _npz['with_mean'].size else True,
-}
+feat_raw   = (_npz['features'] if 'features' in _npz.files else _npz['features_']).astype(str)
+feat_lower = np.char.lower(feat_raw)
+feat_set   = set(feat_lower.tolist())
+coef_full  = np.asarray(_npz['coef_'],        dtype=np.float32)
+intercept  = np.asarray(_npz['intercept_'],   dtype=np.float32)
+classes_   = _npz['classes_']
+mean_full  = np.asarray(_npz['scaler_mean_'], dtype=np.float32)
+scale_full = np.asarray(_npz['scaler_scale_'],dtype=np.float32)
+with_mean  = bool(_npz['with_mean'].flat[0]) if _npz['with_mean'].size else True
 
-feat_lower = np.char.lower(loaded['features'].astype(str))
+# 2) Peek the CSV header (handle gzip via magic bytes) to pick matching columns.
+stage(20, "Scanning input")
+with open('/tmp_input', 'rb') as fh:
+    magic = fh.read(2)
+is_gz = (magic == b'\\x1f\\x8b')
+_open_text = (lambda p: gzip.open(p, 'rt')) if is_gz else (lambda p: open(p, 'rt'))
+with _open_text('/tmp_input') as fh:
+    header_line = fh.readline()
+header_cols = header_line.rstrip().split(',')
+if len(header_cols) < 2:
+    raise ValueError('Input header has fewer than 2 columns.')
+
+# Keep the index column (pos 0) + any column whose name is a model feature.
+keep_idx = [0] + [i for i, c in enumerate(header_cols[1:], 1) if c.lower() in feat_set]
+if len(keep_idx) == 1:
+    raise ValueError('No overlapping features between input and model.')
+
+# 3) Parse only the kept columns, directly into float32.
+stage(30, "Loading input")
+X = pd.read_csv(
+    '/tmp_input',
+    index_col=0,
+    usecols=keep_idx,
+    compression=('gzip' if is_gz else None),
+)
+# Force float32 (cheaper than re-parsing; dict-based dtype= is brittle with positional usecols)
+X = X.astype(np.float32, copy=False)
+
+# 4) Align remaining columns to model feature order; gather model slices.
+stage(50, "Preparing features")
 X.columns = X.columns.astype(str).str.lower()
 keep_mask = np.isin(feat_lower, X.columns.values)
 if not keep_mask.any():
     raise ValueError('No overlapping features between input and model.')
 
-stage(55, "Scaling input")
-coef_keep  = loaded['coef_'][:, keep_mask]
-mean_keep  = loaded['scaler_mean_'][keep_mask]
-scale_keep = loaded['scaler_scale_'][keep_mask]
-X2 = X.reindex(columns=feat_lower[keep_mask]).values.astype('float32', copy=False)
-if loaded['with_mean']:
-    X2 = (X2 - mean_keep) / (scale_keep + 1e-8)
+coef_keep  = coef_full[:, keep_mask]
+mean_keep  = mean_full[keep_mask]
+scale_keep = scale_full[keep_mask]
+X2 = X.reindex(columns=feat_lower[keep_mask]).values
+if X2.dtype != np.float32:
+    X2 = X2.astype(np.float32, copy=False)
+
+stage(60, "Scaling input")
+inv_scale = (np.float32(1.0) / (scale_keep + np.float32(1e-8))).astype(np.float32, copy=False)
+if with_mean:
+    X2 = (X2 - mean_keep) * inv_scale
 else:
-    X2 = X2 / (scale_keep + 1e-8)
-X2[X2 > 10] = 10
+    X2 = X2 * inv_scale
+np.clip(X2, None, np.float32(10.0), out=X2)
 
 stage(75, "Computing logits")
-logits = X2 @ coef_keep.T + loaded['intercept_']
+logits = X2 @ coef_keep.T + intercept
 if logits.ndim == 1:
     logits = np.column_stack([-logits, logits])
 
@@ -380,7 +410,7 @@ stage(85, "Softmax & labels")
 z = logits - logits.max(axis=1, keepdims=True)
 e = np.exp(z); P = e / e.sum(axis=1, keepdims=True)
 idx = np.argmax(P, axis=1)
-labels = loaded['classes_'][idx]
+labels = classes_[idx]
 top = P[np.arange(P.shape[0]), idx]
 part = np.partition(P, -2, axis=1)[:, -2:]
 cert = part[:,1] - part[:,0]
@@ -388,7 +418,7 @@ cert = part[:,1] - part[:,0]
 stage(95, "Writing output")
 out = pd.DataFrame({'cell_id': X.index, 'predicted_label': labels, 'conf_score': top, 'cert_score': cert})
 out.to_csv('/pred.csv', index=False)
-print('DONE', X.shape, len(loaded['classes_']))
+print('DONE', X.shape, len(classes_), 'features_used=', int(keep_mask.sum()))
 `;
 
     // capture staged progress
