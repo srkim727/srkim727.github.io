@@ -27,7 +27,7 @@ excerpt: ""
   }
   .pg-wrap .ctrl-row{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-bottom:14px;}
   .pg-wrap .btn{
-    font:inherit;height:32px;padding:0 14px;box-sizing:border-box;
+    font:inherit;font-size:13px;height:32px;padding:0 14px;box-sizing:border-box;
     border:1px solid var(--border);background:#fff;color:var(--text);
     border-radius:6px;cursor:pointer;line-height:1;
     transition:background .15s,border-color .15s,box-shadow .15s,color .15s;
@@ -40,7 +40,7 @@ excerpt: ""
   .pg-wrap .inline-ctl{display:flex;gap:6px;align-items:center;font-size:13px;color:var(--muted);}
   .pg-wrap .inline-ctl select,
   .pg-wrap .inline-ctl input[type="text"]{
-    font:inherit;height:32px;padding:0 10px;box-sizing:border-box;
+    font:inherit;font-size:13px;height:32px;padding:0 10px;box-sizing:border-box;
     border:1px solid var(--border);background:#fff;color:var(--text);
     border-radius:6px;
   }
@@ -394,6 +394,11 @@ print("matplotlib", mpl.__version__)
   $("cellSelect").addEventListener("change", ()=>{
     if(!booted) return;
     const cell = $("cellSelect").value.trim();
+    // Immediately invalidate — prevents clicking Run between cell change and the debounced reload.
+    assetsLoaded = false;
+    setDisabled("runBtn", true);
+    setStageState("data","active");
+    setStageState("plot","pending");
     log(`🔁 Cell changed → reloading assets for '${cell}' …`);
     clearTimeout(cellReloadTimer);
     cellReloadTimer = setTimeout(()=> loadAssetsForCell(cell), 150);

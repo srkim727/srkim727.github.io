@@ -41,7 +41,7 @@ layout: post
     display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-bottom:14px;
   }
   .annot-wrap .btn{
-    font:inherit;height:32px;padding:0 14px;box-sizing:border-box;
+    font:inherit;font-size:13px;height:32px;padding:0 14px;box-sizing:border-box;
     border:1px solid var(--border);background:#fff;color:var(--text);
     border-radius:6px;cursor:pointer;line-height:1;
     transition:background .15s,border-color .15s,box-shadow .15s,color .15s;
@@ -65,7 +65,7 @@ layout: post
     display:flex;gap:6px;align-items:center;font-size:13px;color:var(--muted);
   }
   .annot-wrap .model-select select{
-    font:inherit;height:32px;padding:0 28px 0 10px;box-sizing:border-box;
+    font:inherit;font-size:13px;height:32px;padding:0 28px 0 10px;box-sizing:border-box;
     border:1px solid var(--border);background:#fff;color:var(--text);
     border-radius:6px;cursor:pointer;
   }
@@ -189,15 +189,13 @@ layout: post
 <!-- Interactive panel: controls + stepper + progress + result -->
 <div class="panel">
   <div class="ctrl-row">
-    <button class="btn" id="bootBtn" type="button">1:boot</button>
-
     <label for="csvInput" style="display:inline-block;">
       <input type="file" id="csvInput" accept=".csv,.gz,.csv.gz,text/csv,application/gzip,application/x-gzip" style="display:none;">
-      <button class="btn" id="loadFileBtn" type="button" disabled>2:load file</button>
+      <button class="btn" id="loadFileBtn" type="button" disabled>Load file</button>
     </label>
 
     <label class="model-select">
-      <span>3:model</span>
+      <span>Model</span>
       <select id="modelSel">
         <option value="level1_Whole_model_portable.npz" selected>Whole (level1)</option>
         <option value="level2_B_mature_model_portable.npz">B_mature (level2)</option>
@@ -213,7 +211,7 @@ layout: post
       </select>
     </label>
 
-    <button class="btn btn-primary" id="runBtn" type="button" disabled>4:run</button>
+    <button class="btn btn-primary" id="runBtn" type="button" disabled>Annotate</button>
   </div>
 
   <!-- Stepper: Upload → Parse → Annotate -->
@@ -527,10 +525,9 @@ layout: post
     }
   });
 
-  // ---------- BOOT (with integrated sanity check) ----------
-  $("bootBtn").addEventListener("click", async ()=>{
+  // ---------- BOOT (auto-run at page load) ----------
+  async function boot(){
     try{
-      setDisabled("bootBtn", true);
       await waitForGlobal("loadPyodide", 20000);
       pyodide = await globalThis.loadPyodide({ indexURL: "https://cdn.jsdelivr.net/pyodide/v0.26.3/full/" });
       FS = pyodide.FS;
@@ -547,15 +544,12 @@ layout: post
       ensureModelInFS().catch(err => log("❌ Model prefetch: " + (err?.message || err)));
     }catch(err){
       log("❌ Boot failed: " + (err?.message || err));
-      setDisabled("bootBtn", false);
-      return;
     }
-    setDisabled("bootBtn", false);
-  });
+  }
 
   // ---------- LOAD FILE ----------
   $("loadFileBtn").addEventListener("click", ()=>{
-    if(!pyReady){ alert("Boot first."); return; }
+    if(!pyReady){ alert("Please wait until the setup finishes."); return; }
     $("csvInput").click();
   });
 
@@ -658,7 +652,7 @@ _npz = None  # release the ZIP reader
 
   $("runBtn").addEventListener("click", async ()=>{
     if(!uploaded || !fileBytes){ alert("Load a CSV first."); return; }
-    if(!libsReady){ alert("Boot first."); return; }
+    if(!libsReady){ alert("Please wait until the setup finishes."); return; }
 
     const runT0 = performance.now();
     let currentMsg = "Starting…";
@@ -846,7 +840,7 @@ print('DONE', n_cells, 'cells,', len(_classes), 'classes, features_matched=', ma
   resetStages();
 
   // Auto-boot: this script is inline to the annotate page, so it only runs here.
-  $("bootBtn").click();
+  boot();
 })();
 </script>
 
