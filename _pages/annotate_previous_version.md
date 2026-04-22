@@ -10,17 +10,49 @@ layout: post
 <!-- Load Pyodide from the official CDN -->
 <script defer src="https://cdn.jsdelivr.net/pyodide/v0.26.3/full/pyodide.js"></script>
 
-<!-- Annotation panel styles -->
+<!-- Annotation panel styles (deprecated page — light theme wrapper) -->
 <style>
-  .meta-panel{
-    background:#f8f9fb;border:1px solid #e5e7eb;border-radius:8px;
-    padding:12px 14px;margin:10px 0 14px 0;color:#111;font-size:14px;
+  .pg-wrap{
+    --accent:#3b82f6; --accent-dark:#2563eb; --ok:#10b981;
+    --muted:#6b7280; --text:#111827; --border:#e5e7eb; --bg-panel:#fafbfc;
+    max-width:780px;margin:14px auto;
   }
-  .meta-panel code{background:#eef2f7;padding:1px 4px;border-radius:4px}
-  .meta-panel ol{margin:6px 0 0 20px}
-  .meta-panel ul{margin:4px 0 0 18px}
-  .meta-panel li{margin:2px 0}
+  .pg-wrap .panel{
+    background:var(--bg-panel);border:1px solid var(--border);border-radius:10px;padding:16px 18px;
+    box-shadow:0 1px 3px rgba(0,0,0,.04), 0 1px 2px rgba(0,0,0,.02);
+  }
+  .pg-wrap .page-caption{
+    font-size:11px;color:var(--muted);letter-spacing:.08em;text-transform:uppercase;
+    margin:0 0 8px 4px;display:flex;align-items:center;gap:6px;
+  }
+  .pg-wrap .page-caption .dot{width:5px;height:5px;border-radius:50%;background:#ef4444;display:inline-block;}
+  .pg-wrap .deprecated-banner{
+    background:#fff7ed;border:1px solid #fed7aa;color:#9a3412;
+    border-radius:8px;padding:10px 14px;font-size:13px;margin-bottom:12px;
+  }
+  .pg-wrap .meta-panel{
+    background:var(--bg-panel);border:1px solid var(--border);border-radius:10px;
+    padding:14px 16px;margin:14px 0 0 0;color:var(--text);font-size:13px;
+    box-shadow:0 1px 3px rgba(0,0,0,.03);
+  }
+  .pg-wrap .meta-panel code{background:#eef2f7;padding:1px 4px;border-radius:4px;}
+  .pg-wrap .meta-panel ol{margin:6px 0 0 20px;}
+  .pg-wrap .meta-panel ul{margin:4px 0 0 18px;}
+  .pg-wrap .meta-panel li{margin:2px 0;}
+  .pg-wrap .meta-panel a{color:var(--accent);text-decoration:none;}
+  .pg-wrap .meta-panel a:hover{text-decoration:underline;color:var(--accent-dark);}
 </style>
+
+<div class="pg-wrap">
+
+<div class="page-caption"><span class="dot"></span>Deprecated · PANGEA</div>
+
+<div class="deprecated-banner">
+  ⚠️ This is the <strong>deprecated</strong> version kept for comparison.
+  For the current optimized tool, use <a href="/pages/annotate/" style="color:#9a3412;font-weight:600;text-decoration:underline;">Annotate cells online</a>.
+</div>
+
+<div class="panel">
 
 <!-- Controls row -->
 <div style="display:flex;flex-wrap:wrap;gap:10px;margin-bottom:8px;align-items:center;">
@@ -439,5 +471,9 @@ print('DONE', X.shape, len(loaded['classes_']))
   log("🧭 Default model: " + $("modelSel").selectedOptions[0].text + " → " + getModelURL());
 })();
 </script>
+
+</div><!-- /.panel -->
+
+</div><!-- /.pg-wrap -->
 
 {% endraw %}

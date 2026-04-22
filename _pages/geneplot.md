@@ -113,9 +113,38 @@ excerpt: ""
     .pg-wrap .panel{padding:12px;}
     .pg-wrap .stages{font-size:11px;}
   }
+
+  /* ---------- polish v2 ---------- */
+  .pg-wrap .panel{box-shadow:0 1px 3px rgba(0,0,0,.04), 0 1px 2px rgba(0,0,0,.02);}
+  .pg-wrap .meta-panel{box-shadow:0 1px 3px rgba(0,0,0,.03);}
+  .pg-wrap .btn:focus-visible,
+  .pg-wrap .inline-ctl select:focus-visible,
+  .pg-wrap .inline-ctl input:focus-visible,
+  .pg-wrap .btn-download:focus-visible{
+    outline:2px solid var(--accent);outline-offset:2px;
+  }
+  .pg-wrap .btn:active:not(:disabled),
+  .pg-wrap .btn-primary:active:not(:disabled),
+  .pg-wrap .btn-download:active{transform:translateY(1px);}
+  .pg-wrap .meta-panel a{color:var(--accent);text-decoration:none;transition:color .15s;}
+  .pg-wrap .meta-panel a:hover{text-decoration:underline;color:var(--accent-dark);}
+  .pg-wrap .page-caption{
+    font-size:11px;color:var(--muted);letter-spacing:.08em;text-transform:uppercase;
+    margin:0 0 8px 4px;display:flex;align-items:center;gap:6px;
+  }
+  .pg-wrap .page-caption .dot{width:5px;height:5px;border-radius:50%;background:var(--accent);display:inline-block;}
+  .pg-wrap .result-card{position:relative;padding-left:54px;}
+  .pg-wrap .result-card::before{
+    content:"✓";position:absolute;left:14px;top:12px;
+    width:28px;height:28px;border-radius:50%;background:var(--ok);color:#fff;
+    display:flex;align-items:center;justify-content:center;font-weight:700;font-size:14px;
+  }
+  .pg-wrap .result-card.err::before{content:"×";background:var(--err);font-size:18px;}
 </style>
 
 <div class="pg-wrap">
+
+<div class="page-caption"><span class="dot"></span>Interactive · PANGEA</div>
 
 <!-- Interactive panel -->
 <div class="panel">
@@ -142,7 +171,7 @@ excerpt: ""
       <input id="geneInput" type="text" value="CD3D,KRT5,CDH19,PTPRC,CD79A,MS4A1" style="flex:1;min-width:200px;">
     </label>
 
-    <button class="btn btn-primary" id="runBtn" type="button" disabled>Run plot</button>
+    <button class="btn btn-primary" id="runBtn" type="button" disabled>Explore</button>
   </div>
 
   <!-- Stepper: Boot → Data → Plot -->
@@ -258,7 +287,7 @@ excerpt: ""
   // --- reusable asset loader (used by button and dropdown) ---
   async function loadAssetsForCell(cell){
     if(isLoadingAssets) return;                // prevent overlap
-    if(!booted){ alert("Boot first."); return; }
+    if(!booted){ alert("Please wait until the setup finishes."); return; }
     if(!cell){ alert("Choose a cell."); return; }
 
     try{
@@ -372,7 +401,7 @@ print("matplotlib", mpl.__version__)
 
   // --- run plot ---
   $("runBtn").addEventListener("click", async ()=>{
-    if(!assetsLoaded){ alert("Load assets first."); return; }
+    if(!assetsLoaded){ alert("Please wait until the assets finish loading."); return; }
     const cell = $("cellSelect").value.trim();
     const geneStr = $("geneInput").value.trim();
     if(!geneStr){ alert("Enter gene symbols (comma-separated)."); return; }
@@ -530,14 +559,14 @@ df_out.to_csv("/plot.csv", index=False)
       $("downloadCSV").download = csvName;
       $("downloadCSV").textContent = `⬇ Download ${csvName}`;
       $("downloadCSV").style.display = "inline-flex";
-      $("resultSummary").innerHTML = `✓ ${cell} · ${geneStr.split(',').length} genes <span class="stat">plot rendered</span>`;
+      $("resultSummary").innerHTML = `${cell} · ${geneStr.split(',').length} genes <span class="stat">plot rendered</span>`;
       $("resultCard").classList.remove("err");
       $("resultCard").style.display = "block";
       log("✅ Plot ready.");
     }catch(e){
       stage(0, "Error");
       setStageState("plot","err");
-      $("resultSummary").innerHTML = `❌ ${e?.message || e}`;
+      $("resultSummary").innerHTML = `${e?.message || e}`;
       $("resultCard").classList.add("err");
       $("resultCard").style.display = "block";
       $("plotImg").style.display = "none";
@@ -550,7 +579,7 @@ df_out.to_csv("/plot.csv", index=False)
     }
   });
 
-  log("Flow → (auto-boot) → choose cell (auto-loads) → Run plot");
+  log("Flow → (auto-boot) → choose cell (auto-loads) → Explore");
   resetStages();
 
   // Auto-boot: this inline script only runs on the geneplot page.

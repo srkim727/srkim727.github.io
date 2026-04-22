@@ -153,9 +153,38 @@ layout: post
     .annot-wrap .stages{font-size:11px;}
     .annot-wrap .model-select{font-size:12px;}
   }
+
+  /* ---------- polish v2 ---------- */
+  .annot-wrap .panel{box-shadow:0 1px 3px rgba(0,0,0,.04), 0 1px 2px rgba(0,0,0,.02);}
+  .annot-wrap .meta-panel{box-shadow:0 1px 3px rgba(0,0,0,.03);}
+  .annot-wrap .btn:focus-visible,
+  .annot-wrap .model-select select:focus-visible,
+  .annot-wrap .btn-download:focus-visible,
+  .annot-wrap .stage:focus-visible{
+    outline:2px solid var(--accent);outline-offset:2px;
+  }
+  .annot-wrap .btn:active:not(:disabled),
+  .annot-wrap .btn-primary:active:not(:disabled),
+  .annot-wrap .btn-download:active{transform:translateY(1px);}
+  .annot-wrap .meta-panel a{color:var(--accent);text-decoration:none;transition:color .15s;}
+  .annot-wrap .meta-panel a:hover{text-decoration:underline;color:var(--accent-dark);}
+  .annot-wrap .page-caption{
+    font-size:11px;color:var(--muted);letter-spacing:.08em;text-transform:uppercase;
+    margin:0 0 8px 4px;display:flex;align-items:center;gap:6px;
+  }
+  .annot-wrap .page-caption .dot{width:5px;height:5px;border-radius:50%;background:var(--accent);display:inline-block;}
+  .annot-wrap .result-card{position:relative;padding-left:54px;}
+  .annot-wrap .result-card::before{
+    content:"✓";position:absolute;left:14px;top:12px;
+    width:28px;height:28px;border-radius:50%;background:var(--ok);color:#fff;
+    display:flex;align-items:center;justify-content:center;font-weight:700;font-size:14px;
+  }
+  .annot-wrap .result-card.err::before{content:"×";background:var(--err);font-size:18px;}
 </style>
 
 <div class="annot-wrap">
+
+<div class="page-caption"><span class="dot"></span>Interactive · PANGEA</div>
 
 <!-- Interactive panel: controls + stepper + progress + result -->
 <div class="panel">
@@ -794,7 +823,7 @@ print('DONE', n_cells, 'cells,', len(_classes), 'classes, features_matched=', ma
       if(resultUrl){ URL.revokeObjectURL(resultUrl); }
       resultUrl = URL.createObjectURL(blob);
 
-      const summary = `✓ ${parsedNCells.toLocaleString()} cells annotated
+      const summary = `${parsedNCells.toLocaleString()} cells annotated
         <span class="stat">${parsedNMatched.toLocaleString()} features · ${elapsed}</span>`;
       showResult("ok", summary, resultUrl, outName);
       log(`✅ ${outName} ready in ${elapsed}.`);
@@ -804,7 +833,7 @@ print('DONE', n_cells, 'cells,', len(_classes), 'classes, features_matched=', ma
       // Mark whichever stage is currently active as failed
       const active = document.querySelector(".annot-wrap .stage.active");
       if (active) { active.classList.remove("active"); active.classList.add("err"); }
-      showResult("err", `❌ ${err?.message || err} <span class="stat">after ${elapsed}</span>`);
+      showResult("err", `${err?.message || err} <span class="stat">after ${elapsed}</span>`);
       log(`❌ Run error after ${elapsed}: ` + (err?.message || err));
     } finally {
       clearInterval(tickTimer);

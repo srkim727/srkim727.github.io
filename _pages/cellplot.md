@@ -113,9 +113,38 @@ excerpt: ""
     .pg-wrap .panel{padding:12px;}
     .pg-wrap .stages{font-size:11px;}
   }
+
+  /* ---------- polish v2 ---------- */
+  .pg-wrap .panel{box-shadow:0 1px 3px rgba(0,0,0,.04), 0 1px 2px rgba(0,0,0,.02);}
+  .pg-wrap .meta-panel{box-shadow:0 1px 3px rgba(0,0,0,.03);}
+  .pg-wrap .btn:focus-visible,
+  .pg-wrap .inline-ctl select:focus-visible,
+  .pg-wrap .inline-ctl input:focus-visible,
+  .pg-wrap .btn-download:focus-visible{
+    outline:2px solid var(--accent);outline-offset:2px;
+  }
+  .pg-wrap .btn:active:not(:disabled),
+  .pg-wrap .btn-primary:active:not(:disabled),
+  .pg-wrap .btn-download:active{transform:translateY(1px);}
+  .pg-wrap .meta-panel a{color:var(--accent);text-decoration:none;transition:color .15s;}
+  .pg-wrap .meta-panel a:hover{text-decoration:underline;color:var(--accent-dark);}
+  .pg-wrap .page-caption{
+    font-size:11px;color:var(--muted);letter-spacing:.08em;text-transform:uppercase;
+    margin:0 0 8px 4px;display:flex;align-items:center;gap:6px;
+  }
+  .pg-wrap .page-caption .dot{width:5px;height:5px;border-radius:50%;background:var(--accent);display:inline-block;}
+  .pg-wrap .result-card{position:relative;padding-left:54px;}
+  .pg-wrap .result-card::before{
+    content:"✓";position:absolute;left:14px;top:12px;
+    width:28px;height:28px;border-radius:50%;background:var(--ok);color:#fff;
+    display:flex;align-items:center;justify-content:center;font-weight:700;font-size:14px;
+  }
+  .pg-wrap .result-card.err::before{content:"×";background:var(--err);font-size:18px;}
 </style>
 
 <div class="pg-wrap">
+
+<div class="page-caption"><span class="dot"></span>Interactive · PANGEA</div>
 
 <!-- Interactive panel -->
 <div class="panel">
@@ -402,7 +431,7 @@ def add_fig_note(fig, text, x=0.01, y=0.99, fontsize=9, mono=True, ha='left', va
 
   // -------- run --------
   $("runBtn").addEventListener("click", async ()=>{
-    if(!booted){ alert("Boot first."); return; }
+    if(!booted){ alert("Please wait until the setup finishes."); return; }
     clearImage();
     setStageState("data","active");
     setStageState("plot","pending");
@@ -772,7 +801,7 @@ with open("/work/explore.png","wb") as fh:
       $("downloadPNG").download = outName;
       $("downloadPNG").textContent = `⬇ Download ${outName}`;
       $("downloadPNG").style.display = "inline-flex";
-      $("resultSummary").innerHTML = `✓ ${level} · ${cell} <span class="stat">plot rendered</span>`;
+      $("resultSummary").innerHTML = `${level} · ${cell} <span class="stat">plot rendered</span>`;
       $("resultCard").classList.remove("err");
       $("resultCard").style.display = "block";
 
@@ -782,7 +811,7 @@ with open("/work/explore.png","wb") as fh:
     }catch(e){
       stage(0,"Error");
       setStageState("plot","err");
-      $("resultSummary").innerHTML = `❌ ${e?.message || e}`;
+      $("resultSummary").innerHTML = `${e?.message || e}`;
       $("resultCard").classList.add("err");
       $("resultCard").style.display = "block";
       $("plotImg").style.display = "none";
