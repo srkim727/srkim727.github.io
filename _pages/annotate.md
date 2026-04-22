@@ -157,7 +157,7 @@ layout: post
     return new Promise((resolve, reject)=>{
       const t0 = performance.now();
       (function check(){
-        if (typeof globalThis[fnName] === "function") return resolve();
+        if (globalThis[fnName] != null) return resolve();
         if (performance.now() - t0 > timeoutMs) return reject(new Error("Timeout waiting for "+fnName));
         setTimeout(check, 100);
       })();
