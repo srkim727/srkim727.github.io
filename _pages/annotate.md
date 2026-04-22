@@ -10,9 +10,6 @@ layout: post
 <!-- Load Pyodide from the official CDN -->
 <script defer src="https://cdn.jsdelivr.net/pyodide/v0.26.3/full/pyodide.js"></script>
 
-<!-- PapaParse: fast browser-side CSV parser -->
-<script defer src="https://cdn.jsdelivr.net/npm/papaparse@5.4.1/papaparse.min.js"></script>
-
 <!-- Annotation panel styles -->
 <style>
   .meta-panel{
@@ -183,103 +180,127 @@ layout: post
     });
   }
 
-  // Decompress gzip (if magic bytes present) and return a Blob.
-  // Avoids materializing a giant string, which hits V8's ~512 MB single-string limit.
-  async function decompressToBlob(bytes){
+  // Stream-decompress (if gzipped) and parse the CSV in one pipeline.
+  // We never materialize the full decompressed text as a single string or Blob.
+  // DecompressionStream gives us Uint8Array chunks; we TextDecoder-stream them,
+  // split on newlines, and write float values directly into a pre-sized
+  // Float32Array that's already n_cells × n_feat (columns not in the model
+  // are skipped entirely — never converted to float, never stored).
+  async function parseCsvBytes(bytes, featureMap, nFeat, onRowProgress){
     const isGz = bytes.length >= 2 && bytes[0] === 0x1f && bytes[1] === 0x8b;
-    if(!isGz){
-      return new Blob([bytes], {type: 'text/csv'});
+    const cellIds = [];
+    let colToFeatIdx = null;                    // Int32Array: CSV data-col → feature idx (or -1)
+    const keepMask = new Uint8Array(nFeat);     // 1 if feature has an input column
+    let rowCount = 0;
+    let capacity = 2048;
+    let xFlat = new Float32Array(capacity * nFeat);
+    const decoder = new TextDecoder('utf-8');
+    let leftover = "";
+    let lastTick = performance.now();
+
+    function processLine(line){
+      if (!line) return;
+      const parts = line.split(',');
+      if (colToFeatIdx === null) {
+        // Header: [indexColName, gene1, gene2, ...]
+        const nDataCols = parts.length - 1;
+        colToFeatIdx = new Int32Array(nDataCols);
+        for (let i = 0; i < nDataCols; i++) {
+          const g = parts[i + 1].toLowerCase();
+          const fi = featureMap.get(g);
+          if (fi === undefined) {
+            colToFeatIdx[i] = -1;
+          } else {
+            colToFeatIdx[i] = fi;
+            keepMask[fi] = 1;
+          }
+        }
+        return;
+      }
+      if (parts.length < colToFeatIdx.length + 1) return;  // short row
+      if (rowCount >= capacity) {
+        const newCap = Math.ceil(capacity * 1.5) + 1;
+        const newX = new Float32Array(newCap * nFeat);
+        newX.set(xFlat);
+        xFlat = newX;
+        capacity = newCap;
+      }
+      cellIds.push(parts[0]);
+      const off = rowCount * nFeat;
+      const nDataCols = colToFeatIdx.length;
+      for (let i = 0; i < nDataCols; i++) {
+        const fi = colToFeatIdx[i];
+        if (fi < 0) continue;  // gene not in model — skip
+        const v = +parts[i + 1];
+        xFlat[off + fi] = (v === v) ? v : 0;
+      }
+      rowCount++;
     }
-    const ds = new DecompressionStream('gzip');
-    const stream = new Blob([bytes]).stream().pipeThrough(ds);
-    return await new Response(stream).blob();
-  }
 
-  // Parse a CSV expression matrix (cell × gene) Blob, keeping ONLY columns
-  // that are in the model's feature map. The output Float32Array is already
-  // n_cells × n_feat in model feature order — much smaller than the original
-  // input (typically 10–15× smaller), and Python needs no column re-indexing.
-  async function parseCsvInJs(blob, featureMap, nFeat, onRowProgress){
-    await waitForGlobal("Papa", 10000);
-    return new Promise((resolve, reject) => {
-      const cellIds = [];
-      let colToFeatIdx = null;   // Int32Array: for each CSV data-col, the feature index (or -1)
-      const keepMask = new Uint8Array(nFeat);  // 1 if feature has input column
-      let rowCount = 0;
-      let capacity = 0;
-      let xFlat = null;
-      let lastTick = performance.now();
+    function processTextBuffer(isFinal){
+      // leftover already contains any residue; process newline-terminated lines.
+      const buf = leftover;
+      const len = buf.length;
+      let start = 0;
+      for (let i = 0; i < len; i++) {
+        if (buf.charCodeAt(i) === 10) {  // '\n'
+          let end = i;
+          if (end > start && buf.charCodeAt(end - 1) === 13) end--;  // strip trailing '\r'
+          processLine(buf.substring(start, end));
+          start = i + 1;
+        }
+      }
+      leftover = start < len ? buf.substring(start) : "";
+      if (isFinal && leftover) {
+        // flush final line without trailing newline
+        if (leftover.endsWith('\r')) leftover = leftover.substring(0, leftover.length - 1);
+        processLine(leftover);
+        leftover = "";
+      }
+      const now = performance.now();
+      if (onRowProgress && now - lastTick > 100) {
+        lastTick = now;
+        onRowProgress(rowCount);
+      }
+    }
 
-      Papa.parse(blob, {
-        header: false,
-        skipEmptyLines: true,
-        fastMode: true,
-        delimiter: ',',
-        worker: false,
-        chunk: (results) => {
-          const rows = results.data;
-          for (let r = 0; r < rows.length; r++) {
-            const row = rows[r];
-            if (colToFeatIdx === null) {
-              // Header: [indexCol, gene1, gene2, ...]
-              const nDataCols = row.length - 1;
-              colToFeatIdx = new Int32Array(nDataCols);
-              for (let i = 0; i < nDataCols; i++) {
-                const g = String(row[i + 1] || "").toLowerCase();
-                const fi = featureMap.get(g);
-                if (fi === undefined) {
-                  colToFeatIdx[i] = -1;
-                } else {
-                  colToFeatIdx[i] = fi;
-                  keepMask[fi] = 1;
-                }
-              }
-              capacity = 2048;
-              xFlat = new Float32Array(capacity * nFeat);
-              continue;
-            }
-            if (row.length < colToFeatIdx.length + 1) continue; // short row
-            if (rowCount >= capacity) {
-              const newCap = Math.ceil(capacity * 1.5) + 1;
-              const newX = new Float32Array(newCap * nFeat);
-              newX.set(xFlat);
-              xFlat = newX;
-              capacity = newCap;
-            }
-            cellIds.push(row[0]);
-            const off = rowCount * nFeat;
-            const nDataCols = colToFeatIdx.length;
-            for (let i = 0; i < nDataCols; i++) {
-              const fi = colToFeatIdx[i];
-              if (fi < 0) continue; // gene not in model — skip
-              const v = +row[i + 1];
-              xFlat[off + fi] = (v === v) ? v : 0;
-            }
-            rowCount++;
-          }
-          const now = performance.now();
-          if (onRowProgress && now - lastTick > 100) {
-            lastTick = now;
-            onRowProgress(rowCount);
-          }
-        },
-        complete: () => {
-          if (colToFeatIdx === null) {
-            reject(new Error("CSV appears to be empty."));
-            return;
-          }
-          resolve({
-            cellIds,
-            xFlat: xFlat.subarray(0, rowCount * nFeat),
-            keepMask,
-            nCells: rowCount,
-            nFeat,
-            nMatched: keepMask.reduce((a,b) => a+b, 0),
-          });
-        },
-        error: (err) => reject(err)
-      });
-    });
+    // Build a source ReadableStream: decompress if gzipped, else raw bytes.
+    let source;
+    if (isGz) {
+      const ds = new DecompressionStream('gzip');
+      source = new Blob([bytes]).stream().pipeThrough(ds);
+    } else {
+      source = new Blob([bytes]).stream();
+    }
+    const reader = source.getReader();
+    try {
+      // Stream-read chunks, never accumulating the full decompressed output.
+      while (true) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        leftover += decoder.decode(value, { stream: true });
+        processTextBuffer(false);
+      }
+      leftover += decoder.decode();  // flush decoder
+      processTextBuffer(true);
+    } finally {
+      try { reader.releaseLock(); } catch(_) {}
+    }
+
+    if (colToFeatIdx === null) {
+      throw new Error("CSV appears to be empty.");
+    }
+
+    let nMatched = 0;
+    for (let i = 0; i < nFeat; i++) if (keepMask[i]) nMatched++;
+    return {
+      cellIds,
+      xFlat: xFlat.subarray(0, rowCount * nFeat),
+      keepMask,
+      nCells: rowCount,
+      nFeat,
+      nMatched,
+    };
   }
 
   // ---------- Model selection ----------
@@ -462,11 +483,8 @@ _npz = None  # release the ZIP reader
         return;
       }
 
-      setStage(20, "Decoding CSV");
-      const csvBlob = await decompressToBlob(fileBytes);
-
-      setStage(30, "Parsing CSV");
-      const parsed = await parseCsvInJs(csvBlob, modelFeatureMap, modelFeatures.length, (n) => {
+      setStage(25, "Parsing CSV");
+      const parsed = await parseCsvBytes(fileBytes, modelFeatureMap, modelFeatures.length, (n) => {
         currentMsg = `Parsing CSV (${n.toLocaleString()} rows)`;
       });
       log(`📊 Parsed ${parsed.nCells.toLocaleString()} cells × ${parsed.nMatched.toLocaleString()}/${parsed.nFeat.toLocaleString()} model features matched`);
@@ -512,7 +530,7 @@ def stage(pct, msg):
 
 # Model already parsed into globals by ensureModelInFS:
 #   _coef, _intercept, _classes, _scaler_mean, _scaler_scale, _with_mean
-# CSV already filtered to model features by parseCsvInJs; xFlat is
+# CSV already filtered to model features by parseCsvBytes; xFlat is
 # (n_cells, n_feat) in model feature order. Missing features are zeros,
 # and keep_mask_js marks which features have any input.
 
