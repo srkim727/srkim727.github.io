@@ -66,15 +66,10 @@ layout: post
   <button id="runBtn" type="button" disabled>4:run</button>
 </div>
 
-<!-- Uploading progress -->
-<div style="margin:8px 0 4px 0; font-size:13px; color:#555;">Uploading</div>
-<progress id="uploadProg" max="100" value="0" style="width:100%;"></progress>
-<div id="uploadStatus" style="font-size:12px;color:#777;margin:4px 0 12px 0;">Waiting for file…</div>
-
-<!-- Processing progress -->
-<div style="margin:8px 0 4px 0; font-size:13px; color:#555;">Processing</div>
-<progress id="procProg" max="100" value="0" style="width:100%;"></progress>
-<div id="procStatus" style="font-size:12px;color:#777;margin:4px 0 8px 0;">Idle</div>
+<!-- Unified status bar (upload + processing) -->
+<div id="progLabel" style="margin:8px 0 4px 0; font-size:13px; color:#555;">Status</div>
+<progress id="progBar" max="100" value="0" style="width:100%;"></progress>
+<div id="progStatus" style="font-size:12px;color:#777;margin:4px 0 8px 0;">Waiting for file…</div>
 
 <!-- Download link -->
 <p id="downloadWrap" style="display:none;margin-top:8px;">
