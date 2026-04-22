@@ -10,6 +10,9 @@ layout: post
 <!-- Load Pyodide from the official CDN -->
 <script defer src="https://cdn.jsdelivr.net/pyodide/v0.26.3/full/pyodide.js"></script>
 
+<!-- pako: robust pure-JS gzip decompressor (handles multi-member gzip / BGZF / trailing padding) -->
+<script defer src="https://cdn.jsdelivr.net/npm/pako@2.1.0/dist/pako.min.js"></script>
+
 <!-- Annotation panel styles -->
 <style>
   .meta-panel{
@@ -182,7 +185,7 @@ layout: post
 
   // Stream-decompress (if gzipped) and parse the CSV in one pipeline.
   // We never materialize the full decompressed text as a single string or Blob.
-  // DecompressionStream gives us Uint8Array chunks; we TextDecoder-stream them,
+  // pako's Inflate emits Uint8Array chunks; we TextDecoder-stream them,
   // split on newlines, and write float values directly into a pre-sized
   // Float32Array that's already n_cells × n_feat (columns not in the model
   // are skipped entirely — never converted to float, never stored).
@@ -264,27 +267,30 @@ layout: post
       }
     }
 
-    // Build a source ReadableStream: decompress if gzipped, else raw bytes.
-    let source;
     if (isGz) {
-      const ds = new DecompressionStream('gzip');
-      source = new Blob([bytes]).stream().pipeThrough(ds);
-    } else {
-      source = new Blob([bytes]).stream();
-    }
-    const reader = source.getReader();
-    try {
-      // Stream-read chunks, never accumulating the full decompressed output.
-      while (true) {
-        const { value, done } = await reader.read();
-        if (done) break;
-        leftover += decoder.decode(value, { stream: true });
-        processTextBuffer(false);
+      // Use pako — more lenient than DecompressionStream with multi-member /
+      // BGZF-style / padded gzip files produced by some bioinformatics tools.
+      await waitForGlobal("pako", 10000);
+      const inflator = new pako.Inflate({ chunkSize: 262144 });
+      let pakoErr = null;
+      inflator.onData = (chunk) => {
+        try {
+          leftover += decoder.decode(chunk, { stream: true });
+          processTextBuffer(false);
+        } catch (e) {
+          pakoErr = e;
+        }
+      };
+      inflator.push(bytes, true);  // true = end of input
+      if (inflator.err && inflator.err !== 1 /* Z_STREAM_END */) {
+        throw new Error("Gzip decompression error: " + (inflator.msg || "code " + inflator.err));
       }
-      leftover += decoder.decode();  // flush decoder
+      if (pakoErr) throw pakoErr;
+      leftover += decoder.decode();  // flush TextDecoder
       processTextBuffer(true);
-    } finally {
-      try { reader.releaseLock(); } catch(_) {}
+    } else {
+      leftover = decoder.decode(bytes);
+      processTextBuffer(true);
     }
 
     if (colToFeatIdx === null) {
