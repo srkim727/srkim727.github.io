@@ -178,13 +178,18 @@ layout: post
   let pyReady=false, libsReady=false, uploaded=false;
   let modelPath="/tmp_model";   // in Pyodide FS
   let modelFresh=false;         // set false when selection changes
+  let modelPromise=null;        // in-flight fetch, for dedupe
   let resultUrl=null;
 
   // Reset model state when selection changes
   $("modelSel").addEventListener("change", ()=>{
     modelFresh = false;
+    modelPromise = null;
     setDisabled("runBtn", !uploaded || !libsReady);
     log("🧭 Model selected: " + $("modelSel").selectedOptions[0].text + " → " + getModelURL());
+    if (libsReady) {
+      ensureModelInFS().catch(err => log("⚠️ Model prefetch: " + (err?.message || err)));
+    }
   });
 
   // ---------- BOOT (with integrated sanity check) ----------
@@ -217,6 +222,9 @@ print("sum:", int(np.array([1,2,3]).sum()))
 
       setDisabled("loadFileBtn", false);
       setDisabled("runBtn", !uploaded);
+
+      // Prefetch the currently-selected model in the background
+      ensureModelInFS().catch(err => log("⚠️ Model prefetch: " + (err?.message || err)));
     }catch(err){
       log("❌ Boot failed: " + (err?.message || err));
       setDisabled("bootBtn", false);
@@ -258,19 +266,27 @@ print("sum:", int(np.array([1,2,3]).sum()))
   // ---------- Fetch selected model into Pyodide FS (called from Run) ----------
   async function ensureModelInFS(){
     if (modelFresh) return;
+    if (modelPromise) return modelPromise;
     const url = getModelURL();
     log("🔎 Fetching model: " + url);
-    const resp = await fetch(url, { cache: "no-store" });
-    if(!resp.ok) throw new Error("Model HTTP " + resp.status);
-    const buf = new Uint8Array(await resp.arrayBuffer());
+    modelPromise = (async () => {
+      const resp = await fetch(url);
+      if(!resp.ok) throw new Error("Model HTTP " + resp.status);
+      const buf = new Uint8Array(await resp.arrayBuffer());
 
-    // Basic ZIP magic check
-    const ok = (buf.length >= 4 && buf[0]===0x50 && buf[1]===0x4B && buf[2]===0x03 && buf[3]===0x04);
-    if(!ok) log("⚠️ Model doesn't look like a ZIP (npz) – continuing anyway.");
+      // Basic ZIP magic check
+      const ok = (buf.length >= 4 && buf[0]===0x50 && buf[1]===0x4B && buf[2]===0x03 && buf[3]===0x04);
+      if(!ok) log("⚠️ Model doesn't look like a ZIP (npz) – continuing anyway.");
 
-    FS.writeFile(modelPath, buf);
-    modelFresh = true;
-    log(`✅ Model cached at ${modelPath} (${(buf.length/1e6).toFixed(2)} MB)`);
+      FS.writeFile(modelPath, buf);
+      modelFresh = true;
+      log(`✅ Model cached at ${modelPath} (${(buf.length/1e6).toFixed(2)} MB)`);
+    })();
+    try {
+      await modelPromise;
+    } finally {
+      modelPromise = null;
+    }
   }
 
   // ---------- RUN ----------
@@ -299,10 +315,11 @@ def stage(pct, msg):
     sys.stdout.flush()
 
 def read_any(path):
-    try:
-        return pd.read_csv(gzip.open(path,'rt'), index_col=0)
-    except Exception:
-        return pd.read_csv(path, index_col=0)
+    with open(path, 'rb') as fh:
+        magic = fh.read(2)
+    if magic == b'\x1f\x8b':
+        return pd.read_csv(gzip.open(path, 'rt'), index_col=0)
+    return pd.read_csv(path, index_col=0)
 
 stage(10, "Loading input")
 X = read_any('/tmp_input')
@@ -333,23 +350,16 @@ loaded = {
 }
 
 feat_lower = np.char.lower(loaded['features'].astype(str))
-cols_lower = {str(c).lower(): str(c) for c in X.columns.astype(str)}
-present = [cols_lower[g] for g in feat_lower if g in cols_lower]
-if len(present) == 0:
+X.columns = X.columns.astype(str).str.lower()
+keep_mask = np.isin(feat_lower, X.columns.values)
+if not keep_mask.any():
     raise ValueError('No overlapping features between input and model.')
-
-ordered_cols, keep_mask = [], []
-for g in feat_lower:
-    if g in cols_lower:
-        ordered_cols.append(cols_lower[g]); keep_mask.append(True)
-    else:
-        keep_mask.append(False)
 
 stage(55, "Scaling input")
 coef_keep  = loaded['coef_'][:, keep_mask]
 mean_keep  = loaded['scaler_mean_'][keep_mask]
 scale_keep = loaded['scaler_scale_'][keep_mask]
-X2 = X[ordered_cols].values.astype('float32')
+X2 = X.reindex(columns=feat_lower[keep_mask]).values.astype('float32', copy=False)
 if loaded['with_mean']:
     X2 = (X2 - mean_keep) / (scale_keep + 1e-8)
 else:
@@ -418,6 +428,9 @@ print('DONE', X.shape, len(loaded['classes_']))
 
   log("Flow → 1) Boot  2) Load file  3) Run");
   log("🧭 Default model: " + $("modelSel").selectedOptions[0].text + " → " + getModelURL());
+
+  // Auto-boot: this script is inline to the annotate page, so it only runs here.
+  $("bootBtn").click();
 })();
 </script>
 
