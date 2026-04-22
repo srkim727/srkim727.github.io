@@ -327,7 +327,7 @@ def stage(pct, msg):
 def read_any(path):
     with open(path, 'rb') as fh:
         magic = fh.read(2)
-    if magic == b'\x1f\x8b':
+    if magic == b'\\x1f\\x8b':
         return pd.read_csv(gzip.open(path, 'rt'), index_col=0)
     return pd.read_csv(path, index_col=0)
 
