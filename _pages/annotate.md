@@ -15,76 +15,199 @@ layout: post
 
 <!-- Annotation panel styles -->
 <style>
-  .meta-panel{
-    background:#f8f9fb;border:1px solid #e5e7eb;border-radius:8px;
-    padding:12px 14px;margin:10px 0 14px 0;color:#111;font-size:14px;
+  .annot-wrap{
+    --accent:#3b82f6;
+    --accent-dark:#2563eb;
+    --accent-light:#dbeafe;
+    --ok:#10b981;
+    --ok-dark:#059669;
+    --ok-light:#ecfdf5;
+    --ok-border:#a7f3d0;
+    --err:#ef4444;
+    --err-light:#fef2f2;
+    --err-border:#fecaca;
+    --muted:#6b7280;
+    --text:#111827;
+    --border:#e5e7eb;
+    --border-strong:#d1d5db;
+    --bg-panel:#fafbfc;
+    max-width:780px;margin:14px auto;
   }
-  .meta-panel code{background:#eef2f7;padding:1px 4px;border-radius:4px}
-  .meta-panel ol{margin:6px 0 0 20px}
-  .meta-panel ul{margin:4px 0 0 18px}
-  .meta-panel li{margin:2px 0}
+  .annot-wrap .panel{
+    background:var(--bg-panel);border:1px solid var(--border);
+    border-radius:10px;padding:16px 18px;
+  }
+  .annot-wrap .ctrl-row{
+    display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-bottom:14px;
+  }
+  .annot-wrap .btn{
+    font:inherit;height:32px;padding:0 14px;box-sizing:border-box;
+    border:1px solid var(--border);background:#fff;color:var(--text);
+    border-radius:6px;cursor:pointer;line-height:1;
+    transition:background .15s,border-color .15s,box-shadow .15s,color .15s;
+  }
+  .annot-wrap .btn:hover:not(:disabled){
+    border-color:var(--border-strong);box-shadow:0 1px 2px rgba(0,0,0,.05);
+  }
+  .annot-wrap .btn:disabled{
+    color:#9ca3af;background:#f3f4f6;border-color:var(--border);cursor:not-allowed;
+  }
+  .annot-wrap .btn-primary{
+    background:var(--accent);border-color:var(--accent);color:#fff;
+  }
+  .annot-wrap .btn-primary:hover:not(:disabled){
+    background:var(--accent-dark);border-color:var(--accent-dark);
+  }
+  .annot-wrap .btn-primary:disabled{
+    background:#bfdbfe;border-color:#bfdbfe;color:#fff;
+  }
+  .annot-wrap .model-select{
+    display:flex;gap:6px;align-items:center;font-size:13px;color:var(--muted);
+  }
+  .annot-wrap .model-select select{
+    font:inherit;height:32px;padding:0 28px 0 10px;box-sizing:border-box;
+    border:1px solid var(--border);background:#fff;color:var(--text);
+    border-radius:6px;cursor:pointer;
+  }
+  .annot-wrap .model-select select:hover{border-color:var(--border-strong);}
 
-  /* Make the Model <select> match the other control buttons */
-  .ctrl-row button,
-  .ctrl-row select{
-    font: inherit;
-    height: 28px;
-    padding: 0 10px;
-    box-sizing: border-box;
-    line-height: normal;
+  /* Stepper */
+  .annot-wrap .stages{
+    display:flex;align-items:center;gap:8px;margin:6px 0 10px 0;
+    font-size:12px;color:var(--muted);
+  }
+  .annot-wrap .stage{display:flex;align-items:center;gap:6px;}
+  .annot-wrap .stage-dot{
+    width:14px;height:14px;border-radius:50%;background:#fff;
+    border:2px solid #e5e7eb;display:flex;align-items:center;justify-content:center;
+    font-size:9px;color:#fff;line-height:1;transition:all .2s;
+  }
+  .annot-wrap .stage.active .stage-dot{
+    border-color:var(--accent);box-shadow:0 0 0 4px var(--accent-light);
+  }
+  .annot-wrap .stage.done .stage-dot{
+    background:var(--ok);border-color:var(--ok);
+  }
+  .annot-wrap .stage.done .stage-dot::after{content:"✓";color:#fff;font-weight:700;}
+  .annot-wrap .stage.err .stage-dot{
+    background:var(--err);border-color:var(--err);
+  }
+  .annot-wrap .stage.err .stage-dot::after{content:"×";color:#fff;font-weight:700;font-size:11px;}
+  .annot-wrap .stage.active .stage-label,
+  .annot-wrap .stage.done .stage-label,
+  .annot-wrap .stage.err .stage-label{color:var(--text);font-weight:500;}
+  .annot-wrap .stage-sep{flex:1;height:1px;background:var(--border);}
+
+  /* Progress bar */
+  .annot-wrap progress#progBar{
+    width:100%;height:6px;border:none;background:#f3f4f6;border-radius:3px;
+    overflow:hidden;display:block;
+  }
+  .annot-wrap progress#progBar::-webkit-progress-bar{background:#f3f4f6;border-radius:3px;}
+  .annot-wrap progress#progBar::-webkit-progress-value{background:var(--accent);border-radius:3px;transition:width .2s;}
+  .annot-wrap progress#progBar::-moz-progress-bar{background:var(--accent);border-radius:3px;}
+  .annot-wrap .status-line{
+    font-size:12px;color:var(--muted);margin:6px 0 0 0;min-height:1em;
+  }
+
+  /* Result card */
+  .annot-wrap .result-card{
+    margin-top:14px;padding:12px 14px;border-radius:8px;display:flex;
+    align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;
+    background:var(--ok-light);border:1px solid var(--ok-border);
+  }
+  .annot-wrap .result-card.err{background:var(--err-light);border-color:var(--err-border);}
+  .annot-wrap .result-summary{
+    font-size:14px;color:var(--text);font-weight:500;flex:1;min-width:200px;
+  }
+  .annot-wrap .result-summary .stat{
+    color:var(--muted);font-weight:400;font-size:12px;margin-left:6px;
+  }
+  .annot-wrap .btn-download{
+    background:var(--ok);border-color:var(--ok);color:#fff;padding:0 16px;height:34px;
+    display:inline-flex;align-items:center;gap:6px;text-decoration:none;font-weight:500;
+    border:1px solid var(--ok);border-radius:6px;transition:background .15s,border-color .15s;
+  }
+  .annot-wrap .btn-download:hover{background:var(--ok-dark);border-color:var(--ok-dark);color:#fff;text-decoration:none;}
+
+  /* Info meta-panel (same width, calmer) */
+  .annot-wrap .meta-panel{
+    background:var(--bg-panel);border:1px solid var(--border);border-radius:10px;
+    padding:14px 16px;margin:14px 0 0 0;color:var(--text);font-size:13px;
+  }
+  .annot-wrap .meta-panel code{background:#eef2f7;padding:1px 4px;border-radius:4px;}
+  .annot-wrap .meta-panel ol{margin:6px 0 0 20px;}
+  .annot-wrap .meta-panel ul{margin:4px 0 0 18px;}
+  .annot-wrap .meta-panel li{margin:2px 0;}
+
+  /* Log details */
+  .annot-wrap details.log-wrap{margin-top:12px;}
+  .annot-wrap details.log-wrap summary{
+    cursor:pointer;font-size:12px;color:var(--muted);padding:4px 0;
+  }
+  .annot-wrap details.log-wrap summary:hover{color:var(--text);}
+
+  @media (max-width:620px){
+    .annot-wrap{margin:8px;}
+    .annot-wrap .panel{padding:12px;}
+    .annot-wrap .stages{font-size:11px;}
+    .annot-wrap .model-select{font-size:12px;}
   }
 </style>
 
-<!-- Controls row -->
-<div class="ctrl-row" style="display:flex;flex-wrap:wrap;gap:10px;margin-bottom:8px;align-items:center;">
-  <button id="bootBtn" type="button">1:boot</button>
+<div class="annot-wrap">
 
-  <label for="csvInput" style="display:inline-block;">
-    <input type="file" id="csvInput" accept=".csv,.gz,.csv.gz,text/csv,application/gzip,application/x-gzip" style="display:none;">
-    <button id="loadFileBtn" type="button" disabled>2:load file</button>
-  </label>
+<!-- Interactive panel: controls + stepper + progress + result -->
+<div class="panel">
+  <div class="ctrl-row">
+    <button class="btn" id="bootBtn" type="button">1:boot</button>
 
-  <!-- Model selector -->
-  <label style="display:flex;gap:6px;align-items:center;">
-    <span style="font-size:13px;color:#555;">3:model</span>
-    <select id="modelSel">
-      <option value="level1_Whole_model_portable.npz" selected>Whole (level1)</option>
-      <option value="level2_B_mature_model_portable.npz">B_mature (level2)</option>
-      <option value="level2_Dendritic_classical_model_portable.npz">Dendritic_classical (level2)</option>
-      <option value="level2_Ductal_model_portable.npz">Ductal (level2)</option>
-      <option value="level2_Endothelial_model_portable.npz">Endothelial (level2)</option>
-      <option value="level2_Fibroblast_model_portable.npz">Fibroblast (level2)</option>
-      <option value="level2_Macrophage_model_portable.npz">Macrophage (level2)</option>
-      <option value="level2_Monocyte_model_portable.npz">Monocyte (level2)</option>
-      <option value="level2_Mural_model_portable.npz">Mural (level2)</option>
-      <option value="level2_Squamous_model_portable.npz">Squamous (level2)</option>
-      <option value="level2_T&NK_model_portable.npz">T&NK (level2)</option>
-    </select>
-  </label>
+    <label for="csvInput" style="display:inline-block;">
+      <input type="file" id="csvInput" accept=".csv,.gz,.csv.gz,text/csv,application/gzip,application/x-gzip" style="display:none;">
+      <button class="btn" id="loadFileBtn" type="button" disabled>2:load file</button>
+    </label>
 
-  <label title="Safer but slower (disables SIMD)">
-    <input type="checkbox" id="safe"> Safe mode
-  </label>
+    <label class="model-select">
+      <span>3:model</span>
+      <select id="modelSel">
+        <option value="level1_Whole_model_portable.npz" selected>Whole (level1)</option>
+        <option value="level2_B_mature_model_portable.npz">B_mature (level2)</option>
+        <option value="level2_Dendritic_classical_model_portable.npz">Dendritic_classical (level2)</option>
+        <option value="level2_Ductal_model_portable.npz">Ductal (level2)</option>
+        <option value="level2_Endothelial_model_portable.npz">Endothelial (level2)</option>
+        <option value="level2_Fibroblast_model_portable.npz">Fibroblast (level2)</option>
+        <option value="level2_Macrophage_model_portable.npz">Macrophage (level2)</option>
+        <option value="level2_Monocyte_model_portable.npz">Monocyte (level2)</option>
+        <option value="level2_Mural_model_portable.npz">Mural (level2)</option>
+        <option value="level2_Squamous_model_portable.npz">Squamous (level2)</option>
+        <option value="level2_T&NK_model_portable.npz">T&NK (level2)</option>
+      </select>
+    </label>
 
-  <button id="runBtn" type="button" disabled>4:run</button>
+    <button class="btn btn-primary" id="runBtn" type="button" disabled>4:run</button>
+  </div>
+
+  <!-- Stepper: Upload → Parse → Annotate -->
+  <div class="stages" id="stages">
+    <span class="stage" id="stage-upload"><span class="stage-dot"></span><span class="stage-label">Upload</span></span>
+    <span class="stage-sep"></span>
+    <span class="stage" id="stage-parse"><span class="stage-dot"></span><span class="stage-label">Parse</span></span>
+    <span class="stage-sep"></span>
+    <span class="stage" id="stage-annotate"><span class="stage-dot"></span><span class="stage-label">Annotate</span></span>
+  </div>
+
+  <!-- Unified progress + status -->
+  <progress id="progBar" max="100" value="0"></progress>
+  <div class="status-line" id="progStatus">Waiting for file…</div>
+
+  <!-- Result card (success or error) -->
+  <div class="result-card" id="resultCard" style="display:none;">
+    <div class="result-summary" id="resultSummary"></div>
+    <a class="btn-download" id="downloadLink" download="pred.csv" style="display:none;">⬇ Download</a>
+  </div>
 </div>
 
-<!-- Uploading progress -->
-<div style="margin:8px 0 4px 0; font-size:13px; color:#555;">Uploading</div>
-<progress id="uploadProg" max="100" value="0" style="width:100%;"></progress>
-<div id="uploadStatus" style="font-size:12px;color:#777;margin:4px 0 12px 0;">Waiting for file…</div>
-
-<!-- Processing progress -->
-<div style="margin:8px 0 4px 0; font-size:13px; color:#555;">Processing</div>
-<progress id="procProg" max="100" value="0" style="width:100%;"></progress>
-<div id="procStatus" style="font-size:12px;color:#777;margin:4px 0 8px 0;">Idle</div>
-
-<!-- Download link -->
-<p id="downloadWrap" style="display:none;margin-top:8px;">
-  <a id="downloadLink" download="pred.csv">Download pred.csv</a>
-</p>
-
-<!-- ✨ Annotations moved here: below controls & progress, just above the Log window -->
+<!-- Info panel -->
 <div class="meta-panel">
   <strong>This page conducts cell annotations on the uploaded gene expression files</strong>
   <div style="margin:4px 0 8px 0; font-size:13px; color:#555;">
@@ -123,22 +246,25 @@ layout: post
   </ol>
 </div>
 
-<!-- Log -->
-<details open style="margin-top:10px;">
-  <summary><strong>Log</strong></summary>
+<!-- Log (collapsed by default) -->
+<details class="log-wrap">
+  <summary>Log</summary>
   <pre id="log" style="
     background:#0a0f17;
     color:#e8eef7;
-    padding:6px;
+    padding:8px 10px;
     border-radius:6px;
     overflow:auto;
-    height:220px;
+    height:200px;
     white-space:pre-wrap;
     font-size:11px;
-    line-height:1.25;
-    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace;">
+    line-height:1.3;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace;
+    margin-top:6px;">
   </pre>
 </details>
+
+</div><!-- /.annot-wrap -->
 
 <script>
 (function(){
@@ -163,6 +289,39 @@ layout: post
       })();
     });
   }
+  // ---------- Stage indicator ----------
+  function setStageState(name, state){
+    const el = $("stage-" + name); if(!el) return;
+    el.classList.remove("active","done","err");
+    if(state && state !== "pending") el.classList.add(state);
+  }
+  function resetStages(){
+    setStageState("upload", "pending");
+    setStageState("parse", "pending");
+    setStageState("annotate", "pending");
+  }
+  function hideResultCard(){
+    $("resultCard").style.display = "none";
+    $("resultCard").classList.remove("err");
+    $("downloadLink").style.display = "none";
+    $("resultSummary").textContent = "";
+  }
+  function showResult(kind, summaryHtml, downloadHref, downloadName){
+    const card = $("resultCard");
+    card.style.display = "flex";
+    card.classList.toggle("err", kind === "err");
+    $("resultSummary").innerHTML = summaryHtml;
+    if(downloadHref){
+      const link = $("downloadLink");
+      link.href = downloadHref;
+      link.download = downloadName || "pred.csv";
+      link.textContent = "⬇ Download " + (downloadName || "pred.csv");
+      link.style.display = "inline-flex";
+    } else {
+      $("downloadLink").style.display = "none";
+    }
+  }
+
   function readFileWithProgress(file){
     return new Promise((resolve, reject)=>{
       const reader = new FileReader();
@@ -170,10 +329,10 @@ layout: post
       reader.onprogress = (e)=>{
         if(e.lengthComputable){
           const pct = Math.round((e.loaded/e.total)*100);
-          $("uploadProg").value = pct;
+          $("progBar").value = pct;
           const now = performance.now();
           const rate = (e.loaded-lastLoaded)/((now-last)/1000);
-          $("uploadStatus").textContent = `Reading: ${pct}% • ${(rate/1048576).toFixed(2)} MB/s`;
+          $("progStatus").textContent = `Reading ${pct}% · ${(rate/1048576).toFixed(2)} MB/s`;
           last = now; lastLoaded = e.loaded;
         }
       };
@@ -375,27 +534,29 @@ layout: post
     const f = e.target.files && e.target.files[0];
     if(!f){ return; }
     try{
-      // Reset any leftover state from a previous run
-      $("uploadProg").value = 0;
-      $("uploadStatus").textContent = "Reading…";
-      $("procProg").value = 0;
-      $("procStatus").textContent = "Idle";
-      $("downloadWrap").style.display = "none";
+      // Reset leftover state from any previous run
+      resetStages();
+      setStageState("upload", "active");
+      $("progBar").value = 0;
+      $("progStatus").textContent = "Reading…";
+      hideResultCard();
       if (resultUrl) { URL.revokeObjectURL(resultUrl); resultUrl = null; }
 
       fileBytes = await readFileWithProgress(f);
       fileName = f.name;
       uploaded = true;
-      $("uploadProg").value = 100;
-      $("uploadStatus").textContent = `✅ Upload complete • ${(fileBytes.length/1e6).toFixed(2)} MB`;
+      setStageState("upload", "done");
+      $("progBar").value = 100;
+      $("progStatus").textContent = `${f.name} · ${(fileBytes.length/1e6).toFixed(2)} MB ready`;
       log(`📁 ${f.name} (${(fileBytes.length/1e6).toFixed(2)} MB)`);
       setDisabled("runBtn", !libsReady);
     }catch(err){
       uploaded = false;
       fileBytes = null;
       fileName = "";
-      $("uploadProg").value = 0;
-      $("uploadStatus").textContent = "❌ Upload failed";
+      setStageState("upload", "err");
+      $("progBar").value = 0;
+      $("progStatus").textContent = "Upload failed";
       setDisabled("runBtn", true);
       log("❌ File load failed: " + (err?.message || err));
     }
@@ -473,29 +634,35 @@ _npz = None  # release the ZIP reader
     const runT0 = performance.now();
     let currentMsg = "Starting…";
     const tickTimer = setInterval(()=>{
-      $("procStatus").textContent = `${currentMsg} • ${fmtElapsed(performance.now() - runT0)}`;
+      $("progStatus").textContent = `${currentMsg} · ${fmtElapsed(performance.now() - runT0)}`;
     }, 200);
     const setStage = (pct, msg) => {
       currentMsg = msg;
-      $("procProg").value = pct;
-      $("procStatus").textContent = `${msg} • ${fmtElapsed(performance.now() - runT0)}`;
+      $("progBar").value = pct;
+      $("progStatus").textContent = `${msg} · ${fmtElapsed(performance.now() - runT0)}`;
     };
 
-    // Clear any previous result/download from a prior Run
-    $("downloadWrap").style.display = "none";
+    // Clear any previous result/download from a prior Run, reset stages past Upload
+    hideResultCard();
     if (resultUrl) { URL.revokeObjectURL(resultUrl); resultUrl = null; }
+    setStageState("upload", "done");  // upload is already done if we got here
+    setStageState("parse", "pending");
+    setStageState("annotate", "pending");
 
-    setStage(5, "Starting…");
+    setStage(5, "Starting");
     log("▶️ Running annotation …");
 
     let unhookOut = null, unhookErr = null;
+    let parsedNCells = 0, parsedNMatched = 0;
     try {
+      setStageState("parse", "active");
       setStage(10, "Fetching model");
       try {
         await ensureModelInFS();
       } catch(err) {
         clearInterval(tickTimer);
-        $("procStatus").textContent = "❌ Model fetch error";
+        setStageState("parse", "err");
+        showResult("err", `❌ Model fetch error: ${err?.message || err}`);
         log("❌ Model fetch error: " + (err?.message || err));
         return;
       }
@@ -504,6 +671,8 @@ _npz = None  # release the ZIP reader
       const parsed = await parseCsvBytes(fileBytes, modelFeatureMap, modelFeatures.length, (n) => {
         currentMsg = `Parsing CSV (${n.toLocaleString()} rows)`;
       });
+      parsedNCells = parsed.nCells;
+      parsedNMatched = parsed.nMatched;
       log(`📊 Parsed ${parsed.nCells.toLocaleString()} cells × ${parsed.nMatched.toLocaleString()}/${parsed.nFeat.toLocaleString()} model features matched`);
 
       if (parsed.nMatched === 0) {
@@ -520,6 +689,10 @@ _npz = None  # release the ZIP reader
       // Release large JS-side buffers now that they're in Pyodide/MEMFS
       parsed.xFlat = null;
       parsed.keepMask = null;
+
+      // Parse phase is now complete; Python is about to take over.
+      setStageState("parse", "done");
+      setStageState("annotate", "active");
 
       unhookOut = pyodide.setStdout({
         batched: (s) => {
@@ -606,8 +779,9 @@ print('DONE', n_cells, 'cells,', len(_classes), 'classes, features_matched=', ma
 
       await pyodide.runPythonAsync(code);
       const elapsed = fmtElapsed(performance.now() - runT0);
-      $("procProg").value = 100;
-      $("procStatus").textContent = `Complete • ${elapsed}`;
+      $("progBar").value = 100;
+      $("progStatus").textContent = `Complete · ${elapsed}`;
+      setStageState("annotate", "done");
 
       // Build output filename: pred_{input_stem}.csv (strip .csv / .gz / .csv.gz)
       const stem = (fileName || "input")
@@ -619,14 +793,18 @@ print('DONE', n_cells, 'cells,', len(_classes), 'classes, features_matched=', ma
       const blob  = new Blob([bytes], { type: "text/csv" });
       if(resultUrl){ URL.revokeObjectURL(resultUrl); }
       resultUrl = URL.createObjectURL(blob);
-      $("downloadLink").href = resultUrl;
-      $("downloadLink").download = outName;
-      $("downloadLink").textContent = `Download ${outName}`;
-      $("downloadWrap").style.display = "block";
-      log(`✅ ${outName} ready in ${elapsed}. Use the link above to download.`);
+
+      const summary = `✓ ${parsedNCells.toLocaleString()} cells annotated
+        <span class="stat">${parsedNMatched.toLocaleString()} features · ${elapsed}</span>`;
+      showResult("ok", summary, resultUrl, outName);
+      log(`✅ ${outName} ready in ${elapsed}.`);
     } catch(err) {
       const elapsed = fmtElapsed(performance.now() - runT0);
-      $("procStatus").textContent = `❌ Error • ${elapsed}`;
+      $("progStatus").textContent = `Error · ${elapsed}`;
+      // Mark whichever stage is currently active as failed
+      const active = document.querySelector(".annot-wrap .stage.active");
+      if (active) { active.classList.remove("active"); active.classList.add("err"); }
+      showResult("err", `❌ ${err?.message || err} <span class="stat">after ${elapsed}</span>`);
       log(`❌ Run error after ${elapsed}: ` + (err?.message || err));
     } finally {
       clearInterval(tickTimer);
@@ -635,8 +813,8 @@ print('DONE', n_cells, 'cells,', len(_classes), 'classes, features_matched=', ma
     }
   });
 
-  log("Flow → 1) Boot  2) Load file  3) Model  4) Run");
-  log("🧭 Default model: " + $("modelSel").selectedOptions[0].text + " → " + getModelURL());
+  // Set initial stage state
+  resetStages();
 
   // Auto-boot: this script is inline to the annotate page, so it only runs here.
   $("bootBtn").click();
