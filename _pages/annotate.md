@@ -95,7 +95,7 @@ layout: post
         <li>Raw expression must be <code>1e4</code>-normalized &amp; <code>log1p</code>-transformed<br>
             <small>normalized up to 10,000 counts per cell, then log-transformed with 1 pseudocount</small>
         </li>
-        <li>File format: <code>.csv</code> or <strong><code>.csv.gz (recommended for faster performance)</code><strong></li>
+        <li>File format: <code>.csv</code> or </strong><code>.csv.gz (recommended for faster performance)</code><strong></li>
       </ul>
     </li>
     <li><strong>Cell annotation</strong>
@@ -304,18 +304,34 @@ print("sum:", int(np.array([1,2,3]).sum()))
   }
 
   // ---------- RUN ----------
+  function fmtElapsed(ms){
+    if(ms < 1000) return `${Math.round(ms)} ms`;
+    const s = ms / 1000;
+    if(s < 60) return `${s.toFixed(1)} s`;
+    const m = Math.floor(s/60), r = s - m*60;
+    return `${m}m ${r.toFixed(1)}s`;
+  }
+
   $("runBtn").addEventListener("click", async ()=>{
     if(!uploaded){ alert("Load a CSV first."); return; }
     if(!libsReady){ alert("Boot first."); return; }
 
+    const runT0 = performance.now();
+    let currentMsg = "Starting…";
+    // Tick the elapsed time in the status line while we wait.
+    const tickTimer = setInterval(()=>{
+      $("procStatus").textContent = `${currentMsg} • ${fmtElapsed(performance.now() - runT0)}`;
+    }, 200);
+
     $("procProg").value = 5;
-    $("procStatus").textContent = "Starting…";
+    $("procStatus").textContent = currentMsg;
     log("▶️ Running annotation …");
 
     // fetch model for current selection
     try{
       await ensureModelInFS();
     }catch(err){
+      clearInterval(tickTimer);
       $("procStatus").textContent = "❌ Model fetch error";
       log("❌ Model fetch error: " + (err?.message || err));
       return;
@@ -430,8 +446,9 @@ print('DONE', X.shape, len(classes_), 'features_used=', int(keep_mask.sum()))
             const parts = line.trim().split(":");
             const pct = Math.max(0, Math.min(100, parseInt(parts[1]||"0",10)));
             const msg = parts.slice(2).join(":") || "Working…";
+            currentMsg = msg;
             $("procProg").value = pct;
-            $("procStatus").textContent = msg;
+            $("procStatus").textContent = `${msg} • ${fmtElapsed(performance.now() - runT0)}`;
           } else {
             log(line);
           }
@@ -442,8 +459,9 @@ print('DONE', X.shape, len(classes_), 'features_used=', int(keep_mask.sum()))
 
     try{
       await pyodide.runPythonAsync(code);
+      const elapsed = fmtElapsed(performance.now() - runT0);
       $("procProg").value = 100;
-      $("procStatus").textContent = "Complete";
+      $("procStatus").textContent = `Complete • ${elapsed}`;
 
       const bytes = FS.readFile("/pred.csv");
       const blob  = new Blob([bytes], { type: "text/csv" });
@@ -451,11 +469,13 @@ print('DONE', X.shape, len(classes_), 'features_used=', int(keep_mask.sum()))
       resultUrl = URL.createObjectURL(blob);
       $("downloadWrap").style.display = "block";
       $("downloadLink").href = resultUrl;
-      log("✅ pred.csv ready. Use the link above to download.");
+      log(`✅ pred.csv ready in ${elapsed}. Use the link above to download.`);
     }catch(err){
-      $("procStatus").textContent = "❌ Error";
-      log("❌ Run error: " + (err?.message || err));
+      const elapsed = fmtElapsed(performance.now() - runT0);
+      $("procStatus").textContent = `❌ Error • ${elapsed}`;
+      log(`❌ Run error after ${elapsed}: ` + (err?.message || err));
     }finally{
+      clearInterval(tickTimer);
       try{ unhookOut && unhookOut(); }catch(_){}
       try{ unhookErr && unhookErr(); }catch(_){}
     }
