@@ -37,7 +37,7 @@ layout: post
   <button id="bootBtn" type="button">1:boot</button>
 
   <label for="csvInput" style="display:inline-block;">
-    <input type="file" id="csvInput" accept=".csv,.csv.gz,text/csv" style="display:none;">
+    <input type="file" id="csvInput" accept=".csv,.gz,.csv.gz,text/csv,application/gzip,application/x-gzip" style="display:none;">
     <button id="loadFileBtn" type="button" disabled>2:load file</button>
   </label>
 
@@ -95,7 +95,7 @@ layout: post
         <li>Raw expression must be <code>1e4</code>-normalized &amp; <code>log1p</code>-transformed<br>
             <small>normalized up to 10,000 counts per cell, then log-transformed with 1 pseudocount</small>
         </li>
-        <li>File format: <code>.csv</code> or <code>.csv.gz</code></li>
+        <li>File format: <code>.csv</code> or <strong><code>.csv.gz (recommended for faster performance)</code><strong></li>
       </ul>
     </li>
     <li><strong>Cell annotation</strong>
