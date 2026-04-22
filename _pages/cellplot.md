@@ -120,8 +120,6 @@ excerpt: ""
 <!-- Interactive panel -->
 <div class="panel">
   <div class="ctrl-row">
-    <button class="btn" id="bootBtn" type="button">1:boot</button>
-
     <label class="inline-ctl">
       <span>Level</span>
       <select id="levelSelect" style="min-width:120px;">
@@ -135,7 +133,7 @@ excerpt: ""
       <select id="cellSelect" style="flex:1;min-width:180px;"></select>
     </label>
 
-    <button class="btn btn-primary" id="runBtn" type="button" disabled>2:run</button>
+    <button class="btn btn-primary" id="runBtn" type="button" disabled>Explore</button>
   </div>
 
   <!-- Stepper: Boot → Data → Plot -->
@@ -331,9 +329,8 @@ excerpt: ""
   let booted=false, pngURL=null;
 
   // -------- boot --------
-  $("bootBtn").addEventListener("click", async ()=>{
+  async function boot(){
     try{
-      setDisabled("bootBtn", true);
       setStageState("boot","active");
       log("⏳ Boot: waiting for pyodide.js …");
       await new Promise((res, rej)=>{
@@ -396,15 +393,12 @@ def add_fig_note(fig, text, x=0.01, y=0.99, fontsize=9, mono=True, ha='left', va
       booted = true;
       setStageState("boot","done");
       setDisabled("runBtn", false);
-      stage(0, "Ready — choose level/cell and click Run.");
+      stage(0, "Ready — choose level/cell and click Explore.");
     }catch(e){
       log("❌ Boot failed: " + (e?.message||e));
       setStageState("boot","err");
-      setDisabled("bootBtn", false);
-      return;
     }
-    setDisabled("bootBtn", false);
-  });
+  }
 
   // -------- run --------
   $("runBtn").addEventListener("click", async ()=>{
@@ -800,8 +794,11 @@ with open("/work/explore.png","wb") as fh:
     }
   });
 
-  log("Flow → 1) boot → 2) run");
+  log("Flow → (auto-boot) → choose level/cell → Explore");
   resetStages();
+
+  // Auto-boot: this inline script only runs on the cellplot page.
+  boot();
 })();
 </script>
 

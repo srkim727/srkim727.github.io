@@ -120,9 +120,6 @@ excerpt: ""
 <!-- Interactive panel -->
 <div class="panel">
   <div class="ctrl-row">
-    <button class="btn" id="bootBtn" type="button">1:boot</button>
-    <button class="btn" id="assetsBtn" type="button" disabled>2:load assets</button>
-
     <label class="inline-ctl">
       <span>Cell</span>
       <select id="cellSelect" style="min-width:160px;">
@@ -145,7 +142,7 @@ excerpt: ""
       <input id="geneInput" type="text" value="CD3D,KRT5,CDH19,PTPRC,CD79A,MS4A1" style="flex:1;min-width:200px;">
     </label>
 
-    <button class="btn btn-primary" id="runBtn" type="button" disabled>3:run plot</button>
+    <button class="btn btn-primary" id="runBtn" type="button" disabled>Run plot</button>
   </div>
 
   <!-- Stepper: Boot → Data → Plot -->
@@ -165,6 +162,7 @@ excerpt: ""
     <div class="result-head">
       <div class="result-summary" id="resultSummary"></div>
       <a class="btn-download" id="downloadPNG" download="plot.png" style="display:none;">⬇ Download PNG</a>
+      <a class="btn-download" id="downloadCSV" download="plot.csv" style="display:none;">⬇ Download CSV</a>
     </div>
     <img class="plot-img" id="plotImg" alt="plot" style="display:none;">
   </div>
@@ -232,6 +230,7 @@ excerpt: ""
     $("plotImg").style.display = "none";
     $("plotImg").removeAttribute("src");
     $("downloadPNG").style.display = "none";
+    $("downloadCSV").style.display = "none";
   }
   async function fetchToFS(path, fsPath){
     const u = (path.includes("?") ? path : path + "?t=" + Date.now()); // bust cache
@@ -249,11 +248,12 @@ excerpt: ""
     $("plotImg").removeAttribute("src");
     $("resultCard").style.display = "none";
     $("downloadPNG").style.display = "none";
+    $("downloadCSV").style.display = "none";
   }
 
   // --- state ---
   let pyodide=null, FS=null;
-  let booted=false, assetsLoaded=false, fdicLoaded=false, isLoadingAssets=false, pngURL=null;
+  let booted=false, assetsLoaded=false, fdicLoaded=false, isLoadingAssets=false, pngURL=null, csvURL=null;
 
   // --- reusable asset loader (used by button and dropdown) ---
   async function loadAssetsForCell(cell){
@@ -314,9 +314,8 @@ list(_fd.keys())[:5]
   }
 
   // --- boot ---
-  $("bootBtn").addEventListener("click", async ()=>{
+  async function boot(){
     try{
-      setDisabled("bootBtn", true);
       setStageState("boot","active");
       log("⏳ Boot: waiting for pyodide.js …");
       await new Promise((res, rej)=>{
@@ -350,7 +349,6 @@ print("matplotlib", mpl.__version__)
       log("✅ Python libs imported & backend set.");
       booted = true;
       setStageState("boot","done");
-      setDisabled("assetsBtn", false);
 
       // auto-load for the initially selected cell
       const initialCell = $("cellSelect").value.trim();
@@ -359,17 +357,8 @@ print("matplotlib", mpl.__version__)
     }catch(e){
       log("❌ Boot failed: " + (e?.message||e));
       setStageState("boot","err");
-      setDisabled("bootBtn", false);
-      return;
     }
-    setDisabled("bootBtn", false);
-  });
-
-  // --- load assets button ---
-  $("assetsBtn").addEventListener("click", async ()=>{
-    const cell = $("cellSelect").value.trim();
-    await loadAssetsForCell(cell);
-  });
+  }
 
   // --- AUTO-RELOAD when cell changes ---
   let cellReloadTimer=null;
@@ -493,33 +482,54 @@ plt.colorbar(scatt, anchor=(0.5,0), location='top',
 # figure size responsive to gene count and feature count
 plt.gcf().set_size_inches(.1 + .2*len(mlist), len(feat) / 4)
 
-stage(90, "Saving PNG …")
+stage(88, "Saving PNG …")
 buf = io.BytesIO()
 plt.savefig(buf, format="png", bbox_inches="tight", dpi=150)
 plt.close(fig)
 open("/plot.png","wb").write(buf.getbuffer())
+
+# ---- also export long-format CSV of the underlying data ----
+stage(95, "Saving CSV …")
+F_ix, G_ix = np.meshgrid(np.arange(n_feat), np.arange(n_gene), indexing='ij')
+df_out = pd.DataFrame({
+    'cell_feature':     [str(feat[i])  for i in F_ix.ravel()],
+    'gene':             [str(mlist[j]) for j in G_ix.ravel()],
+    'mean_expression':  d1.ravel().astype(float),
+    'expression_ratio': d2.ravel().astype(float),
+})
+df_out.to_csv("/plot.csv", index=False)
 "OK"
       `;
       await pyodide.runPythonAsync(code);
       stage(100, "Done");
       setStageState("plot","done");
 
-      const bytes = FS.readFile("/plot.png");
-      const blob  = new Blob([bytes], { type: "image/png" });
+      const pngBytes = FS.readFile("/plot.png");
+      const pngBlob  = new Blob([pngBytes], { type: "image/png" });
       if(pngURL) URL.revokeObjectURL(pngURL);
-      pngURL = URL.createObjectURL(blob);
+      pngURL = URL.createObjectURL(pngBlob);
 
-      // Build output filename: {cell}_{first-few-genes}.png
+      const csvBytes = FS.readFile("/plot.csv");
+      const csvBlob  = new Blob([csvBytes], { type: "text/csv" });
+      if(csvURL) URL.revokeObjectURL(csvURL);
+      csvURL = URL.createObjectURL(csvBlob);
+
+      // Build output filename stem: {cell}_{first-few-genes}
       const stem = (geneStr.split(",").map(g=>g.trim()).filter(Boolean).slice(0,4).join("_") || "plot")
         .replace(/[\s/\\]+/g,"_");
-      const outName = `${cell}_${stem}.png`;
+      const pngName = `${cell}_${stem}.png`;
+      const csvName = `${cell}_${stem}.csv`;
 
       $("plotImg").src = pngURL;
       $("plotImg").style.display = "block";
       $("downloadPNG").href = pngURL;
-      $("downloadPNG").download = outName;
-      $("downloadPNG").textContent = `⬇ Download ${outName}`;
+      $("downloadPNG").download = pngName;
+      $("downloadPNG").textContent = `⬇ Download ${pngName}`;
       $("downloadPNG").style.display = "inline-flex";
+      $("downloadCSV").href = csvURL;
+      $("downloadCSV").download = csvName;
+      $("downloadCSV").textContent = `⬇ Download ${csvName}`;
+      $("downloadCSV").style.display = "inline-flex";
       $("resultSummary").innerHTML = `✓ ${cell} · ${geneStr.split(',').length} genes <span class="stat">plot rendered</span>`;
       $("resultCard").classList.remove("err");
       $("resultCard").style.display = "block";
@@ -532,6 +542,7 @@ open("/plot.png","wb").write(buf.getbuffer())
       $("resultCard").style.display = "block";
       $("plotImg").style.display = "none";
       $("downloadPNG").style.display = "none";
+      $("downloadCSV").style.display = "none";
       log("❌ Run error: " + (e?.message||e));
     }finally{
       try{ unhookOut && unhookOut(); }catch(_){}
@@ -539,8 +550,11 @@ open("/plot.png","wb").write(buf.getbuffer())
     }
   });
 
-  log("Flow → 1) boot → 2) load assets → 3) run plot");
+  log("Flow → (auto-boot) → choose cell (auto-loads) → Run plot");
   resetStages();
+
+  // Auto-boot: this inline script only runs on the geneplot page.
+  boot();
 })();
 </script>
 
