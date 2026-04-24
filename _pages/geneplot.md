@@ -88,8 +88,9 @@ excerpt: ""
   .pg-wrap .result-summary{font-size:14px;color:var(--text);font-weight:500;flex:1;min-width:180px;}
   .pg-wrap .result-summary .stat{color:var(--muted);font-weight:400;font-size:12px;margin-left:6px;}
   .pg-wrap .btn-download{
-    background:var(--ok);border-color:var(--ok);color:#fff;padding:0 16px;height:34px;
-    display:inline-flex;align-items:center;gap:6px;text-decoration:none;font-weight:500;
+    background:var(--ok);border-color:var(--ok);color:#fff;padding:0 12px;height:30px;
+    font-size:12px;
+    display:inline-flex;align-items:center;gap:5px;text-decoration:none;font-weight:500;
     border:1px solid var(--ok);border-radius:6px;transition:background .15s,border-color .15s;
   }
   .pg-wrap .btn-download:hover{background:var(--ok-dark);border-color:var(--ok-dark);color:#fff;text-decoration:none;}
@@ -469,8 +470,13 @@ with gzip.open("/cov.npy.gz","rb") as f:
     cov = np.load(f)
 
 # ---- select columns by ordered indices ----
-d1 = avg[:, idx]  # mean (color)
+d1 = avg[:, idx]  # mean (color)   — raw
 d2 = cov[:, idx]  # express. ratio (size)
+
+# Per-gene max normalize so colors are comparable across genes regardless of scale
+d1_max = d1.max(axis=0, keepdims=True)
+d1_max = np.where(d1_max > 0, d1_max, 1.0)   # avoid div-by-zero for all-zero cols
+d1n = d1 / d1_max                            # relative mean expression, in [0, 1]
 
 feat   = fdic[cell]
 n_feat = len(feat)
@@ -486,7 +492,7 @@ padx = 0.5
 pady = 0.5
 
 sizes = np.ravel(d2).astype(float) * fac
-color = np.ravel(d1).astype(float)
+color = np.ravel(d1n).astype(float)   # normalized per gene
 
 stage(75, "Making figure …")
 fig = plt.figure()
@@ -510,7 +516,8 @@ plt.legend(*scatt.legend_elements("sizes", num=5),
 # colorbar scales with number of genes
 plt.colorbar(scatt, anchor=(0.5,0), location='top',
              fraction = .12 / max(1, len(mlist)), aspect = 5,
-             label = 'mean express.', orientation = 'horizontal',
+             label = 'relative mean express.\\n(per-gene max = 1)',
+             orientation = 'horizontal',
              ticks = [], pad = 0.02)
 
 # figure size responsive to gene count and feature count
@@ -526,10 +533,11 @@ open("/plot.png","wb").write(buf.getbuffer())
 stage(95, "Saving CSV …")
 F_ix, G_ix = np.meshgrid(np.arange(n_feat), np.arange(n_gene), indexing='ij')
 df_out = pd.DataFrame({
-    'cell_feature':     [str(feat[i])  for i in F_ix.ravel()],
-    'gene':             [str(mlist[j]) for j in G_ix.ravel()],
-    'mean_expression':  d1.ravel().astype(float),
-    'expression_ratio': d2.ravel().astype(float),
+    'cell_feature':              [str(feat[i])  for i in F_ix.ravel()],
+    'gene':                      [str(mlist[j]) for j in G_ix.ravel()],
+    'mean_expression':           d1.ravel().astype(float),
+    'mean_expression_normalized':d1n.ravel().astype(float),
+    'expression_ratio':          d2.ravel().astype(float),
 })
 df_out.to_csv("/plot.csv", index=False)
 "OK"

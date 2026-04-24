@@ -88,8 +88,9 @@ excerpt: ""
   .pg-wrap .result-summary{font-size:14px;color:var(--text);font-weight:500;flex:1;min-width:180px;}
   .pg-wrap .result-summary .stat{color:var(--muted);font-weight:400;font-size:12px;margin-left:6px;}
   .pg-wrap .btn-download{
-    background:var(--ok);border-color:var(--ok);color:#fff;padding:0 16px;height:34px;
-    display:inline-flex;align-items:center;gap:6px;text-decoration:none;font-weight:500;
+    background:var(--ok);border-color:var(--ok);color:#fff;padding:0 12px;height:30px;
+    font-size:12px;
+    display:inline-flex;align-items:center;gap:5px;text-decoration:none;font-weight:500;
     border:1px solid var(--ok);border-radius:6px;transition:background .15s,border-color .15s;
   }
   .pg-wrap .btn-download:hover{background:var(--ok-dark);border-color:var(--ok-dark);color:#fff;text-decoration:none;}
@@ -509,8 +510,31 @@ level = ${JSON.stringify(level)}
 cell  = ${JSON.stringify(cell)}
 cell1 = (cell.split("|")[0] if "|" in cell else cell)
 
-sns.set_theme(style="whitegrid")
-mpl.rcParams['figure.dpi'] = 150
+sns.set_theme(style="ticks", context="notebook", font_scale=0.9)
+mpl.rcParams.update({
+    'figure.dpi': 150,
+    'font.family': 'sans-serif',
+    'font.sans-serif': ['Helvetica', 'Arial', 'DejaVu Sans', 'sans-serif'],
+    'axes.edgecolor': '#9ca3af',
+    'axes.linewidth': 0.8,
+    'axes.labelcolor': '#111827',
+    'axes.titlecolor': '#111827',
+    'axes.titleweight': 'semibold',
+    'axes.titlesize': 11,
+    'axes.labelsize': 10,
+    'xtick.color': '#374151',
+    'ytick.color': '#374151',
+    'xtick.labelsize': 9,
+    'ytick.labelsize': 9,
+    'legend.fontsize': 9,
+    'legend.frameon': False,
+    'savefig.facecolor': 'white',
+})
+
+# Site accent colors
+ACCENT = '#3b82f6'
+ACCENT_LIGHT = '#dbeafe'
+GRID_SOFT = '#e5e7eb'
 
 # -------- load markers --------
 mls = []
@@ -529,22 +553,28 @@ prop    = pd.read_csv("/work/profile.csv", index_col=0).fillna(0)
 fig, axes = plt.subplots(2, 1, figsize=(7, 10), gridspec_kw = {'height_ratios':[7,3]})
 
 # scatter (all)
-sns.scatterplot(data=overall, y='avg', x='spec', s=30, linewidth=0, color='lightgrey', ax=axes[0])
+sns.scatterplot(data=overall, y='avg', x='spec', s=26, linewidth=0,
+                color='#d1d5db', alpha=0.8, ax=axes[0])
 # scatter (highlight)
 if cell in overall.index:
-    sns.scatterplot(data=overall.loc[[cell]], y='avg', x='spec', s=100,
-                    linewidth=1, edgecolor='black', color='orange', ax=axes[0])
+    sns.scatterplot(data=overall.loc[[cell]], y='avg', x='spec', s=140,
+                    linewidth=1.2, edgecolor='white', color=ACCENT, ax=axes[0])
     x, y = float(overall.loc[cell, 'spec']), float(overall.loc[cell, 'avg'])
-    axes[0].text(x, y, cell, fontsize=8, ha='left', va='center')
+    axes[0].text(x, y, f"  {cell}", fontsize=9, fontweight='semibold',
+                 ha='left', va='center', color=ACCENT)
 
 # stats note inside left panel
 if cell in overall.index:
     axes[0].text(overall['spec'].max(), overall['avg'].max(),
                  f"Organ spec.: {overall.loc[cell,'spec']:.2f}\\nAverage prop.: {overall.loc[cell,'avg']:.2f}",
-                 va='top', ha='right', fontsize=8)
+                 va='top', ha='right', fontsize=8, color='#6b7280',
+                 bbox=dict(boxstyle='round,pad=0.4', facecolor='#fafbfc',
+                           edgecolor=GRID_SOFT, linewidth=0.6))
 
 axes[0].set_xlabel('Organ specificity')
 axes[0].set_ylabel('Average proportion')
+axes[0].grid(True, linestyle=':', linewidth=0.6, color=GRID_SOFT, alpha=0.8)
+axes[0].set_axisbelow(True)
 
 # bar by organ (ordered by mean of the selected cell)
 if cell in prop.columns:
@@ -554,12 +584,14 @@ else:
 
 sns.barplot(data=prop, y=cell if cell in prop.columns else 'Organ', x='Organ',
             order=order, ax=axes[1],
-            capsize=.2, errorbar='se', errwidth=1, errcolor='black',
-            linewidth=1, edgecolor='black', color='steelblue')
+            capsize=.15, errorbar='se', errwidth=0.8, errcolor='#6b7280',
+            linewidth=0.6, edgecolor='white', color=ACCENT)
 axes[1].tick_params(axis='x', rotation=90)
 axes[1].set_xlabel("")
 axes[1].set_ylabel('Proportion')
-axes[1].set_title(cell)
+axes[1].set_title(cell, pad=8)
+axes[1].grid(True, axis='y', linestyle=':', linewidth=0.6, color=GRID_SOFT, alpha=0.8)
+axes[1].set_axisbelow(True)
 
 # figure header/footer instead of print()
 if mls:
@@ -607,7 +639,7 @@ if 'PANGEA_annotation' in mdf.columns and (cell in set(mdf['PANGEA_annotation'])
 
         fig2, ax = plt.subplots(figsize=(n_cols*2, n_rows*0.6), dpi=150)
         sc = ax.scatter(x, y, s=sizes, c=vals, cmap=cmap, norm=norm01,
-                        edgecolor="black", linewidth=0.5)
+                        edgecolor="white", linewidth=0.8)
 
         ax.set_xticks([0,1,2,3.5])
         ax.set_xticklabels(['SEN','PPV','CFS','score'])
@@ -620,7 +652,7 @@ if 'PANGEA_annotation' in mdf.columns and (cell in set(mdf['PANGEA_annotation'])
         sns.despine(bottom=True, left=True)
         ax.set_axisbelow(True)
         ax.grid(True, which='major', axis='both',
-                color='#B0B0B0', linestyle='-', linewidth=0.8, alpha=0.6)
+                color=GRID_SOFT, linestyle='-', linewidth=0.7, alpha=0.9)
 
         # inset bar for score
         last_col_center = n_cols - 1
@@ -632,8 +664,8 @@ if 'PANGEA_annotation' in mdf.columns and (cell in set(mdf['PANGEA_annotation'])
         axin = ax.inset_axes([cell_left + 0.5, -0.5, cell_width - 2*pad_x, n_rows],
                              transform=ax.transData)
         bar_vals = np.clip(mdf1[metric_bar].values, 0, 1)
-        axin.barh(y_rows, bar_vals, height=0.7, color="slategrey",
-                  edgecolor='black', linewidth=0.5)
+        axin.barh(y_rows, bar_vals, height=0.7, color=ACCENT,
+                  edgecolor='white', linewidth=0.8)
         axin.set_ylim(ax.get_ylim()); axin.set_xlim(0,1.1)
         axin.set_xticks([]); axin.set_yticks([])
         for sp in axin.spines.values(): sp.set_visible(False)
@@ -731,8 +763,10 @@ try:
         fig3, ax3 = plt.subplots(figsize=(4, 2.2), dpi=150)
         sns.barplot(data=pdf, x=cell, y='Cancer_Tissue', ax=ax3,
                     palette=cmapdic, order=order, estimator=np.mean,
-                    linewidth=1, edgecolor='black',
-                    errorbar='se', capsize=.2, errwidth=1, errcolor='black')
+                    linewidth=0.6, edgecolor='white',
+                    errorbar='se', capsize=.15, errwidth=0.8, errcolor='#6b7280')
+        ax3.grid(True, axis='x', linestyle=':', linewidth=0.6, color=GRID_SOFT, alpha=0.8)
+        ax3.set_axisbelow(True)
         sns.despine()
 
         ctrls = [x for x in ['Control','Non-malignant disease','Cancer_AdjNorm'] if x in set(pdf['Cancer_Tissue'])]

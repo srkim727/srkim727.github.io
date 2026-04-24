@@ -124,8 +124,9 @@ layout: post
     color:var(--muted);font-weight:400;font-size:12px;margin-left:6px;
   }
   .annot-wrap .btn-download{
-    background:var(--ok);border-color:var(--ok);color:#fff;padding:0 16px;height:34px;
-    display:inline-flex;align-items:center;gap:6px;text-decoration:none;font-weight:500;
+    background:var(--ok);border-color:var(--ok);color:#fff;padding:0 12px;height:30px;
+    font-size:12px;
+    display:inline-flex;align-items:center;gap:5px;text-decoration:none;font-weight:500;
     border:1px solid var(--ok);border-radius:6px;transition:background .15s,border-color .15s;
   }
   .annot-wrap .btn-download:hover{background:var(--ok-dark);border-color:var(--ok-dark);color:#fff;text-decoration:none;}
