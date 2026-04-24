@@ -1,5 +1,223 @@
-/* This file is kept intentionally blank inside the jekyll-github-theme
- * It gets imported at the end of custom.css
- * Its purpose is for users of the theme to be able to add css rules from a blank file
- *   these get simply added to the ones already active in the layout.
- */
+/* ==========================================================
+ * PANGEA global polish — loaded AFTER theme styles so these win
+ * Applies to every page (home, annotate, cellplot, geneplot, ...)
+ * ========================================================== */
+
+:root {
+  --pg-accent:       #3b82f6;
+  --pg-accent-dark:  #2563eb;
+  --pg-accent-light: #dbeafe;
+  --pg-ok:           #10b981;
+  --pg-text:         #111827;
+  --pg-muted:        #6b7280;
+  --pg-border:       #e5e7eb;
+  --pg-bg-subtle:    #fafbfc;
+}
+
+/* ---------- Typography (content area) ---------- */
+.book .book-body .page-wrapper .page-inner section.normal {
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI",
+               "Helvetica Neue", Helvetica, Arial,
+               "Apple Color Emoji", "Segoe UI Emoji", sans-serif;
+  color: var(--pg-text);
+  line-height: 1.65;
+  font-size: 15px;
+}
+
+/* ---------- Headings ---------- */
+.book .book-body .page-wrapper .page-inner section.normal h1,
+.book .book-body .page-wrapper .page-inner section.normal h2,
+.book .book-body .page-wrapper .page-inner section.normal h3,
+.book .book-body .page-wrapper .page-inner section.normal h4 {
+  color: var(--pg-text);
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+.book .book-body .page-wrapper .page-inner section.normal h1 {
+  font-size: 1.85em;
+  margin-top: .4em;
+  padding-bottom: .4em;
+  border-bottom: 1px solid var(--pg-border);
+}
+.book .book-body .page-wrapper .page-inner section.normal h2 {
+  font-size: 1.35em;
+  margin-top: 1.6em;
+  margin-bottom: .5em;
+}
+.book .book-body .page-wrapper .page-inner section.normal h3 {
+  font-size: 1.15em;
+  margin-top: 1.2em;
+  margin-bottom: .4em;
+}
+.book .book-body .page-wrapper .page-inner section.normal h4 {
+  font-size: 1em;
+  margin-top: 1em;
+  margin-bottom: .3em;
+}
+
+/* ---------- Links ---------- */
+.book .book-body .page-wrapper .page-inner section.normal a {
+  color: var(--pg-accent);
+  text-decoration: none;
+  transition: color .15s;
+}
+.book .book-body .page-wrapper .page-inner section.normal a:hover {
+  color: var(--pg-accent-dark);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+/* ---------- Images (figures) ---------- */
+.book .book-body .page-wrapper .page-inner section.normal img {
+  max-width: 100%;
+  border-radius: 10px;
+  box-shadow: 0 1px 3px rgba(0,0,0,.05), 0 1px 2px rgba(0,0,0,.04);
+  margin: 10px 0;
+  background: #fff;
+}
+
+/* ---------- Inline code & blocks ---------- */
+.book .book-body .page-wrapper .page-inner section.normal code {
+  background: #eef2f7;
+  color: #1e293b;
+  padding: 1px 6px;
+  border-radius: 4px;
+  font-size: 0.92em;
+  border: 0;
+}
+.book .book-body .page-wrapper .page-inner section.normal pre {
+  background: #0f172a;
+  border-radius: 8px;
+  padding: 12px 14px;
+  border: 1px solid #1e293b;
+  overflow-x: auto;
+}
+.book .book-body .page-wrapper .page-inner section.normal pre code {
+  background: transparent;
+  color: #e2e8f0;
+  padding: 0;
+  font-size: 0.88em;
+}
+
+/* ---------- Blockquotes ---------- */
+.book .book-body .page-wrapper .page-inner section.normal blockquote {
+  border-left: 3px solid var(--pg-accent);
+  background: var(--pg-bg-subtle);
+  padding: 10px 14px;
+  margin: 12px 0;
+  color: var(--pg-text);
+  border-radius: 0 6px 6px 0;
+}
+.book .book-body .page-wrapper .page-inner section.normal blockquote p { margin: 0; }
+
+/* ---------- Lists ---------- */
+.book .book-body .page-wrapper .page-inner section.normal ul,
+.book .book-body .page-wrapper .page-inner section.normal ol {
+  padding-left: 22px;
+}
+.book .book-body .page-wrapper .page-inner section.normal ul li,
+.book .book-body .page-wrapper .page-inner section.normal ol li {
+  margin-bottom: 3px;
+}
+.book .book-body .page-wrapper .page-inner section.normal ul li::marker {
+  color: var(--pg-muted);
+}
+
+/* ---------- Tables ---------- */
+.book .book-body .page-wrapper .page-inner section.normal table {
+  border-collapse: collapse;
+  margin: 14px 0;
+  font-size: 13.5px;
+  box-shadow: 0 1px 2px rgba(0,0,0,.03);
+  border-radius: 6px;
+  overflow: hidden;
+}
+.book .book-body .page-wrapper .page-inner section.normal table th,
+.book .book-body .page-wrapper .page-inner section.normal table td {
+  border: 1px solid var(--pg-border);
+  padding: 7px 12px;
+}
+.book .book-body .page-wrapper .page-inner section.normal table th {
+  background: var(--pg-bg-subtle);
+  font-weight: 600;
+  color: var(--pg-text);
+}
+
+/* ---------- Horizontal rule ---------- */
+.book .book-body .page-wrapper .page-inner section.normal hr {
+  border: none;
+  border-top: 1px solid var(--pg-border);
+  margin: 28px 0;
+}
+
+/* ---------- Sidebar (summary) ---------- */
+.book-summary {
+  background: var(--pg-bg-subtle);
+  border-right: 1px solid var(--pg-border);
+}
+.book-summary ul.summary li a {
+  color: var(--pg-text);
+  font-weight: 400;
+  transition: color .15s, background .15s;
+  font-size: 14px;
+  padding: 8px 18px;
+}
+.book-summary ul.summary li a:hover {
+  color: var(--pg-accent);
+  background: rgba(59,130,246,0.04);
+  text-decoration: none;
+}
+.book-summary ul.summary li.active > a {
+  color: var(--pg-accent);
+  font-weight: 500;
+  background: rgba(59,130,246,0.06);
+  border-left: 2px solid var(--pg-accent);
+  padding-left: 16px;
+}
+.book-summary ul.summary li.header,
+.book-summary ul.summary li.divider {
+  color: var(--pg-muted);
+  letter-spacing: .04em;
+  font-size: 11px;
+  text-transform: uppercase;
+}
+
+/* ---------- Top header ---------- */
+.book .book-header {
+  border-bottom: 1px solid var(--pg-border);
+  background: #fff;
+}
+.book .book-header h1 {
+  font-weight: 500;
+  font-size: 14px;
+  color: var(--pg-muted);
+}
+.book .book-header h1 a,
+.book .book-header h1 a:hover {
+  color: var(--pg-text);
+}
+
+/* ---------- Content width + padding breathing room ---------- */
+.book .book-body .page-wrapper .page-inner section.normal {
+  padding: 18px 30px 40px 30px;
+  max-width: 860px;
+}
+
+/* ---------- Small screens ---------- */
+@media (max-width: 760px) {
+  .book .book-body .page-wrapper .page-inner section.normal {
+    padding: 14px 18px 32px 18px;
+    font-size: 14.5px;
+  }
+  .book .book-body .page-wrapper .page-inner section.normal h1 { font-size: 1.6em; }
+}
+
+/* ---------- Back-to-top button refinement ---------- */
+#back-to-top-button.to-top-button {
+  background: var(--pg-accent);
+  border: none;
+  box-shadow: 0 2px 6px rgba(0,0,0,.12);
+}
+#back-to-top-button.to-top-button:hover {
+  background: var(--pg-accent-dark);
+}

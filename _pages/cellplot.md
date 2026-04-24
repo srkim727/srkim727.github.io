@@ -88,10 +88,10 @@ excerpt: ""
   .pg-wrap .result-summary{font-size:14px;color:var(--text);font-weight:500;flex:1;min-width:180px;}
   .pg-wrap .result-summary .stat{color:var(--muted);font-weight:400;font-size:12px;margin-left:6px;}
   .pg-wrap .btn-download{
-    background:var(--ok);border-color:var(--ok);color:#fff;padding:0 12px;height:30px;
-    font-size:12px;
-    display:inline-flex;align-items:center;gap:5px;text-decoration:none;font-weight:500;
-    border:1px solid var(--ok);border-radius:6px;transition:background .15s,border-color .15s;
+    background:var(--ok);border-color:var(--ok);color:#fff;padding:0 10px;height:26px;
+    font-size:11px;letter-spacing:.01em;
+    display:inline-flex;align-items:center;gap:4px;text-decoration:none;font-weight:500;
+    border:1px solid var(--ok);border-radius:5px;transition:background .15s,border-color .15s;
   }
   .pg-wrap .btn-download:hover{background:var(--ok-dark);border-color:var(--ok-dark);color:#fff;text-decoration:none;}
   .pg-wrap .plot-img{max-width:100%;border:1px solid var(--border);border-radius:6px;background:#fff;display:block;}

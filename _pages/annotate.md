@@ -109,6 +109,27 @@ layout: post
   .annot-wrap .status-line{
     font-size:12px;color:var(--muted);margin:6px 0 0 0;min-height:1em;
   }
+  /* Richer two-line status area with tabular elapsed time */
+  .annot-wrap .status-box{margin:8px 0 0 0;}
+  .annot-wrap .status-main{
+    display:flex;justify-content:space-between;align-items:baseline;gap:12px;
+    font-size:13px;color:var(--text);line-height:1.3;
+  }
+  .annot-wrap .status-msg{font-weight:500;}
+  .annot-wrap .status-time{
+    color:var(--muted);font-size:12px;font-variant-numeric:tabular-nums;
+    white-space:nowrap;letter-spacing:.02em;
+  }
+  .annot-wrap .status-sub{
+    font-size:11px;color:var(--muted);margin-top:3px;min-height:14px;
+    font-variant-numeric:tabular-nums;
+  }
+  /* Gentle pulse on the currently-active stage dot */
+  @keyframes annotPulse{
+    0%,100%{box-shadow:0 0 0 4px var(--accent-light);}
+    50%{box-shadow:0 0 0 7px rgba(59,130,246,0.10);}
+  }
+  .annot-wrap .stage.active .stage-dot{animation:annotPulse 1.6s ease-in-out infinite;}
 
   /* Result card */
   .annot-wrap .result-card{
@@ -124,10 +145,10 @@ layout: post
     color:var(--muted);font-weight:400;font-size:12px;margin-left:6px;
   }
   .annot-wrap .btn-download{
-    background:var(--ok);border-color:var(--ok);color:#fff;padding:0 12px;height:30px;
-    font-size:12px;
-    display:inline-flex;align-items:center;gap:5px;text-decoration:none;font-weight:500;
-    border:1px solid var(--ok);border-radius:6px;transition:background .15s,border-color .15s;
+    background:var(--ok);border-color:var(--ok);color:#fff;padding:0 10px;height:26px;
+    font-size:11px;letter-spacing:.01em;
+    display:inline-flex;align-items:center;gap:4px;text-decoration:none;font-weight:500;
+    border:1px solid var(--ok);border-radius:5px;transition:background .15s,border-color .15s;
   }
   .annot-wrap .btn-download:hover{background:var(--ok-dark);border-color:var(--ok-dark);color:#fff;text-decoration:none;}
 
@@ -224,9 +245,15 @@ layout: post
     <span class="stage" id="stage-annotate"><span class="stage-dot"></span><span class="stage-label">Annotate</span></span>
   </div>
 
-  <!-- Unified progress + status -->
+  <!-- Unified progress + rich status (main message · elapsed time · sub-detail) -->
   <progress id="progBar" max="100" value="0"></progress>
-  <div class="status-line" id="progStatus">Waiting for file…</div>
+  <div class="status-box">
+    <div class="status-main">
+      <span class="status-msg" id="progMsg">Waiting for file…</span>
+      <span class="status-time" id="progTime">—</span>
+    </div>
+    <div class="status-sub" id="progSub"></div>
+  </div>
 
   <!-- Result card (success or error) -->
   <div class="result-card" id="resultCard" style="display:none;">
@@ -360,7 +387,8 @@ layout: post
           $("progBar").value = pct;
           const now = performance.now();
           const rate = (e.loaded-lastLoaded)/((now-last)/1000);
-          $("progStatus").textContent = `Reading ${pct}% · ${(rate/1048576).toFixed(2)} MB/s`;
+          $("progMsg").textContent = "Reading file";
+          $("progSub").textContent = `${pct}% · ${(rate/1048576).toFixed(2)} MB/s`;
           last = now; lastLoaded = e.loaded;
         }
       };
@@ -562,7 +590,9 @@ layout: post
       resetStages();
       setStageState("upload", "active");
       $("progBar").value = 0;
-      $("progStatus").textContent = "Reading…";
+      $("progMsg").textContent = "Reading file";
+      $("progSub").textContent = "";
+      $("progTime").textContent = "—";
       hideResultCard();
       if (resultUrl) { URL.revokeObjectURL(resultUrl); resultUrl = null; }
 
@@ -571,7 +601,8 @@ layout: post
       uploaded = true;
       setStageState("upload", "done");
       $("progBar").value = 100;
-      $("progStatus").textContent = `${f.name} · ${(fileBytes.length/1e6).toFixed(2)} MB ready`;
+      $("progMsg").textContent = "File ready";
+      $("progSub").textContent = `${f.name} · ${(fileBytes.length/1e6).toFixed(2)} MB`;
       log(`📁 ${f.name} (${(fileBytes.length/1e6).toFixed(2)} MB)`);
       setDisabled("runBtn", !libsReady);
     }catch(err){
@@ -580,7 +611,8 @@ layout: post
       fileName = "";
       setStageState("upload", "err");
       $("progBar").value = 0;
-      $("progStatus").textContent = "Upload failed";
+      $("progMsg").textContent = "Upload failed";
+      $("progSub").textContent = "";
       setDisabled("runBtn", true);
       log("❌ File load failed: " + (err?.message || err));
     }
@@ -656,15 +688,17 @@ _npz = None  # release the ZIP reader
     if(!libsReady){ alert("Please wait until the setup finishes."); return; }
 
     const runT0 = performance.now();
-    let currentMsg = "Starting…";
+    // Tick the elapsed timer every 100ms for a smooth "counting-up" feel.
     const tickTimer = setInterval(()=>{
-      $("progStatus").textContent = `${currentMsg} · ${fmtElapsed(performance.now() - runT0)}`;
-    }, 200);
-    const setStage = (pct, msg) => {
-      currentMsg = msg;
+      $("progTime").textContent = fmtElapsed(performance.now() - runT0);
+    }, 100);
+    const setStage = (pct, msg, sub) => {
       $("progBar").value = pct;
-      $("progStatus").textContent = `${msg} · ${fmtElapsed(performance.now() - runT0)}`;
+      $("progMsg").textContent = msg;
+      if (sub !== undefined) $("progSub").textContent = sub;
+      $("progTime").textContent = fmtElapsed(performance.now() - runT0);
     };
+    const setSub = (sub) => { $("progSub").textContent = sub; };
 
     // Clear any previous result/download from a prior Run, reset stages past Upload
     hideResultCard();
@@ -673,14 +707,14 @@ _npz = None  # release the ZIP reader
     setStageState("parse", "pending");
     setStageState("annotate", "pending");
 
-    setStage(5, "Starting");
+    setStage(5, "Starting", "preparing pipeline");
     log("▶️ Running annotation …");
 
     let unhookOut = null, unhookErr = null;
     let parsedNCells = 0, parsedNMatched = 0;
     try {
       setStageState("parse", "active");
-      setStage(10, "Fetching model");
+      setStage(10, "Fetching model", "downloading .npz if not cached");
       try {
         await ensureModelInFS();
       } catch(err) {
@@ -691,9 +725,9 @@ _npz = None  # release the ZIP reader
         return;
       }
 
-      setStage(25, "Parsing CSV");
+      setStage(25, "Parsing CSV", "reading & decompressing");
       const parsed = await parseCsvBytes(fileBytes, modelFeatureMap, modelFeatures.length, (n) => {
-        currentMsg = `Parsing CSV (${n.toLocaleString()} rows)`;
+        setSub(`${n.toLocaleString()} rows parsed`);
       });
       parsedNCells = parsed.nCells;
       parsedNMatched = parsed.nMatched;
@@ -703,7 +737,8 @@ _npz = None  # release the ZIP reader
         throw new Error("No overlapping features between input CSV and model. Check that column names are gene symbols/IDs matching the model.");
       }
 
-      setStage(55, "Transferring to Python");
+      setStage(55, "Transferring to Python",
+        `${parsed.nCells.toLocaleString()} cells · ${parsed.nMatched.toLocaleString()}/${parsed.nFeat.toLocaleString()} features matched`);
       const xBytes = new Uint8Array(parsed.xFlat.buffer, parsed.xFlat.byteOffset, parsed.xFlat.byteLength);
       FS.writeFile('/tmp_X.bin', xBytes);
       pyodide.globals.set('cell_ids_js',  parsed.cellIds);
@@ -804,7 +839,9 @@ print('DONE', n_cells, 'cells,', len(_classes), 'classes, features_matched=', ma
       await pyodide.runPythonAsync(code);
       const elapsed = fmtElapsed(performance.now() - runT0);
       $("progBar").value = 100;
-      $("progStatus").textContent = `Complete · ${elapsed}`;
+      $("progMsg").textContent = "Complete";
+      $("progSub").textContent = `${parsedNCells.toLocaleString()} cells · ${parsedNMatched.toLocaleString()} features used`;
+      $("progTime").textContent = elapsed;
       setStageState("annotate", "done");
 
       // Build output filename: pred_{input_stem}.csv (strip .csv / .gz / .csv.gz)
@@ -824,7 +861,9 @@ print('DONE', n_cells, 'cells,', len(_classes), 'classes, features_matched=', ma
       log(`✅ ${outName} ready in ${elapsed}.`);
     } catch(err) {
       const elapsed = fmtElapsed(performance.now() - runT0);
-      $("progStatus").textContent = `Error · ${elapsed}`;
+      $("progMsg").textContent = "Error";
+      $("progSub").textContent = (err?.message || String(err)).slice(0, 200);
+      $("progTime").textContent = elapsed;
       // Mark whichever stage is currently active as failed
       const active = document.querySelector(".annot-wrap .stage.active");
       if (active) { active.classList.remove("active"); active.classList.add("err"); }

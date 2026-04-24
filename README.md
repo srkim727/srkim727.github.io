@@ -14,6 +14,12 @@ PANGEA framework includes
 3. Meta analyses based on integrated cell annotations
 
 
+### This webpage provides
+
+1. interactive page for cell annotations ([Annotate cells online](/pages/annotate/))
+2. exploration of PANGEA cell annotation ([Explore cell distribution](/pages/cellplot/))
+3. exploration of gene expression profiles of PANGEA cell annotations ([Explore gene expression](/pages/geneplot/))
+
 
 ### I. Database curation
 ![Image](/assets/images/DBpipeline.png)
