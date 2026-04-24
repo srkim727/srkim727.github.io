@@ -16,9 +16,9 @@ PANGEA framework includes
 
 ### This webpage provides
 
-1. interactive page for cell annotations ([Annotate cells online](/pages/annotate/))
-2. exploration of PANGEA cell annotation ([Explore cell distribution](/pages/cellplot/))
-3. exploration of gene expression profiles of PANGEA cell annotations ([Explore gene expression](/pages/geneplot/))
+1. **[Annotate cells online](/pages/annotate/)** — interactive page for cell annotations
+2. **[Explore cell distribution](/pages/cellplot/)** — exploration of PANGEA cell annotation
+3. **[Explore gene expression](/pages/geneplot/)** — exploration of gene expression profiles of PANGEA cell annotations
 
 
 ### I. Database curation

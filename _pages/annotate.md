@@ -112,18 +112,30 @@ layout: post
   /* Richer two-line status area with tabular elapsed time */
   .annot-wrap .status-box{margin:8px 0 0 0;}
   .annot-wrap .status-main{
-    display:flex;justify-content:space-between;align-items:baseline;gap:12px;
+    display:flex;justify-content:space-between;align-items:center;gap:12px;
     font-size:13px;color:var(--text);line-height:1.3;
   }
-  .annot-wrap .status-msg{font-weight:500;}
+  .annot-wrap .status-msg{
+    font-weight:500;display:inline-flex;align-items:center;gap:7px;flex:1;min-width:0;
+  }
   .annot-wrap .status-time{
     color:var(--muted);font-size:12px;font-variant-numeric:tabular-nums;
-    white-space:nowrap;letter-spacing:.02em;
+    white-space:nowrap;letter-spacing:.02em;min-width:58px;text-align:right;
   }
   .annot-wrap .status-sub{
     font-size:11px;color:var(--muted);margin-top:3px;min-height:14px;
     font-variant-numeric:tabular-nums;
   }
+  /* Live in-progress spinner (only visible while a run is active) */
+  @keyframes annotSpin{to{transform:rotate(360deg);}}
+  .annot-wrap .status-box[data-state="running"] .status-msg::before{
+    content:"";display:inline-block;width:10px;height:10px;flex-shrink:0;
+    border:2px solid #e5e7eb;border-top-color:var(--accent);border-radius:50%;
+    animation:annotSpin .8s linear infinite;
+  }
+  .annot-wrap .status-box[data-state="running"] .status-time{color:var(--accent);}
+  .annot-wrap .status-box[data-state="done"] .status-msg{color:var(--ok);}
+  .annot-wrap .status-box[data-state="err"] .status-msg{color:var(--err);}
   /* Gentle pulse on the currently-active stage dot */
   @keyframes annotPulse{
     0%,100%{box-shadow:0 0 0 4px var(--accent-light);}
@@ -247,7 +259,7 @@ layout: post
 
   <!-- Unified progress + rich status (main message · elapsed time · sub-detail) -->
   <progress id="progBar" max="100" value="0"></progress>
-  <div class="status-box">
+  <div class="status-box" id="statusBox" data-state="idle">
     <div class="status-main">
       <span class="status-msg" id="progMsg">Waiting for file…</span>
       <span class="status-time" id="progTime">—</span>
@@ -590,9 +602,10 @@ layout: post
       resetStages();
       setStageState("upload", "active");
       $("progBar").value = 0;
-      $("progMsg").textContent = "Reading file";
+      $("progMsg").textContent = "Reading file…";
       $("progSub").textContent = "";
       $("progTime").textContent = "—";
+      $("statusBox").dataset.state = "idle";
       hideResultCard();
       if (resultUrl) { URL.revokeObjectURL(resultUrl); resultUrl = null; }
 
@@ -676,11 +689,11 @@ _npz = None  # release the ZIP reader
 
   // ---------- RUN ----------
   function fmtElapsed(ms){
-    if(ms < 1000) return `${Math.round(ms)} ms`;
+    // Live-tick format: always show hundredths so the last digit always moves.
     const s = ms / 1000;
-    if(s < 60) return `${s.toFixed(1)} s`;
+    if(s < 60) return `${s.toFixed(2)} s`;
     const m = Math.floor(s/60), r = s - m*60;
-    return `${m}m ${r.toFixed(1)}s`;
+    return `${m}m ${r.toFixed(2)}s`;
   }
 
   $("runBtn").addEventListener("click", async ()=>{
@@ -688,10 +701,12 @@ _npz = None  # release the ZIP reader
     if(!libsReady){ alert("Please wait until the setup finishes."); return; }
 
     const runT0 = performance.now();
-    // Tick the elapsed timer every 100ms for a smooth "counting-up" feel.
+    // Mark status as actively running → spinner appears, timer colored accent.
+    $("statusBox").dataset.state = "running";
+    // Tick the elapsed timer every 50ms so hundredths digit is always moving.
     const tickTimer = setInterval(()=>{
       $("progTime").textContent = fmtElapsed(performance.now() - runT0);
-    }, 100);
+    }, 50);
     const setStage = (pct, msg, sub) => {
       $("progBar").value = pct;
       $("progMsg").textContent = msg;
@@ -707,27 +722,28 @@ _npz = None  # release the ZIP reader
     setStageState("parse", "pending");
     setStageState("annotate", "pending");
 
-    setStage(5, "Starting", "preparing pipeline");
+    setStage(5, "Starting…", "preparing pipeline");
     log("▶️ Running annotation …");
 
     let unhookOut = null, unhookErr = null;
     let parsedNCells = 0, parsedNMatched = 0;
     try {
       setStageState("parse", "active");
-      setStage(10, "Fetching model", "downloading .npz if not cached");
+      setStage(10, "Fetching model…", "downloading .npz if not cached");
       try {
         await ensureModelInFS();
       } catch(err) {
         clearInterval(tickTimer);
         setStageState("parse", "err");
+        $("statusBox").dataset.state = "err";
         showResult("err", `❌ Model fetch error: ${err?.message || err}`);
         log("❌ Model fetch error: " + (err?.message || err));
         return;
       }
 
-      setStage(25, "Parsing CSV", "reading & decompressing");
+      setStage(25, "Parsing CSV…", "decompressing & reading rows");
       const parsed = await parseCsvBytes(fileBytes, modelFeatureMap, modelFeatures.length, (n) => {
-        setSub(`${n.toLocaleString()} rows parsed`);
+        setSub(`parsing · ${n.toLocaleString()} rows so far`);
       });
       parsedNCells = parsed.nCells;
       parsedNMatched = parsed.nMatched;
@@ -737,7 +753,7 @@ _npz = None  # release the ZIP reader
         throw new Error("No overlapping features between input CSV and model. Check that column names are gene symbols/IDs matching the model.");
       }
 
-      setStage(55, "Transferring to Python",
+      setStage(55, "Transferring to Python…",
         `${parsed.nCells.toLocaleString()} cells · ${parsed.nMatched.toLocaleString()}/${parsed.nFeat.toLocaleString()} features matched`);
       const xBytes = new Uint8Array(parsed.xFlat.buffer, parsed.xFlat.byteOffset, parsed.xFlat.byteLength);
       FS.writeFile('/tmp_X.bin', xBytes);
@@ -783,7 +799,7 @@ def stage(pct, msg):
 # (n_cells, n_feat) in model feature order. Missing features are zeros,
 # and keep_mask_js marks which features have any input.
 
-stage(60, "Loading matrix")
+stage(60, "Loading matrix…")
 n_cells = int(n_cells_js)
 n_feat  = int(n_feat_js)
 X2 = np.fromfile('/tmp_X.bin', dtype=np.float32).reshape(n_cells, n_feat)
@@ -797,7 +813,7 @@ if matched == 0:
 try: os.remove('/tmp_X.bin')
 except Exception: pass
 
-stage(72, "Scaling input")
+stage(72, "Scaling input…")
 # In-place scaling: X2 is already writable float32
 if _with_mean:
     np.subtract(X2, _scaler_mean, out=X2)
@@ -811,13 +827,13 @@ np.clip(X2, None, np.float32(10.0), out=X2)
 if matched < n_feat:
     X2[:, ~keep_mask] = 0
 
-stage(82, "Computing logits")
+stage(82, "Computing logits…")
 logits = X2 @ _coef.T + _intercept
 del X2
 if logits.ndim == 1:
     logits = np.column_stack([-logits, logits])
 
-stage(90, "Softmax & labels")
+stage(90, "Softmaxing & labeling…")
 z = logits - logits.max(axis=1, keepdims=True)
 np.exp(z, out=z)
 P = z / z.sum(axis=1, keepdims=True)
@@ -829,7 +845,7 @@ part = np.partition(P, -2, axis=1)[:, -2:]
 del P
 cert = part[:,1] - part[:,0]
 
-stage(97, "Writing output")
+stage(97, "Writing output…")
 import pandas as pd
 out = pd.DataFrame({'cell_id': cell_ids, 'predicted_label': labels, 'conf_score': top, 'cert_score': cert})
 out.to_csv('/pred.csv', index=False)
@@ -842,6 +858,7 @@ print('DONE', n_cells, 'cells,', len(_classes), 'classes, features_matched=', ma
       $("progMsg").textContent = "Complete";
       $("progSub").textContent = `${parsedNCells.toLocaleString()} cells · ${parsedNMatched.toLocaleString()} features used`;
       $("progTime").textContent = elapsed;
+      $("statusBox").dataset.state = "done";
       setStageState("annotate", "done");
 
       // Build output filename: pred_{input_stem}.csv (strip .csv / .gz / .csv.gz)
@@ -864,6 +881,7 @@ print('DONE', n_cells, 'cells,', len(_classes), 'classes, features_matched=', ma
       $("progMsg").textContent = "Error";
       $("progSub").textContent = (err?.message || String(err)).slice(0, 200);
       $("progTime").textContent = elapsed;
+      $("statusBox").dataset.state = "err";
       // Mark whichever stage is currently active as failed
       const active = document.querySelector(".annot-wrap .stage.active");
       if (active) { active.classList.remove("active"); active.classList.add("err"); }
