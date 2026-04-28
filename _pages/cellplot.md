@@ -176,7 +176,7 @@ excerpt: ""
   </div>
 
   <progress id="progBar" max="100" value="0"></progress>
-  <div class="status-line" id="progStatus">Idle</div>
+  <div class="status-line" id="progStatus">Loading assets…</div>
 
   <!-- Result card (plot + download) -->
   <div class="result-card" id="resultCard" style="display:none;">
@@ -362,6 +362,7 @@ excerpt: ""
   async function boot(){
     try{
       setStageState("boot","active");
+      stage(2, "Initializing Pyodide…");
       log("⏳ Boot: waiting for pyodide.js …");
       await new Promise((res, rej)=>{
         const t0=performance.now();
@@ -377,16 +378,19 @@ excerpt: ""
       FS = pyodide.FS;
       log("✅ Pyodide " + pyodide.version + " loaded.");
 
+      stage(6, "Loading core packages (numpy, pandas, matplotlib)…");
       log("⏳ Boot: loading core packages (numpy, pandas, matplotlib, micropip) …");
       await pyodide.loadPackage(["numpy","pandas","matplotlib","micropip"]);
       log("✅ Core packages loaded.");
 
+      stage(12, "Installing seaborn…");
       log("⏳ Installing seaborn via micropip …");
       await pyodide.runPythonAsync(`
 import micropip
 await micropip.install("seaborn")
       `);
       log("✅ seaborn installed.");
+      stage(16, "Importing Python libs…");
 
       await pyodide.runPythonAsync(`
 import sys, io, os, gzip, pickle as pkl, textwrap
@@ -427,6 +431,7 @@ def add_fig_note(fig, text, x=0.01, y=0.99, fontsize=9, mono=True, ha='left', va
     }catch(e){
       log("❌ Boot failed: " + (e?.message||e));
       setStageState("boot","err");
+      stage(0, "Boot failed");
     }
   }
 

@@ -185,7 +185,7 @@ excerpt: ""
   </div>
 
   <progress id="progBar" max="100" value="0"></progress>
-  <div class="status-line" id="progStatus">Idle</div>
+  <div class="status-line" id="progStatus">Loading assets…</div>
 
   <!-- Result card (plot output + download) -->
   <div class="result-card" id="resultCard" style="display:none;">
@@ -344,6 +344,7 @@ excerpt: ""
   async function boot(){
     try{
       setStageState("boot","active");
+      stage(2, "Initializing Pyodide…");
       log("⏳ Boot: waiting for pyodide.js …");
       await new Promise((res, rej)=>{
         const t0=performance.now();
@@ -359,10 +360,12 @@ excerpt: ""
       FS = pyodide.FS;
       log("✅ Pyodide " + pyodide.version + " loaded.");
 
+      stage(5, "Loading Python packages (numpy, pandas, matplotlib)…");
       log("⏳ Boot: loading packages (numpy, pandas, matplotlib) …");
       await pyodide.loadPackage(["numpy","pandas","matplotlib"]);
       log("✅ Packages loaded.");
 
+      stage(8, "Importing Python libs…");
       await pyodide.runPythonAsync(`
 import sys, io, os, gzip, pickle as pkl
 import numpy as np, pandas as pd
@@ -384,6 +387,7 @@ print("matplotlib", mpl.__version__)
     }catch(e){
       log("❌ Boot failed: " + (e?.message||e));
       setStageState("boot","err");
+      stage(0, "Boot failed");
     }
   }
 
