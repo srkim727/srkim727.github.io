@@ -263,8 +263,8 @@ excerpt: ""
     $("downloadCSV").style.display = "none";
   }
   async function fetchToFS(path, fsPath){
-    const u = (path.includes("?") ? path : path + "?t=" + Date.now()); // bust cache
-    const r = await fetch(u, { cache:"no-store" });
+    // Allow browser HTTP cache (returns 200 first time, 304 thereafter — much faster on revisits).
+    const r = await fetch(path);
     if(!r.ok) throw new Error("HTTP " + r.status + " for " + path);
     const buf = new Uint8Array(await r.arrayBuffer());
     pyodide.FS.writeFile(fsPath, buf);
@@ -299,38 +299,35 @@ excerpt: ""
       setStageState("data","active");
       setStageState("plot","pending");
 
-      // ensure fdic is available once
+      // Build a parallel fetch list. Browser HTTP cache makes repeated loads near-instant.
+      const tasks = [];
       if(!fdicLoaded || !existsInFS("/fdic.pkl")){
-        stage(5, "Fetching fdic.pkl …");
-        const fdicSize = await fetchToFS(ASSET_BASE + "fdic.pkl", "/fdic.pkl");
-        log(`✅ fdic.pkl → /fdic.pkl (${(fdicSize/1e6).toFixed(2)} MB)`);
-        fdicLoaded = true;
-      }else{
-        log("ℹ️ fdic.pkl already in FS; skipping download.");
+        stage(10, "Fetching assets …");
+        tasks.push(
+          fetchToFS(ASSET_BASE + "fdic.pkl", "/fdic.pkl").then(sz => {
+            log(`✅ fdic.pkl (${(sz/1e6).toFixed(2)} MB)`);
+            fdicLoaded = true;
+          })
+        );
+      } else {
+        stage(10, "Fetching cell assets …");
       }
-
-      // per-cell assets
-      stage(20, `Fetching ${cell}_avg.npy.gz …`);
-      const avgSize = await fetchToFS(ASSET_BASE + `${cell}_avg.npy.gz`, "/avg.npy.gz");
-      log(`✅ ${cell}_avg.npy.gz → /avg.npy.gz (${(avgSize/1e6).toFixed(2)} MB)`);
-
-      stage(35, `Fetching ${cell}_cov.npy.gz …`);
-      const covSize = await fetchToFS(ASSET_BASE + `${cell}_cov.npy.gz`, "/cov.npy.gz");
-      log(`✅ ${cell}_cov.npy.gz → /cov.npy.gz (${(covSize/1e6).toFixed(2)} MB)`);
-
-      // quick smoke: fdic keys
-      const info = await pyodide.runPythonAsync(`
-import pickle as pkl
-with open("/fdic.pkl","rb") as fh:
-    _fd = pkl.load(fh)
-list(_fd.keys())[:5]
-      `);
-      log("ℹ️ fdic keys (first 5): " + JSON.stringify(info));
+      tasks.push(
+        fetchToFS(ASSET_BASE + `${cell}_avg.npy.gz`, "/avg.npy.gz").then(sz => {
+          log(`✅ ${cell}_avg.npy.gz (${(sz/1e6).toFixed(2)} MB)`);
+        }),
+        fetchToFS(ASSET_BASE + `${cell}_cov.npy.gz`, "/cov.npy.gz").then(sz => {
+          log(`✅ ${cell}_cov.npy.gz (${(sz/1e6).toFixed(2)} MB)`);
+        }),
+      );
+      // All fetches run concurrently — the slowest one bounds total time, not the sum.
+      await Promise.all(tasks);
 
       assetsLoaded = true;
       setDisabled("runBtn", false);
       setStageState("data","done");
       stage(45, `Assets for '${cell}' ready.`);
+      log(`🧬 Active model: ${cell}  ·  ready to plot`);
     }catch(e){
       log("❌ Asset load failed: " + (e?.message||e));
       assetsLoaded = false;

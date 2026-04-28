@@ -257,8 +257,8 @@ excerpt: ""
   }
   async function fetchToFS(url, fsPath, {optional=false,label=null}={}){
     try{
-      const u = (url.includes("?") ? url : url + "?t=" + Date.now()); // cache-bust
-      const r = await fetch(u, { cache: "no-store" });
+      // Allow browser HTTP cache (200 first time, 304 thereafter — fast on revisits).
+      const r = await fetch(url);
       if(!r.ok){
         if(optional){
           log(`⚠️ Optional ${label||url} missing: HTTP ${r.status} for ${url}`);
@@ -268,7 +268,7 @@ excerpt: ""
       }
       const buf = new Uint8Array(await r.arrayBuffer());
       pyodide.FS.writeFile(fsPath, buf);
-      log(`✅ ${label||url} → ${fsPath} (${(buf.length/1e6).toFixed(2)} MB)`);
+      log(`✅ ${label||url} (${(buf.length/1e6).toFixed(2)} MB)`);
       return true;
     }catch(e){
       if(optional){ log(`⚠️ Optional ${label||url} skipped: ` + (e?.message||e)); return false; }
@@ -463,20 +463,18 @@ def add_fig_note(fig, text, x=0.01, y=0.99, fontsize=9, mono=True, ha='left', va
     try{
       // ensure target dir
       try{ FS.mkdir("/work"); }catch(_){}
-      // required
-      await fetchToFS(f_overall, "/work/overall.csv", {label:"overall"});
-      await fetchToFS(f_profile, "/work/profile.csv", {label:"profile"});
-      await fetchToFS(f_match,   "/work/matching.csv", {label:"matching_res"});
-      // markers (choose based on level)
-      if(level==="level1"){
-        await fetchToFS(f_m_l1, "/work/marker.pkl", {label:"Level1 marker dict"});
-      }else{
-        await fetchToFS(f_m_l2, "/work/marker.pkl", {label:`${cell1} marker dict`});
-      }
-      // optional TME
-      await fetchToFS(f_prop, "/work/prop.csv", {optional:true,label:`TME prop_${cell1}.csv`});
-      await fetchToFS(f_pval, "/work/pval.csv", {optional:true,label:`TME pval_${cell1}.csv`});
-      await fetchToFS(f_cmap, "/work/cmap.pkl", {optional:true,label:`TME cmapdic_cat.pkl`});
+      // Run all 7 fetches in parallel (3 required + 1 marker + 3 optional TME).
+      // Total time = slowest single fetch, not the sum.
+      const f_marker = (level==="level1") ? f_m_l1 : f_m_l2;
+      await Promise.all([
+        fetchToFS(f_overall, "/work/overall.csv",  {label:"overall"}),
+        fetchToFS(f_profile, "/work/profile.csv",  {label:"profile"}),
+        fetchToFS(f_match,   "/work/matching.csv", {label:"matching_res"}),
+        fetchToFS(f_marker,  "/work/marker.pkl",   {label:`${cell1} marker dict`}),
+        fetchToFS(f_prop,    "/work/prop.csv",     {optional:true, label:`TME prop_${cell1}.csv`}),
+        fetchToFS(f_pval,    "/work/pval.csv",     {optional:true, label:`TME pval_${cell1}.csv`}),
+        fetchToFS(f_cmap,    "/work/cmap.pkl",     {optional:true, label:`TME cmapdic_cat.pkl`}),
+      ]);
       setStageState("data","done");
     }catch(e){
       stage(0,"Error");
