@@ -1,7 +1,7 @@
 ---
 title: Explore gene expression (context)
 author: S. Kim
-date: 2026-04-30
+date: 2025-10-16
 layout: post
 excerpt: ""
 ---
