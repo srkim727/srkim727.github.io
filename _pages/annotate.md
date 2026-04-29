@@ -13,6 +13,9 @@ layout: post
 <!-- pako: robust pure-JS gzip decompressor (handles multi-member gzip / BGZF / trailing padding) -->
 <script defer src="https://cdn.jsdelivr.net/npm/pako@2.1.0/dist/pako.min.js"></script>
 
+<!-- h5wasm: HDF5 reader compiled to WASM — used to parse .h5ad (AnnData) inputs -->
+<script defer src="https://cdn.jsdelivr.net/npm/h5wasm@0.7.8/dist/iife/h5wasm.js"></script>
+
 <!-- Annotation panel styles -->
 <style>
   .annot-wrap{
@@ -224,7 +227,7 @@ layout: post
 <div class="panel">
   <div class="ctrl-row">
     <label for="csvInput" style="display:inline-block;">
-      <input type="file" id="csvInput" accept=".csv,.gz,.csv.gz,text/csv,application/gzip,application/x-gzip" style="display:none;">
+      <input type="file" id="csvInput" accept=".csv,.gz,.csv.gz,.h5ad,.h5,text/csv,application/gzip,application/x-gzip,application/x-hdf5,application/octet-stream" style="display:none;">
       <button class="btn" id="loadFileBtn" type="button" disabled>Load file</button>
     </label>
 
@@ -288,7 +291,9 @@ layout: post
         <li>Raw expression must be <code>1e4</code>-normalized &amp; <code>log1p</code>-transformed<br>
             <small>normalized up to 10,000 counts per cell, then log-transformed with 1 pseudocount</small>
         </li>
-        <li>File format: <code>.csv</code> or <strong><code>.csv.gz (recommended for faster performance)</code></strong></li>
+        <li>Supported formats: <code>.csv</code>, <strong><code>.csv.gz</code></strong> (recommended for fastest upload), or <code>.h5ad</code> (AnnData / HDF5)<br>
+            <small>For <code>.h5ad</code>: gene names are read from <code>var/_index</code> (or whichever column <code>var.attrs._index</code> points to); cell IDs from <code>obs/_index</code>; the X matrix is auto-detected as dense or sparse (CSR / CSC).</small>
+        </li>
       </ul>
     </li>
     <li><strong>Cell annotation</strong>
@@ -536,6 +541,163 @@ layout: post
     };
   }
 
+  // ---------- File-type detection ----------
+  // HDF5 magic bytes at offset 0: 0x89 'H' 'D' 'F' '\r' '\n' 0x1a '\n'
+  function isHDF5(bytes){
+    return bytes.length >= 8
+        && bytes[0] === 0x89 && bytes[1] === 0x48 && bytes[2] === 0x44 && bytes[3] === 0x46
+        && bytes[4] === 0x0d && bytes[5] === 0x0a && bytes[6] === 0x1a && bytes[7] === 0x0a;
+  }
+  function isGzip(bytes){
+    return bytes.length >= 2 && bytes[0] === 0x1f && bytes[1] === 0x8b;
+  }
+
+  // ---------- h5ad (AnnData) parser ----------
+  // Reads a .h5ad file via h5wasm. Extracts gene names from var/_index, cell
+  // IDs from obs/_index, and the X matrix (dense or CSR/CSC sparse). Builds the
+  // same {cellIds, xFlat, keepMask, nCells, nFeat, nMatched} shape as parseCsvBytes.
+  let _h5wasmReadyPromise = null;
+  async function ensureH5wasm(){
+    if (_h5wasmReadyPromise) return _h5wasmReadyPromise;
+    await waitForGlobal("h5wasm", 15000);
+    _h5wasmReadyPromise = h5wasm.ready.then(() => h5wasm);
+    return _h5wasmReadyPromise;
+  }
+
+  function _h5IndexColumn(group, fallback){
+    // AnnData stores the row-name column under group.attrs._index
+    try {
+      const a = group.attrs && group.attrs['_index'];
+      if (a && a.value) return Array.isArray(a.value) ? a.value[0] : a.value;
+    } catch(_) {}
+    return fallback;
+  }
+  function _h5ReadStringArray(file, path){
+    const ds = file.get(path);
+    if (!ds) throw new Error("h5: missing dataset " + path);
+    const v = ds.value;
+    return Array.isArray(v) ? v.map(String) : Array.from(v, String);
+  }
+
+  async function parseH5adBytes(bytes, featureMap, nFeat, onRowProgress){
+    const lib = await ensureH5wasm();
+    const tmpName = "input.h5ad";
+    // Write the bytes to h5wasm's virtual FS; clean up on exit.
+    try { lib.FS.unlink("/" + tmpName); } catch(_) {}
+    lib.FS.writeFile("/" + tmpName, bytes);
+    const file = new lib.File("/" + tmpName, "r");
+    let xFlat = null;
+    let keepMask = null;
+    let cellIds = [];
+    let nCells = 0;
+    try {
+      // ---- gene names from var ----
+      const varGroup = file.get("var");
+      if (!varGroup) throw new Error("h5ad: missing /var group");
+      const geneCol = _h5IndexColumn(varGroup, "_index");
+      const geneNames = _h5ReadStringArray(file, "var/" + geneCol);
+
+      // ---- cell IDs from obs ----
+      const obsGroup = file.get("obs");
+      if (!obsGroup) throw new Error("h5ad: missing /obs group");
+      const cellCol = _h5IndexColumn(obsGroup, "_index");
+      cellIds = _h5ReadStringArray(file, "obs/" + cellCol);
+      nCells = cellIds.length;
+
+      // ---- build column → feature index map ----
+      keepMask = new Uint8Array(nFeat);
+      const colToFeatIdx = new Int32Array(geneNames.length);
+      for (let i = 0; i < geneNames.length; i++) {
+        const g = String(geneNames[i] || "").toLowerCase();
+        const fi = featureMap.get(g);
+        if (fi === undefined) {
+          colToFeatIdx[i] = -1;
+        } else {
+          colToFeatIdx[i] = fi;
+          keepMask[fi] = 1;
+        }
+      }
+
+      // ---- X matrix: dense Dataset OR sparse Group (CSR / CSC) ----
+      const X = file.get("X");
+      if (!X) throw new Error("h5ad: missing /X");
+      xFlat = new Float32Array(nCells * nFeat);   // pre-sized; missing entries stay 0
+
+      const isGroup = X.constructor && X.constructor.name === "Group";
+      if (!isGroup) {
+        // ----- dense -----
+        const shape = X.shape || [nCells, geneNames.length];
+        const totalGenes = shape[1];
+        const data = X.value;        // typed array, length = shape[0] * shape[1]
+        for (let r = 0; r < nCells; r++) {
+          const offSrc = r * totalGenes;
+          const offDst = r * nFeat;
+          for (let c = 0; c < totalGenes; c++) {
+            const fi = colToFeatIdx[c];
+            if (fi < 0) continue;
+            const v = data[offSrc + c];
+            if (v) xFlat[offDst + fi] = v;
+          }
+          if (onRowProgress && (r % 200 === 0)) onRowProgress(r);
+        }
+      } else {
+        // ----- sparse -----
+        let enc = "csr_matrix";
+        try {
+          const a = X.attrs && X.attrs["encoding-type"];
+          if (a && a.value) enc = String(Array.isArray(a.value) ? a.value[0] : a.value);
+        } catch(_) {}
+        const data    = file.get("X/data").value;
+        const indices = file.get("X/indices").value;
+        const indptr  = file.get("X/indptr").value;
+        if (enc.indexOf("csr") !== -1) {
+          // CSR: indptr indexes by row (cell)
+          for (let r = 0; r < nCells; r++) {
+            const start = indptr[r];
+            const end   = indptr[r + 1];
+            const offDst = r * nFeat;
+            for (let k = start; k < end; k++) {
+              const fi = colToFeatIdx[indices[k]];
+              if (fi < 0) continue;
+              xFlat[offDst + fi] = data[k];
+            }
+            if (onRowProgress && (r % 200 === 0)) onRowProgress(r);
+          }
+        } else {
+          // CSC: indptr indexes by column (gene); indices are row indices
+          const nGenes = colToFeatIdx.length;
+          for (let c = 0; c < nGenes; c++) {
+            const fi = colToFeatIdx[c];
+            if (fi < 0) continue;
+            const start = indptr[c];
+            const end   = indptr[c + 1];
+            for (let k = start; k < end; k++) {
+              const r = indices[k];
+              xFlat[r * nFeat + fi] = data[k];
+            }
+            if (onRowProgress && (c % 1000 === 0)) onRowProgress(Math.min(nCells, c));
+          }
+        }
+      }
+    } finally {
+      try { file.close(); } catch(_) {}
+      try { lib.FS.unlink("/" + tmpName); } catch(_) {}
+    }
+
+    let nMatched = 0;
+    for (let i = 0; i < nFeat; i++) if (keepMask[i]) nMatched++;
+    return { cellIds, xFlat, keepMask, nCells, nFeat, nMatched };
+  }
+
+  // Dispatcher: pick the right parser by magic bytes.
+  async function parseInputBytes(bytes, featureMap, nFeat, onRowProgress){
+    if (isHDF5(bytes)) {
+      return await parseH5adBytes(bytes, featureMap, nFeat, onRowProgress);
+    }
+    // Default: CSV (plain or gzipped)
+    return await parseCsvBytes(bytes, featureMap, nFeat, onRowProgress);
+  }
+
   // ---------- Model selection ----------
   const MODEL_BASE = "/assets/models/";
   function getModelURL(){
@@ -697,7 +859,7 @@ _npz = None  # release the ZIP reader
   }
 
   $("runBtn").addEventListener("click", async ()=>{
-    if(!uploaded || !fileBytes){ alert("Load a CSV first."); return; }
+    if(!uploaded || !fileBytes){ alert("Load an input file first."); return; }
     if(!libsReady){ alert("Please wait until the setup finishes."); return; }
 
     const runT0 = performance.now();
@@ -741,16 +903,18 @@ _npz = None  # release the ZIP reader
         return;
       }
 
-      setStage(25, "Parsing CSV…", "decompressing & reading rows");
-      const parsed = await parseCsvBytes(fileBytes, modelFeatureMap, modelFeatures.length, (n) => {
-        setSub(`parsing · ${n.toLocaleString()} rows so far`);
+      const isH5ad = isHDF5(fileBytes);
+      setStage(25, isH5ad ? "Parsing .h5ad…" : "Parsing CSV…",
+               isH5ad ? "reading HDF5 datasets" : "decompressing & reading rows");
+      const parsed = await parseInputBytes(fileBytes, modelFeatureMap, modelFeatures.length, (n) => {
+        setSub(`${isH5ad ? "decoding" : "parsing"} · ${n.toLocaleString()} ${isH5ad ? "cells" : "rows"} so far`);
       });
       parsedNCells = parsed.nCells;
       parsedNMatched = parsed.nMatched;
       log(`📊 Parsed ${parsed.nCells.toLocaleString()} cells × ${parsed.nMatched.toLocaleString()}/${parsed.nFeat.toLocaleString()} model features matched`);
 
       if (parsed.nMatched === 0) {
-        throw new Error("No overlapping features between input CSV and model. Check that column names are gene symbols/IDs matching the model.");
+        throw new Error("No overlapping features between input and model. Check that gene names/IDs match the model's feature set.");
       }
 
       setStage(55, "Transferring to Python…",
