@@ -963,57 +963,85 @@ def stage(pct, msg):
 # (n_cells, n_feat) in model feature order. Missing features are zeros,
 # and keep_mask_js marks which features have any input.
 
-stage(60, "Loading matrix…")
+stage(60, "Loading metadata…")
 n_cells = int(n_cells_js)
 n_feat  = int(n_feat_js)
-X2 = np.fromfile('/tmp_X.bin', dtype=np.float32).reshape(n_cells, n_feat)
 cell_ids  = [str(c) for c in cell_ids_js]
 keep_mask = np.frombuffer(bytes(keep_mask_js), dtype=np.uint8).astype(bool)
 matched   = int(keep_mask.sum())
 if matched == 0:
     raise ValueError('No overlapping features between input and model.')
 
-# Done with /tmp_X.bin — free MEMFS space.
+# Pre-compute reciprocal scale once (outside the batch loop).
+_inv_scale = (np.float32(1.0) / (_scaler_scale + np.float32(1e-8))).astype(np.float32)
+n_classes  = _coef.shape[0]
+bytes_per_row = n_feat * 4
+
+# Pick a batch size that keeps the per-batch X2 below ~200 MB. This avoids the
+# numpy "array is too big" cap (≈2 GB on 32-bit WASM) that bites for large
+# inputs (e.g. 50k+ cells × ~17k features). The whole input never has to
+# exist as one numpy array — we reshape one batch at a time directly from
+# /tmp_X.bin via np.fromfile(count=..., offset=...).
+BYTES_PER_BATCH = 200 * 1024 * 1024
+batch_size = max(256, min(n_cells, BYTES_PER_BATCH // max(1, bytes_per_row)))
+n_batches  = (n_cells + batch_size - 1) // batch_size
+
+# Per-cell results — small (n_cells × scalar each).
+all_labels = np.empty(n_cells, dtype=object)
+all_top    = np.empty(n_cells, dtype=np.float32)
+all_cert   = np.empty(n_cells, dtype=np.float32)
+
+for b in range(n_batches):
+    start = b * batch_size
+    end   = min(start + batch_size, n_cells)
+    sz    = end - start
+    pct   = 65 + int(30 * (start / max(1, n_cells)))
+    stage(pct, f"Predicting batch {b+1}/{n_batches} (cells {start}–{end})…")
+
+    # Read just this slice from disk — never the whole matrix.
+    X2 = np.fromfile('/tmp_X.bin', dtype=np.float32,
+                     count=sz * n_feat,
+                     offset=start * bytes_per_row).reshape(sz, n_feat)
+    X2 = np.ascontiguousarray(X2)   # ensure writable, contiguous
+
+    # Scale in-place
+    if _with_mean:
+        np.subtract(X2, _scaler_mean, out=X2)
+    np.multiply(X2, _inv_scale, out=X2)
+    np.clip(X2, None, np.float32(10.0), out=X2)
+    if matched < n_feat:
+        X2[:, ~keep_mask] = 0
+
+    # Logits → softmax → argmax (per batch only)
+    logits = X2 @ _coef.T + _intercept
+    del X2
+    if logits.ndim == 1:
+        logits = np.column_stack([-logits, logits])
+
+    z = logits - logits.max(axis=1, keepdims=True)
+    np.exp(z, out=z)
+    P = z / z.sum(axis=1, keepdims=True)
+    del z, logits
+    idx = np.argmax(P, axis=1)
+    all_labels[start:end] = _classes[idx]
+    all_top[start:end]    = P[np.arange(P.shape[0]), idx]
+    part = np.partition(P, -2, axis=1)[:, -2:]
+    all_cert[start:end]   = part[:, 1] - part[:, 0]
+    del P, idx, part
+
+# Free the staging file
 try: os.remove('/tmp_X.bin')
 except Exception: pass
 
-stage(72, "Scaling input…")
-# In-place scaling: X2 is already writable float32
-if _with_mean:
-    np.subtract(X2, _scaler_mean, out=X2)
-# Multiply by precomputed 1/(scale+eps) — cheaper than division
-_inv_scale = (np.float32(1.0) / (_scaler_scale + np.float32(1e-8))).astype(np.float32)
-np.multiply(X2, _inv_scale, out=X2)
-np.clip(X2, None, np.float32(10.0), out=X2)
-
-# Zero out columns for features not present in input so they contribute 0 to logits
-# (matches the keep_mask semantics of the deprecated/original pipeline).
-if matched < n_feat:
-    X2[:, ~keep_mask] = 0
-
-stage(82, "Computing logits…")
-logits = X2 @ _coef.T + _intercept
-del X2
-if logits.ndim == 1:
-    logits = np.column_stack([-logits, logits])
-
-stage(90, "Softmaxing & labeling…")
-z = logits - logits.max(axis=1, keepdims=True)
-np.exp(z, out=z)
-P = z / z.sum(axis=1, keepdims=True)
-del z, logits
-idx = np.argmax(P, axis=1)
-labels = _classes[idx]
-top = P[np.arange(P.shape[0]), idx]
-part = np.partition(P, -2, axis=1)[:, -2:]
-del P
-cert = part[:,1] - part[:,0]
-
 stage(97, "Writing output…")
 import pandas as pd
-out = pd.DataFrame({'cell_id': cell_ids, 'predicted_label': labels, 'conf_score': top, 'cert_score': cert})
+out = pd.DataFrame({'cell_id': cell_ids,
+                    'predicted_label': all_labels,
+                    'conf_score': all_top,
+                    'cert_score': all_cert})
 out.to_csv('/pred.csv', index=False)
-print('DONE', n_cells, 'cells,', len(_classes), 'classes, features_matched=', matched, '/', n_feat)
+print('DONE', n_cells, 'cells,', n_classes, 'classes, features_matched=', matched, '/', n_feat,
+      '· batches=', n_batches, '· batch_size=', batch_size)
 `;
 
       await pyodide.runPythonAsync(code);
