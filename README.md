@@ -19,6 +19,7 @@ PANGEA framework includes
 1. **[Annotate cells online](/pages/annotate/)** — interactive page for cell annotations
 2. **[Explore cell distribution](/pages/cellplot/)** — exploration of PANGEA cell annotation
 3. **[Explore gene expression](/pages/geneplot/)** — exploration of gene expression profiles of PANGEA cell annotations
+4. **[Explore gene expression (context)](/pages/contextplot/)** — exploration of gene expression in organ × disease context (per-cell-type dotplots)
 
 
 ### I. Database curation
@@ -106,6 +107,13 @@ Web-app implementation of PANGEA cell annotation model is available [here][8].
     <div style="font-size:13px;color:#2563eb;font-weight:600;letter-spacing:.02em;text-transform:uppercase;margin-bottom:4px;">Web tool</div>
     <div style="font-size:15px;font-weight:600;margin-bottom:4px;">Explore cell distribution ↗</div>
     <div style="font-size:13px;color:#6b7280;">Organ distribution &amp; literature matches</div>
+  </a>
+
+  <a href="/pages/contextplot/"
+     style="display:block;padding:14px 16px;border:1px solid #dbeafe;border-radius:10px;background:#eff6ff;text-decoration:none;color:#111827;transition:border-color .15s,box-shadow .15s,transform .15s;">
+    <div style="font-size:13px;color:#2563eb;font-weight:600;letter-spacing:.02em;text-transform:uppercase;margin-bottom:4px;">Web tool</div>
+    <div style="font-size:15px;font-weight:600;margin-bottom:4px;">Gene expression (context) ↗</div>
+    <div style="font-size:13px;color:#6b7280;">Organ × disease dotplot per cell type</div>
   </a>
 
 </div>
