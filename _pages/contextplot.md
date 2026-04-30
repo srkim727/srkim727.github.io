@@ -149,12 +149,37 @@ excerpt: ""
       <span>Cell</span>
       <select id="cellSelect" style="min-width:160px;">
         <option selected>Mural</option>
+        <option>Astrocyte</option>
+        <option>B_GC</option>
+        <option>B_mature</option>
+        <option>B_progenitor</option>
         <option>Ciliated</option>
         <option>Dendritic_classical</option>
+        <option>Dendritic_plasmacytoid</option>
+        <option>Ductal</option>
+        <option>Endothelial</option>
+        <option>Erythroid</option>
+        <option>Fibroblast</option>
+        <option>Hematopoietic</option>
+        <option>Hepatocyte</option>
+        <option>Macrophage</option>
         <option>Mast&Basophil</option>
+        <option>Melanocyte</option>
+        <option>Monocyte</option>
+        <option>Muller</option>
         <option>Neuron_bipolar</option>
         <option>Neuron_excitatory</option>
+        <option>Neuron_inhibitory</option>
+        <option>Neutrophil</option>
+        <option>Oligodendrocyte_mature</option>
+        <option>Oligodendrocyte_progenitor</option>
+        <option>Plasma</option>
         <option>Platelet</option>
+        <option>Rod</option>
+        <option>Schwann</option>
+        <option>Spermatocyte</option>
+        <option>Squamous</option>
+        <option>T&NK</option>
       </select>
     </label>
 
@@ -294,7 +319,8 @@ excerpt: ""
   let pyodide=null, FS=null;
   let booted=false, assetsLoaded=false, isLoadingAssets=false;
   let currentCellLoaded=null;
-  let hasSampleAvg=false;             // true if {cell}_avg.csv.gz was fetched OK
+  let samplesReady=false;             // true once {cell}_samples.npz finished downloading
+  let samplesPromise=null;            // in-flight samples fetch (non-blocking)
   let pngURL=null, csvURL=null;
 
   // --- reusable asset loader for a cell type ---
@@ -309,35 +335,39 @@ excerpt: ""
       setStageState("data","active");
       setStageState("plot","pending");
 
-      // Clean up any previous sample-level file so we don't carry it over to a cell that lacks it.
-      try { pyodide.FS.unlink("/work/avg_sample.csv.gz"); } catch(_) {}
-      hasSampleAvg = false;
+      // 1) context bundle (small, REQUIRED) — gates the Run button.
+      // 2) samples bundle (larger, OPTIONAL) — fetched in background; bar plot
+      //    appears only if it finishes before the user clicks Run, or on the
+      //    next click after it lands.
+      try { pyodide.FS.unlink("/work/context.npz"); } catch(_) {}
+      try { pyodide.FS.unlink("/work/samples.npz"); } catch(_) {}
+      samplesReady = false;
+      samplesPromise = null;
 
-      stage(20, `Fetching ${cell} avg/cov …`);
-      // Required (avg_od + cov_od) in parallel; sample-level avg.csv.gz is best-effort.
-      const required = Promise.all([
-        fetchToFS(ASSET_BASE + `${cell}_avg_od.csv.gz`, "/work/avg_od.csv.gz")
-          .then(sz => log(`✅ ${cell}_avg_od.csv.gz (${(sz/1e6).toFixed(2)} MB)`)),
-        fetchToFS(ASSET_BASE + `${cell}_cov_od.csv.gz`, "/work/cov_od.csv.gz")
-          .then(sz => log(`✅ ${cell}_cov_od.csv.gz (${(sz/1e6).toFixed(2)} MB)`)),
-      ]);
-      // Optional sample-level file (per-sample expression for the bar plot).
-      const optional = fetchToFS(ASSET_BASE + `${cell}_avg.csv.gz`, "/work/avg_sample.csv.gz")
-        .then(sz => {
-          hasSampleAvg = true;
-          log(`✅ ${cell}_avg.csv.gz (${(sz/1e6).toFixed(2)} MB) — bar plot will be enabled`);
+      stage(20, `Fetching ${cell} context …`);
+      const sz = await fetchToFS(ASSET_BASE + `${cell}_context.npz`, "/work/context.npz");
+      log(`✅ ${cell}_context.npz (${(sz/1e6).toFixed(2)} MB) — dotplot ready`);
+
+      // Kick off samples fetch in the background (no await).
+      samplesPromise = fetchToFS(ASSET_BASE + `${cell}_samples.npz`, "/work/samples.npz")
+        .then(sz2 => {
+          // Only adopt result if user hasn't switched cells in the meantime.
+          if (currentCellLoaded === cell) {
+            samplesReady = true;
+            log(`✅ ${cell}_samples.npz (${(sz2/1e6).toFixed(2)} MB) — bar plot enabled`);
+          }
         })
         .catch(() => {
-          log(`ℹ️ no ${cell}_avg.csv.gz on the server — bar plot will be skipped`);
+          if (currentCellLoaded === cell) {
+            log(`ℹ️ no ${cell}_samples.npz on the server — bar plot will be skipped`);
+          }
         });
-      await Promise.all([required, optional]);
 
       assetsLoaded = true;
       currentCellLoaded = cell;
       setDisabled("runBtn", false);
       setStageState("data","done");
-      stage(45, `Assets for '${cell}' ready.`);
-      log(`🧬 Active model: ${cell}  ·  ${hasSampleAvg ? "dotplot + barplot" : "dotplot"} ready`);
+      stage(45, `Assets for '${cell}' ready (sample data still loading in background).`);
     }catch(e){
       log("❌ Asset load failed: " + (e?.message||e));
       assetsLoaded = false;
@@ -476,29 +506,36 @@ def disease_color(d):
 cell      = ${JSON.stringify(cell)}
 gene      = ${JSON.stringify(gene)}
 sort_mode = ${JSON.stringify(sortMode)}
-has_sample = ${hasSampleAvg ? "True" : "False"}
+has_sample = ${samplesReady ? "True" : "False"}
 cmap_name = "OrRd"
 
-# ---- load avg/cov ----
-stage(55, "Reading avg/cov …")
-avg = pd.read_csv("/work/avg_od.csv.gz", index_col=0)
-cov = pd.read_csv("/work/cov_od.csv.gz", index_col=0)
-if not avg.index.equals(cov.index):
-    cov = cov.reindex(avg.index)
-if not avg.columns.equals(cov.columns):
-    cov = cov.reindex(columns=avg.columns)
-if gene not in avg.columns:
-    raise ValueError(f"gene '{gene}' not found in {cell} (n_genes={avg.shape[1]:,})")
+# ---- load compressed npz bundle ----
+stage(55, "Reading bundle …")
+_npz = np.load("/work/context.npz", allow_pickle=False)
+genes_arr = _npz["genes"]
+if gene not in genes_arr:
+    raise ValueError(f"gene '{gene}' not found in {cell} (n_genes={genes_arr.size:,})")
+g_idx = int(np.where(genes_arr == gene)[0][0])
+
+# Pull only the gene's column from each matrix (cheap — float16 / uint8).
+avg_col = _npz["avg_od"][:, g_idx].astype(np.float32)
+cov_col = _npz["cov_od_u8"][:, g_idx].astype(np.float32) / np.float32(255.0)
+od_index_arr = _npz["od_index"]
+
+# Build small DataFrames so the rest of the code keeps using familiar syntax
+od_strings = pd.Index([str(x) for x in od_index_arr])
+avg_series = pd.Series(avg_col, index=od_strings, name=gene)
+cov_series = pd.Series(cov_col, index=od_strings, name=gene)
 
 # ---- split o@d index ----
-parts = avg.index.to_series().str.split("@", n=1, expand=True)
+parts = od_strings.to_series().str.split("@", n=1, expand=True)
 parts.columns = ["organ", "disease"]
 diseases_all = parts["disease"].unique()
 
 # ---- ordering ----
 stage(63, "Computing layout …")
 if sort_mode == "expression":
-    sig = (avg[gene].fillna(0) * cov[gene].fillna(0)).values
+    sig = (np.nan_to_num(avg_series.values) * np.nan_to_num(cov_series.values))
     per = pd.DataFrame({"o": parts["organ"].values,
                         "d": parts["disease"].values,
                         "sig": sig})
@@ -519,26 +556,24 @@ def pivot_g(values, parts, organ_order, disease_order):
     grid = df.pivot(index="organ", columns="disease", values="v")
     return grid.reindex(index=organ_order, columns=disease_order)
 
-A = pivot_g(avg[gene], parts, organs, diseases)
-C = pivot_g(cov[gene], parts, organs, diseases)
+A = pivot_g(avg_series, parts, organs, diseases)
+C = pivot_g(cov_series, parts, organs, diseases)
 n_o, n_d = len(organs), len(diseases)
 
-# ---- optionally pre-load sample-level data for the bar plot ----
+# ---- optionally read sample-level data from the separate samples.npz ----
 sample_df = None
-if has_sample:
+if has_sample and os.path.exists("/work/samples.npz"):
     try:
         stage(70, "Reading sample-level data …")
-        sp = "/work/avg_sample.csv.gz"
-        with gzip.open(sp, "rt") as fh:
-            header = fh.readline().rstrip().split(",")
-        needed = [gene, "Organ", "disease", "o@d"]
-        missing = [c for c in needed if c not in header]
-        if missing:
-            print(f"ℹ️ skipping bar plot — missing columns in avg_sample: {missing}")
-            sample_df = None
-        else:
-            keep_idx = [0] + [header.index(c) for c in needed]
-            sample_df = pd.read_csv(sp, index_col=0, usecols=keep_idx)
+        _smp = np.load("/work/samples.npz", allow_pickle=False)
+        # samples.npz uses the same gene order as context.npz (built that way at conversion).
+        sample_col = _smp["sample_avg"][:, g_idx].astype(np.float32)
+        sample_df = pd.DataFrame({
+            gene:       sample_col,
+            "Organ":    [str(x) for x in _smp["sample_organ"]],
+            "disease":  [str(x) for x in _smp["sample_disease"]],
+            "o@d":      [str(x) for x in _smp["sample_o_d"]],
+        }, index=[str(x) for x in _smp["sample_id"]])
     except Exception as _e:
         print(f"ℹ️ skipping bar plot — {_e}")
         sample_df = None
