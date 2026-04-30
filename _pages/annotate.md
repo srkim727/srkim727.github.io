@@ -300,9 +300,7 @@ layout: post
         <li>PANGEA provides one Level1 model and ten Level2 models</li>
         <li>Level1: 32 cell types; Level2 (combined): 165 annotations</li>
         <li>Predictions are based on pre-trained logistic regression models</li>
-        <li>Results may differ from the original <code>PANGEApy</code> package
-          (<a href="https://github.com/srkim727/pangeapy" target="_blank" rel="noopener">github.com/srkim727/pangeapy</a>)
-        </li>
+        <li>For precise results, please use the original <a href="https://github.com/srkim727/pangeapy" target="_blank" rel="noopener">pangeapy API</a></li>
       </ul>
     </li>
     <li><strong>Output file configuration</strong>
@@ -310,7 +308,6 @@ layout: post
         <li>Output file: <code>pred.csv</code> with three columns for each cell barcode</li>
         <li><code>predicted_label</code> – predicted cell label from the selected model</li>
         <li><code>conf_score</code> – confidence score from the model prediction</li>
-        <li><code>cert_score</code> – certainty compared to other labels within the model</li>
       </ul>
     </li>
   </ol>
@@ -987,7 +984,6 @@ n_batches  = (n_cells + batch_size - 1) // batch_size
 # Per-cell results — small (n_cells × scalar each).
 all_labels = np.empty(n_cells, dtype=object)
 all_top    = np.empty(n_cells, dtype=np.float32)
-all_cert   = np.empty(n_cells, dtype=np.float32)
 
 for b in range(n_batches):
     start = b * batch_size
@@ -1023,9 +1019,7 @@ for b in range(n_batches):
     idx = np.argmax(P, axis=1)
     all_labels[start:end] = _classes[idx]
     all_top[start:end]    = P[np.arange(P.shape[0]), idx]
-    part = np.partition(P, -2, axis=1)[:, -2:]
-    all_cert[start:end]   = part[:, 1] - part[:, 0]
-    del P, idx, part
+    del P, idx
 
 # Free the staging file
 try: os.remove('/tmp_X.bin')
@@ -1035,8 +1029,7 @@ stage(97, "Writing output…")
 import pandas as pd
 out = pd.DataFrame({'cell_id': cell_ids,
                     'predicted_label': all_labels,
-                    'conf_score': all_top,
-                    'cert_score': all_cert})
+                    'conf_score': all_top})
 out.to_csv('/pred.csv', index=False)
 print('DONE', n_cells, 'cells,', n_classes, 'classes, features_matched=', matched, '/', n_feat,
       '· batches=', n_batches, '· batch_size=', batch_size)
