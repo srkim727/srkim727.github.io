@@ -1,7 +1,7 @@
 ---
-title: Cell type profiles
+title: Explore PANGEA cell types
 author: S. Kim
-date: 2025-10-16
+date: 2025-10-18
 layout: post
 excerpt: ""
 ---

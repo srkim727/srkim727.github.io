@@ -1,7 +1,7 @@
 ---
 title: Gene expression by cell type
 author: S. Kim
-date: 2025-10-16
+date: 2025-10-19
 layout: post
 excerpt: ""
 ---

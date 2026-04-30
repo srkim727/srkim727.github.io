@@ -1,7 +1,7 @@
 ---
-title: Annotate your cells (legacy)
+title: Annotate cells (legacy)
 author: S. Kim
-date: 2025-10-16
+date: 2025-10-17
 layout: post
 ---
 

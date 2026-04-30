@@ -1,7 +1,7 @@
 ---
 title: Gene expression by organ × disease
 author: S. Kim
-date: 2025-10-16
+date: 2025-10-20
 layout: post
 excerpt: ""
 ---
