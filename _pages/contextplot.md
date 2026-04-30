@@ -635,23 +635,49 @@ if has_sample and os.path.exists("/work/samples.npz"):
 
 # ---- figure ----
 stage(75, "Drawing dotplot …")
-# Lower the width floor so small-disease cells (e.g. Astrocyte, Neutrophil) get
-# a tight figure instead of being stretched to 5 in. Height floor stays so very
-# few-organ cells still have room for the title + colorbar.
-fig_w = max(3.0, CELL_W * n_d + PAD_W)
-fig_h_dot = max(2.0, CELL_H * n_o + PAD_H)
+# ---- Layout: rows=disease, cols=organ; barplot on the right; legends above ----
+# Tighter x-axis (per-organ width) than the previous per-disease width, since
+# organs (~30) outnumber diseases (~5–10) and the dotplot would otherwise stretch.
+DOT_X_PER = 0.10                              # inch per organ column
+DOT_Y_PER = 0.22                              # inch per disease row
+fig_w_dot = max(3.5, DOT_X_PER * n_o + PAD_W)
+fig_h_dot = max(1.8, DOT_Y_PER * n_d + PAD_H)
+fig_w_bar = 1.8                               # narrow horizontal-bar panel
+
+# Top row left empty for legend/colorbar placed via ax.inset_axes / bbox_to_anchor.
 if sample_df is not None:
-    fig_h_bar = 1.4
-    fig = plt.figure(figsize=(fig_w, fig_h_dot + fig_h_bar + 0.4), dpi=150)
-    gs = fig.add_gridspec(2, 1, height_ratios=[fig_h_dot, fig_h_bar], hspace=0.55)
-    ax = fig.add_subplot(gs[0])
-    ax_bar = fig.add_subplot(gs[1])
+    fig = plt.figure(figsize=(fig_w_dot + fig_w_bar + 0.6, fig_h_dot + 1.2), dpi=150)
+    gs = fig.add_gridspec(
+        2, 2,
+        height_ratios=[0.55, fig_h_dot],
+        width_ratios=[fig_w_dot, fig_w_bar],
+        hspace=0.05, wspace=0.20,
+        top=0.92, bottom=0.10, left=0.07, right=0.97,
+    )
+    ax     = fig.add_subplot(gs[1, 0])
+    ax_bar = fig.add_subplot(gs[1, 1])
 else:
-    fig, ax = plt.subplots(figsize=(fig_w, fig_h_dot), dpi=150)
+    fig = plt.figure(figsize=(fig_w_dot, fig_h_dot + 1.2), dpi=150)
+    gs = fig.add_gridspec(
+        2, 1,
+        height_ratios=[0.55, fig_h_dot],
+        hspace=0.05,
+        top=0.92, bottom=0.10, left=0.10, right=0.97,
+    )
+    ax     = fig.add_subplot(gs[1, 0])
     ax_bar = None
 ax.set_facecolor("white")
 
-present_mask = ~np.isnan(A)
+# Title — top-left of the figure
+fig.suptitle(f"{gene} expression in {cell}",
+             fontsize=10, weight="semibold", color="#111827",
+             x=0.07, y=0.98, ha="left")
+
+# ---- Swap axes for the plot only (CSV still uses A,C in (n_o, n_d) order) ----
+A_p = A.T   # plot view: (n_d, n_o)
+C_p = C.T
+
+present_mask = ~np.isnan(A_p)
 pres_y, pres_x = np.where(present_mask)
 
 # Background lattice as a SINGLE imshow (was n_o*n_d Rectangle add_patch calls).
@@ -660,65 +686,61 @@ _bg = present_mask.astype(np.int8)   # 0 = NaN cell, 1 = present
 _bg_cmap = _mcolors.ListedColormap([EMPTY_FILL, PRESENT_FILL])
 ax.imshow(_bg, cmap=_bg_cmap, vmin=0, vmax=1,
           interpolation="nearest", aspect="auto",
-          extent=[-0.5, n_d - 0.5, n_o - 0.5, -0.5], zorder=0)
+          extent=[-0.5, n_o - 0.5, n_d - 0.5, -0.5], zorder=0)
 
-cov_vals = np.clip(C[pres_y, pres_x], 0, 1)
-avg_vals = A[pres_y, pres_x]
+cov_vals = np.clip(C_p[pres_y, pres_x], 0, 1)
+avg_vals = A_p[pres_y, pres_x]
 vmax = max(float(np.nanmax(avg_vals)) if np.isfinite(avg_vals).any() else 1.0, 1e-6)
 sc = ax.scatter(pres_x, pres_y, s=cov_vals * SIZE_FACTOR, c=avg_vals,
                 cmap=cmap_name, vmin=0, vmax=vmax,
                 edgecolor=DOT_EDGE, linewidth=0.4, zorder=2)
 
-ax.set_xticks(range(n_d)); ax.set_xticklabels(diseases, rotation=90, fontsize=5.5)
-ax.set_yticks(range(n_o)); ax.set_yticklabels(organs, fontsize=6)
-ax.set_xlim(-0.5, n_d - 0.5)
-ax.set_ylim(n_o - 0.5, -0.5)
+# x = organ, y = disease (swapped)
+ax.set_xticks(range(n_o)); ax.set_xticklabels(organs, rotation=90, fontsize=5.5)
+ax.set_yticks(range(n_d)); ax.set_yticklabels(diseases, fontsize=6)
+ax.set_xlim(-0.5, n_o - 0.5)
+ax.set_ylim(n_d - 0.5, -0.5)
 ax.tick_params(length=0, colors="#374151", pad=1)
 for sp in ax.spines.values(): sp.set_visible(False)
 
-ax.set_title(f"{gene} expression in {cell}", fontsize=9, weight="semibold",
-             color="#111827", pad=22, loc="left")
-
-# ---- compact colorbar — pinned top-right; label on the LEFT (vertical) ----
-cax = ax.inset_axes([1.05, 0.84, 0.008, 0.09])
-cbar = fig.colorbar(sc, cax=cax)
-cbar.ax.yaxis.set_label_position("left")
-cbar.set_label("mean exp.", fontsize=4.5, color="#374151", labelpad=2)
+# ---- Legends placed ABOVE the dotplot (in the empty top gridspec row) ----
+# (1) horizontal colorbar — mean exp.
+cax = ax.inset_axes([0.0, 1.06, 0.22, 0.05])
+cbar = fig.colorbar(sc, cax=cax, orientation="horizontal")
+cbar.ax.xaxis.set_label_position("top")
+cbar.set_label("mean exp.", fontsize=5.5, color="#374151", labelpad=2)
 cbar.ax.tick_params(labelsize=5, colors="#374151", length=1.5, pad=0.8)
 cbar.outline.set_visible(False)
 
-# ---- coverage legend (no built-in title) — bigger pad, tight rows ----
+# (2) coverage legend (horizontal row of dots)
 leg_handles = [plt.scatter([], [], s=max(s * SIZE_FACTOR * LEG_DOT_SCALE, 0.5),
                            c="#9ca3af", edgecolor=DOT_EDGE, linewidth=0.3)
                for s in LEG_SIZES]
-leg = ax.legend(leg_handles, [f"{s:g}" for s in LEG_SIZES],
-                loc="lower left",
-                bbox_to_anchor=(1.05, 0.0),
-                fontsize=4.5, frameon=False,
-                labelspacing=0.35, borderpad=0.05,
-                handletextpad=1.2, handlelength=0.4,
-                borderaxespad=0.0)
+ax.legend(leg_handles, [f"{s:g}" for s in LEG_SIZES],
+          loc="lower left",
+          bbox_to_anchor=(0.30, 1.06),
+          title="coverage", title_fontsize=5.5,
+          fontsize=5, frameon=False,
+          ncol=len(LEG_SIZES), columnspacing=0.6,
+          handletextpad=0.3, handlelength=0.8,
+          borderpad=0.2)
 
-fig.canvas.draw()
-leg_bbox = leg.get_window_extent().transformed(ax.transAxes.inverted())
-y_center = (leg_bbox.y0 + leg_bbox.y1) / 2.0
-ax.text(1.044, y_center, "coverage", rotation=90, fontsize=4.5,
-        color="#374151", ha="center", va="center", transform=ax.transAxes)
-
-# ---- bar + strip plot below the dotplot (per-sample expression by o@d) ----
+# ---- Bar + strip plot to the RIGHT of the dotplot (horizontal bars) ----
 if ax_bar is not None and sample_df is not None:
     stage(85, "Drawing barplot …")
-    agg = sample_df.groupby("o@d")[gene].agg(["mean", "sem"]).sort_values("mean", ascending=False)
+    # Sort ascending so the largest mean ends up at the TOP of the y-axis
+    # (matplotlib's default y axis points up).
+    agg = sample_df.groupby("o@d")[gene].agg(["mean", "sem"]).sort_values("mean", ascending=True)
     od_order  = agg.index.tolist()
     mean_vals = agg["mean"].values
     se_vals   = np.nan_to_num(agg["sem"].values, nan=0.0)
-    x_pos = np.arange(len(od_order))
+    y_pos = np.arange(len(od_order))
     bar_colors = [disease_color(od.split("@", 1)[1] if "@" in od else "") for od in od_order]
 
-    ax_bar.bar(x_pos, mean_vals, yerr=se_vals, color=bar_colors,
-               edgecolor="black", linewidth=0.4, width=0.78,
-               alpha=0.55, zorder=1,
-               error_kw=dict(ecolor="black", elinewidth=0.5, capsize=1.2, capthick=0.5))
+    ax_bar.barh(y_pos, mean_vals, xerr=se_vals, color=bar_colors,
+                edgecolor="black", linewidth=0.4, height=0.78,
+                alpha=0.55, zorder=1,
+                error_kw=dict(ecolor="black", elinewidth=0.5, capsize=1.2, capthick=0.5))
 
     rng = np.random.default_rng(42)
     JIT = 0.18
@@ -726,27 +748,31 @@ if ax_bar is not None and sample_df is not None:
         sub = sample_df.loc[sample_df["o@d"] == od, gene].values.astype(float)
         if len(sub) == 0:
             continue
-        x_jit = i + rng.uniform(-JIT, JIT, size=len(sub))
-        ax_bar.scatter(x_jit, sub, c=bar_colors[i], edgecolor="black",
+        y_jit = i + rng.uniform(-JIT, JIT, size=len(sub))
+        ax_bar.scatter(sub, y_jit, c=bar_colors[i], edgecolor="black",
                        linewidth=0.3, s=7, zorder=3, alpha=0.95)
 
-    ax_bar.set_xticks(x_pos)
-    ax_bar.set_xticklabels(od_order, rotation=90, fontsize=4.5)
-    ax_bar.set_xlim(-0.5, len(od_order) - 0.5)
-    ax_bar.set_ylabel("mean expression", fontsize=6, color="#374151")
-    ax_bar.tick_params(axis="y", labelsize=5, colors="#374151", length=2, pad=1)
-    ax_bar.tick_params(axis="x", length=0, colors="#374151", pad=1)
+    ax_bar.set_yticks(y_pos)
+    ax_bar.set_yticklabels(od_order, fontsize=4.5)
+    ax_bar.set_ylim(-0.5, len(od_order) - 0.5)
+    ax_bar.set_xlabel("mean expression", fontsize=6, color="#374151")
+    ax_bar.tick_params(axis="x", labelsize=5, colors="#374151", length=2, pad=1)
+    ax_bar.tick_params(axis="y", length=0, colors="#374151", pad=1)
     for sp in ("top", "right"): ax_bar.spines[sp].set_visible(False)
     for sp in ("left", "bottom"):
         ax_bar.spines[sp].set_color("#9ca3af"); ax_bar.spines[sp].set_linewidth(0.5)
+
+    # Category legend ABOVE the barplot
     ax_bar.legend(handles=[
         plt.Rectangle((0, 0), 1, 1, color=COLOR_CONTROL, label="Control"),
         plt.Rectangle((0, 0), 1, 1, color=COLOR_CANCER,  label="Cancer"),
         plt.Rectangle((0, 0), 1, 1, color=COLOR_OTHER,   label="Other"),
-    ], loc="upper right", fontsize=5, frameon=False,
-        handlelength=0.9, handleheight=0.7, labelspacing=0.3, borderpad=0.2)
-
-plt.tight_layout()
+    ], loc="lower left",
+        bbox_to_anchor=(0.0, 1.04),
+        ncol=3, fontsize=5, frameon=False,
+        handlelength=0.9, handleheight=0.7,
+        labelspacing=0.3, borderpad=0.2,
+        columnspacing=0.8, handletextpad=0.4)
 
 stage(92, "Saving PNG …")
 buf = io.BytesIO()
