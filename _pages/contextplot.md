@@ -749,15 +749,23 @@ df_out = pd.DataFrame({
 df_out.to_csv("/plot.csv", index=False)
 
 # ---- GSEA-style enrichment plot (only when sample-level data is available) ----
-# Two tests share one ranked-by-expression metric (z-scored across samples):
-#   Disease enrichment  (hits = disease != "Control")
-#   Tumor / Metastasis enrichment (hits = disease starts with Tumor / Metastasis)
-# NES + NES-permutation p-value, then BH-adjusted across the two tests → q.
+# Disease and tumor contrasts share one ranked-by-expression metric (z-scored
+# across samples). Layout: disease ES + rug LEFT, tumor ES + rug RIGHT, with
+# a shared rank-gradient + ranked-metric panel underneath spanning both cols.
+#
+# NES (effect-size) is computed from a small permutation null (n_perms=200)
+# as ES / mean(|same-signed null peak ES|), Subramanian 2005.
+# p-value is a two-sided Mann-Whitney U test on the per-sample expression
+# values between hit and non-hit samples — well-calibrated for any n,
+# unlike the GSEA permutation p which floors at 1/n_perms with large n.
+# q-value is BH-adjustment of (p_disease, p_tumor) for this gene.
 try: os.unlink("/plot_enrichment.png")
 except FileNotFoundError: pass
 
 if sample_df is not None and len(sample_df) >= 8:
     stage(95, "Computing enrichment …")
+
+    from math import erf as _erf, sqrt as _sqrt
 
     def _running_es(hit_mask, w, n, n_hit):
         if n_hit == 0 or n_hit == n: return 0.0, np.zeros(n), 0
@@ -784,7 +792,23 @@ if sample_df is not None and len(sample_df) >= 8:
         if v < 0.001: return "<0.001"
         return f"{v:.3f}"
 
-    def _enrich(values, hits, n_perms=500, rng_seed=42):
+    def _mannwhitney_p(values, hits):
+        # Two-sided MW-U with normal approximation + tie correction.
+        n1 = int(hits.sum()); n2 = int((~hits).sum())
+        if n1 == 0 or n2 == 0: return float("nan")
+        n = n1 + n2
+        ranks = pd.Series(values).rank(method="average").to_numpy()
+        R1 = float(ranks[hits].sum())
+        U1 = R1 - n1*(n1+1)/2.0
+        mean_U = n1*n2/2.0
+        _, counts = np.unique(values, return_counts=True)
+        tie_term = float(np.sum(counts**3 - counts))
+        var_U = n1*n2/12.0 * ((n+1) - tie_term/(n*(n-1))) if n > 1 else 0.0
+        if var_U <= 0: return 1.0
+        z = (U1 - mean_U) / np.sqrt(var_U)
+        return float(2.0 * (1.0 - 0.5*(1.0 + _erf(abs(z)/_sqrt(2.0)))))
+
+    def _enrich(values, hits, n_perms=200, rng_seed=42):
         n = values.size
         metric = values.astype(np.float64)
         mu = float(np.nanmean(metric)); sigma = float(np.nanstd(metric))
@@ -812,11 +836,8 @@ if sample_df is not None and len(sample_df) >= 8:
         denom_pos = max(float(pos.mean()) if pos.size > 0 else 1.0, 1e-12)
         denom_neg = max(float(abs(neg).mean()) if neg.size > 0 else 1.0, 1e-12)
         nes = float(es / denom_pos) if es >= 0 else float(es / denom_neg)
-        nes_null = np.where(null >= 0, null / denom_pos, null / denom_neg)
-        if nes >= 0:
-            pvalue = float((nes_null >= nes).sum()) / max(1, n_perms)
-        else:
-            pvalue = float((nes_null <= nes).sum()) / max(1, n_perms)
+        # Well-calibrated p-value (NOT the permutation tail).
+        pvalue = _mannwhitney_p(values, hits)
         return dict(running=running, sorted_metric=sorted_metric, sorted_hits=sorted_hits,
                     es=es, peak=peak, nes=nes, pvalue=pvalue, n_hit=n_hit, n=n,
                     q_value=float("nan"))
@@ -833,8 +854,8 @@ if sample_df is not None and len(sample_df) >= 8:
     if skip_enrichment:
         print("ℹ️ enrichment skipped (no contrast — all samples on one side)")
     else:
-        res_dis = _enrich(expr_s, is_disease, n_perms=500)
-        res_tum = _enrich(expr_s, is_tumor,   n_perms=500)
+        res_dis = _enrich(expr_s, is_disease, n_perms=200)
+        res_tum = _enrich(expr_s, is_tumor,   n_perms=200)
         qs = _bh_fdr([res_dis["pvalue"], res_tum["pvalue"]])
         res_dis["q_value"] = float(qs[0])
         res_tum["q_value"] = float(qs[1])
@@ -842,22 +863,23 @@ if sample_df is not None and len(sample_df) >= 8:
         stage(97, "Drawing enrichment …")
         _FONT = {"family": "sans-serif"}
 
-        fig_e = plt.figure(figsize=(3.0, 3.0), dpi=150)
-        LEFT_E, RIGHT_E = 0.17, 0.97
+        fig_e = plt.figure(figsize=(5.2, 2.7), dpi=150)
+        LEFT_E, RIGHT_E = 0.10, 0.97
         gs_e = fig_e.add_gridspec(
-            7, 1,
-            height_ratios=[2.1, 0.28, 0.55, 2.1, 0.28, 0.14, 1.0],
-            hspace=0.05,
-            top=0.83, bottom=0.11, left=LEFT_E, right=RIGHT_E,
+            4, 2,
+            height_ratios=[2.0, 0.24, 0.13, 0.65],
+            width_ratios=[1, 1],
+            hspace=0.06, wspace=0.14,
+            top=0.80, bottom=0.16, left=LEFT_E, right=RIGHT_E,
         )
-        ax_es_d = fig_e.add_subplot(gs_e[0])
-        ax_h_d  = fig_e.add_subplot(gs_e[1], sharex=ax_es_d)
-        ax_es_t = fig_e.add_subplot(gs_e[3], sharex=ax_es_d)
-        ax_h_t  = fig_e.add_subplot(gs_e[4], sharex=ax_es_d)
-        ax_grad = fig_e.add_subplot(gs_e[5], sharex=ax_es_d)
-        ax_m    = fig_e.add_subplot(gs_e[6], sharex=ax_es_d)
+        ax_es_d = fig_e.add_subplot(gs_e[0, 0])
+        ax_h_d  = fig_e.add_subplot(gs_e[1, 0], sharex=ax_es_d)
+        ax_es_t = fig_e.add_subplot(gs_e[0, 1])
+        ax_h_t  = fig_e.add_subplot(gs_e[1, 1], sharex=ax_es_t)
+        ax_grad = fig_e.add_subplot(gs_e[2, :])
+        ax_m    = fig_e.add_subplot(gs_e[3, :])
 
-        def _draw_es(ax, res, color, label):
+        def _draw_es(ax, res, color, label, show_ylabel=True):
             n = res["n"]; running = res["running"]; x = np.arange(n)
             ax.plot(x, running, color=color, linewidth=1.1, zorder=3)
             ax.fill_between(x, 0, running, color=color, alpha=0.18, zorder=2)
@@ -865,10 +887,13 @@ if sample_df is not None and len(sample_df) >= 8:
             p_str = _fmt_pq(res["pvalue"]); q_str = _fmt_pq(res["q_value"])
             ax.text(0.0, 1.04, label, fontsize=7, va="bottom", ha="left",
                     transform=ax.transAxes, color="#111827", weight="bold", **_FONT)
-            ax.text(0.985, 0.95, f"NES={res['nes']:+.2f}  p={p_str}  q={q_str}",
-                    fontsize=6.5, va="top", ha="right",
-                    transform=ax.transAxes, color="#374151", **_FONT)
-            ax.set_ylabel("ES", fontsize=7, color="#374151", **_FONT)
+            ax.text(0.985, 0.95,
+                    f"NES={res['nes']:+.2f}\\np={p_str}\\nq={q_str}",
+                    fontsize=6, va="top", ha="right",
+                    transform=ax.transAxes, color="#374151",
+                    linespacing=1.25, **_FONT)
+            if show_ylabel:
+                ax.set_ylabel("ES", fontsize=7, color="#374151", **_FONT)
             ax.tick_params(axis="y", labelsize=6, colors="#374151", length=2, pad=1)
             ax.tick_params(axis="x", length=0, colors="#374151")
             plt.setp(ax.get_xticklabels(), visible=False)
@@ -912,12 +937,12 @@ if sample_df is not None and len(sample_df) >= 8:
 
         _draw_es(ax_es_d, res_dis, COLOR_OTHER,  "Disease enrichment")
         _draw_rug(ax_h_d, res_dis)
-        _draw_es(ax_es_t, res_tum, COLOR_CANCER, "Tumor / Metastasis enrichment")
+        _draw_es(ax_es_t, res_tum, COLOR_CANCER, "Tumor / Metastasis enrichment", show_ylabel=False)
         _draw_rug(ax_h_t, res_tum)
         _draw_grad(ax_grad, res_dis["sorted_metric"], res_dis["n"])
         _draw_metric_e(ax_m, res_dis["sorted_metric"], res_dis["n"])
 
-        fig_e.suptitle(f"{gene} ({cell})", fontsize=10.5, weight="bold",
+        fig_e.suptitle(f"{gene} ({cell})", fontsize=10, weight="bold",
                        color="#111827",
                        x=(LEFT_E + RIGHT_E) / 2, y=0.94,
                        ha="center", **_FONT)
