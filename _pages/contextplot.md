@@ -653,10 +653,10 @@ ax.tick_params(length=0, colors="#374151", pad=1)
 for sp in ax.spines.values(): sp.set_visible(False)
 
 ax.set_title(f"{gene} expression in {cell}", fontsize=9, weight="semibold",
-             color="#111827", pad=10, loc="left")
+             color="#111827", pad=22, loc="left")
 
 # ---- compact colorbar — pinned top-right; label on the LEFT (vertical) ----
-cax = ax.inset_axes([1.05, 0.91, 0.008, 0.09])
+cax = ax.inset_axes([1.05, 0.84, 0.008, 0.09])
 cbar = fig.colorbar(sc, cax=cax)
 cbar.ax.yaxis.set_label_position("left")
 cbar.set_label("mean exp.", fontsize=4.5, color="#374151", labelpad=2)
