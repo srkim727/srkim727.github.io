@@ -148,11 +148,13 @@ layout: post
 
   /* Result card */
   .annot-wrap .result-card{
-    margin-top:14px;padding:12px 14px;border-radius:8px;display:flex;
+    margin-top:14px;display:flex;
     align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;
-    background:var(--ok-light);border:1px solid var(--ok-border);
   }
-  .annot-wrap .result-card.err{background:var(--err-light);border-color:var(--err-border);}
+  .annot-wrap .result-card.err{
+    padding:12px 14px;border-radius:8px;
+    background:var(--err-light);border:1px solid var(--err-border);
+  }
   .annot-wrap .result-summary{
     font-size:14px;color:var(--text);font-weight:500;flex:1;min-width:200px;
   }
@@ -210,13 +212,12 @@ layout: post
     margin:0 0 8px 4px;display:flex;align-items:center;gap:6px;
   }
   .annot-wrap .page-caption .dot{width:5px;height:5px;border-radius:50%;background:var(--accent);display:inline-block;}
-  .annot-wrap .result-card{position:relative;padding-left:54px;}
-  .annot-wrap .result-card::before{
-    content:"✓";position:absolute;left:14px;top:12px;
-    width:28px;height:28px;border-radius:50%;background:var(--ok);color:#fff;
-    display:flex;align-items:center;justify-content:center;font-weight:700;font-size:14px;
+  .annot-wrap .result-card.err{position:relative;padding-left:54px;}
+  .annot-wrap .result-card.err::before{
+    content:"×";position:absolute;left:14px;top:12px;
+    width:28px;height:28px;border-radius:50%;background:var(--err);color:#fff;
+    display:flex;align-items:center;justify-content:center;font-weight:700;font-size:18px;
   }
-  .annot-wrap .result-card.err::before{content:"×";background:var(--err);font-size:18px;}
 </style>
 
 <div class="annot-wrap">

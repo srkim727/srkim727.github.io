@@ -76,11 +76,11 @@ excerpt: ""
   .pg-wrap .status-line{font-size:12px;color:var(--muted);margin:6px 0 0 0;min-height:1em;}
 
   /* Result card (plot output) */
-  .pg-wrap .result-card{
-    margin-top:14px;padding:12px 14px;border-radius:8px;
-    background:var(--ok-light);border:1px solid var(--ok-border);
+  .pg-wrap .result-card{ margin-top:14px; }
+  .pg-wrap .result-card.err{
+    padding:12px 14px;border-radius:8px;
+    background:var(--err-light);border:1px solid var(--err-border);
   }
-  .pg-wrap .result-card.err{background:var(--err-light);border-color:var(--err-border);}
   .pg-wrap .result-card .result-head{
     display:flex;align-items:center;justify-content:space-between;gap:12px;
     flex-wrap:wrap;margin-bottom:10px;
@@ -134,13 +134,12 @@ excerpt: ""
     margin:0 0 8px 4px;display:flex;align-items:center;gap:6px;
   }
   .pg-wrap .page-caption .dot{width:5px;height:5px;border-radius:50%;background:var(--accent);display:inline-block;}
-  .pg-wrap .result-card{position:relative;padding-left:54px;}
-  .pg-wrap .result-card::before{
-    content:"✓";position:absolute;left:14px;top:12px;
-    width:28px;height:28px;border-radius:50%;background:var(--ok);color:#fff;
-    display:flex;align-items:center;justify-content:center;font-weight:700;font-size:14px;
+  .pg-wrap .result-card.err{position:relative;padding-left:54px;}
+  .pg-wrap .result-card.err::before{
+    content:"×";position:absolute;left:14px;top:12px;
+    width:28px;height:28px;border-radius:50%;background:var(--err);color:#fff;
+    display:flex;align-items:center;justify-content:center;font-weight:700;font-size:18px;
   }
-  .pg-wrap .result-card.err::before{content:"×";background:var(--err);font-size:18px;}
 </style>
 
 <div class="pg-wrap">
@@ -201,18 +200,11 @@ excerpt: ""
 <!-- Info panel -->
 <div class="meta-panel">
   <strong>Gene expression patterns of the cell types</strong>
-  <p style="margin:6px 0 8px 0;">This page shows various information including</p>
+  <p style="margin:6px 0 8px 0;">This pages shows</p>
   <ol style="margin:0 0 0 18px;">
     <li style="margin:2px 0;">Ratio of cells expressing each gene (dot sizes)</li>
-    <li style="margin:2px 0;">Average expression level of each gene (colors)</li>
+    <li style="margin:2px 0;">Average expression level of each gene (colors), max-normalized per gene so each gene's peak across cell types maps to 1</li>
   </ol>
-  <p style="margin:8px 0 0 0;">
-    Expression levels were evaluated in the representative cell atlases
-    (both <code>Level1</code> and <code>Level2</code>).
-  </p>
-  <div style="margin-top:6px;">
-    <small>Data base: <code id="assetBaseShow">/assets/data/expression_profile/</code></small>
-  </div>
 </div>
 
 <!-- Log (collapsed by default) -->
@@ -230,7 +222,6 @@ excerpt: ""
 (function(){
   // --- config: adjust if your assets live elsewhere ---
   const ASSET_BASE = "/assets/data/expression_profile/"; // trailing slash required
-  document.getElementById("assetBaseShow").textContent = ASSET_BASE;
 
   // --- helpers ---
   const $ = (id)=>document.getElementById(id);
@@ -480,6 +471,13 @@ d1_max = np.where(d1_max > 0, d1_max, 1.0)   # avoid div-by-zero for all-zero co
 d1n = d1 / d1_max                            # relative mean expression, in [0, 1]
 
 feat   = fdic[cell]
+# For non-'Whole' cell types, prefix each Level2 sub-identity with its Level1
+# parent cell name so a row reads e.g. "B_mature|Naive" instead of just "Naive".
+# 'Whole' is the dataset-wide view, so we leave its labels untouched.
+if cell != "Whole":
+    feat_labels = [f"{cell}|{f}" for f in feat]
+else:
+    feat_labels = list(feat)
 n_feat = len(feat)
 n_gene = len(mlist)
 
@@ -502,7 +500,7 @@ scatt = ax.scatter(x = X, y = Y, s = sizes, c = color, cmap = 'OrRd',
                    edgecolor = 'black', linewidth = .5)
 
 ax.set_yticks(range(len(feat)))
-ax.set_yticklabels(feat)
+ax.set_yticklabels(feat_labels)
 ax.set_xticks(range(len(mlist)))
 ax.set_xticklabels(mlist)
 plt.tick_params(axis='x', rotation = 90)
@@ -517,7 +515,7 @@ plt.legend(*scatt.legend_elements("sizes", num=5),
 # colorbar scales with number of genes
 plt.colorbar(scatt, anchor=(0.5,0), location='top',
              fraction = .12 / max(1, len(mlist)), aspect = 5,
-             label = 'relative mean express.\\n(per-gene max = 1)',
+             label = 'mean express.',
              orientation = 'horizontal',
              ticks = [], pad = 0.02)
 
@@ -534,7 +532,7 @@ open("/plot.png","wb").write(buf.getbuffer())
 stage(95, "Saving CSV …")
 F_ix, G_ix = np.meshgrid(np.arange(n_feat), np.arange(n_gene), indexing='ij')
 df_out = pd.DataFrame({
-    'cell_feature':              [str(feat[i])  for i in F_ix.ravel()],
+    'cell_feature':              [str(feat_labels[i])  for i in F_ix.ravel()],
     'gene':                      [str(mlist[j]) for j in G_ix.ravel()],
     'mean_expression':           d1.ravel().astype(float),
     'mean_expression_normalized':d1n.ravel().astype(float),

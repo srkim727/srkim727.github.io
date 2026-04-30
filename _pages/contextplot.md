@@ -73,11 +73,11 @@ excerpt: ""
   .pg-wrap progress#progBar::-moz-progress-bar{background:var(--accent);border-radius:3px;}
   .pg-wrap .status-line{font-size:12px;color:var(--muted);margin:6px 0 0 0;min-height:1em;}
 
-  .pg-wrap .result-card{
-    margin-top:14px;padding:12px 14px;border-radius:8px;
-    background:var(--ok-light);border:1px solid var(--ok-border);
+  .pg-wrap .result-card{ margin-top:14px; }
+  .pg-wrap .result-card.err{
+    padding:12px 14px;border-radius:8px;
+    background:var(--err-light);border:1px solid var(--err-border);
   }
-  .pg-wrap .result-card.err{background:var(--err-light);border-color:var(--err-border);}
   .pg-wrap .result-card .result-head{
     display:flex;align-items:center;justify-content:space-between;gap:12px;
     flex-wrap:wrap;margin-bottom:10px;
@@ -129,13 +129,12 @@ excerpt: ""
     margin:0 0 8px 4px;display:flex;align-items:center;gap:6px;
   }
   .pg-wrap .page-caption .dot{width:5px;height:5px;border-radius:50%;background:var(--accent);display:inline-block;}
-  .pg-wrap .result-card{position:relative;padding-left:54px;}
-  .pg-wrap .result-card::before{
-    content:"✓";position:absolute;left:14px;top:12px;
-    width:28px;height:28px;border-radius:50%;background:var(--ok);color:#fff;
-    display:flex;align-items:center;justify-content:center;font-weight:700;font-size:14px;
+  .pg-wrap .result-card.err{position:relative;padding-left:54px;}
+  .pg-wrap .result-card.err::before{
+    content:"×";position:absolute;left:14px;top:12px;
+    width:28px;height:28px;border-radius:50%;background:var(--err);color:#fff;
+    display:flex;align-items:center;justify-content:center;font-weight:700;font-size:18px;
   }
-  .pg-wrap .result-card.err::before{content:"×";background:var(--err);font-size:18px;}
 </style>
 
 <div class="pg-wrap">
@@ -233,9 +232,8 @@ excerpt: ""
   </p>
   <ol style="margin:0 0 0 18px;">
     <li style="margin:2px 0;">rows = organ &nbsp;·&nbsp; columns = disease</li>
-    <li style="margin:2px 0;">dot <strong>color</strong> = mean expression &nbsp;·&nbsp; dot <strong>size</strong> = coverage (fraction expressing)</li>
+    <li style="margin:2px 0;">dot <strong>color</strong> = mean expression &nbsp;&amp;&nbsp; dot <strong>size</strong> = coverage (fraction expressing)</li>
     <li style="margin:2px 0;">organ × disease combinations not covered by the database → light grey cell</li>
-    <li style="margin:2px 0;">By default rows and (non-Control) columns are ordered by total dotplot signal (mean × coverage)</li>
   </ol>
 
   <p style="margin:12px 0 6px 0;"><strong>Enrichment plot</strong></p>
@@ -924,14 +922,15 @@ if sample_df is not None and len(sample_df) >= 8:
             for sp in ("left", "bottom"):
                 ax.spines[sp].set_color("#9ca3af"); ax.spines[sp].set_linewidth(0.5)
 
-        def _draw_rug(ax, res, show="hits", color="black"):
-            # show='hits'  → ticks at hit positions (default, black)
-            # show='misses'→ ticks at non-hit positions (grey, used for Disease
-            #                where hits dominate)
+        def _draw_rug(ax, res):
+            # Two-tone rug — grey ticks for non-hits, black ticks for hits on
+            # top so the smaller group still reads through when one side dominates.
             n = res["n"]
-            mask = res["sorted_hits"] if show == "hits" else (~res["sorted_hits"])
-            rug_x = np.where(mask)[0]
-            ax.vlines(rug_x, 0, 1, color=color, linewidth=0.5, alpha=0.9)
+            sh = res["sorted_hits"]
+            miss_x = np.where(~sh)[0]
+            hit_x  = np.where(sh)[0]
+            ax.vlines(miss_x, 0, 1, color=COLOR_CONTROL, linewidth=0.5, alpha=0.7,  zorder=1)
+            ax.vlines(hit_x,  0, 1, color="black",        linewidth=0.5, alpha=0.95, zorder=2)
             ax.set_xlim(0, n); ax.set_ylim(0, 1)
             ax.set_yticks([]); ax.set_xticks([])
             plt.setp(ax.get_xticklabels(), visible=False)
@@ -955,21 +954,20 @@ if sample_df is not None and len(sample_df) >= 8:
             ax.fill_between(x, 0, sm, color="#9ca3af", alpha=0.6, linewidth=0)
             ax.axhline(0, color="#9ca3af", linewidth=0.4)
             ax.set_ylabel("Rank\\n(z-score)", fontsize=6.5, color="#374151", **_FONT)
-            ax.set_xlabel("Rank in ordered samples", fontsize=6.5, color="#374151", **_FONT)
+            ax.set_xlabel(f"samples (n={n})", fontsize=6.5, color="#374151", **_FONT)
             ax.tick_params(labelsize=5.5, colors="#374151", length=2, pad=1)
             ax.set_xlim(0, n)
             for sp in ("top", "right"): ax.spines[sp].set_visible(False)
             for sp in ("left", "bottom"):
                 ax.spines[sp].set_color("#9ca3af"); ax.spines[sp].set_linewidth(0.5)
 
-        # left: disease — invert rug to show the minority Control samples as
-        # grey ticks (hits dominate, so a hit-rug would be a near-solid band).
+        # left: disease
         _draw_es(ax_es_d, res_dis, COLOR_OTHER,  "Disease enrichment")
-        _draw_rug(ax_h_d, res_dis, show="misses", color=COLOR_CONTROL)
+        _draw_rug(ax_h_d, res_dis)
         _draw_grad(ax_g_d, res_dis["sorted_metric"], res_dis["n"])
         _draw_metric_e(ax_m_d, res_dis["sorted_metric"], res_dis["n"])
 
-        # right: tumor — default rug (black hits)
+        # right: tumor
         _draw_es(ax_es_t, res_tum, COLOR_CANCER, "Tumor enrichment")
         _draw_rug(ax_h_t, res_tum)
         _draw_grad(ax_g_t, res_tum["sorted_metric"], res_tum["n"])

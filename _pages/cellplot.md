@@ -76,11 +76,11 @@ excerpt: ""
   .pg-wrap .status-line{font-size:12px;color:var(--muted);margin:6px 0 0 0;min-height:1em;}
 
   /* Result card (plot output) */
-  .pg-wrap .result-card{
-    margin-top:14px;padding:12px 14px;border-radius:8px;
-    background:var(--ok-light);border:1px solid var(--ok-border);
+  .pg-wrap .result-card{ margin-top:14px; }
+  .pg-wrap .result-card.err{
+    padding:12px 14px;border-radius:8px;
+    background:var(--err-light);border:1px solid var(--err-border);
   }
-  .pg-wrap .result-card.err{background:var(--err-light);border-color:var(--err-border);}
   .pg-wrap .result-card .result-head{
     display:flex;align-items:center;justify-content:space-between;gap:12px;
     flex-wrap:wrap;margin-bottom:10px;
@@ -134,13 +134,12 @@ excerpt: ""
     margin:0 0 8px 4px;display:flex;align-items:center;gap:6px;
   }
   .pg-wrap .page-caption .dot{width:5px;height:5px;border-radius:50%;background:var(--accent);display:inline-block;}
-  .pg-wrap .result-card{position:relative;padding-left:54px;}
-  .pg-wrap .result-card::before{
-    content:"✓";position:absolute;left:14px;top:12px;
-    width:28px;height:28px;border-radius:50%;background:var(--ok);color:#fff;
-    display:flex;align-items:center;justify-content:center;font-weight:700;font-size:14px;
+  .pg-wrap .result-card.err{position:relative;padding-left:54px;}
+  .pg-wrap .result-card.err::before{
+    content:"×";position:absolute;left:14px;top:12px;
+    width:28px;height:28px;border-radius:50%;background:var(--err);color:#fff;
+    display:flex;align-items:center;justify-content:center;font-weight:700;font-size:18px;
   }
-  .pg-wrap .result-card.err::before{content:"×";background:var(--err);font-size:18px;}
 </style>
 
 <div class="pg-wrap">
@@ -598,9 +597,11 @@ if mls:
 else:
     mtext = ''
 
-add_fig_note(fig, f"Cell type: {cell}", x=0.01, y=1.11, ha='left', va='bottom', fontsize=11)
-add_fig_note(fig, f"{mtext}", x=0.01, y=1.08, ha='left', va='bottom', fontsize=8)
-add_fig_note(fig, f"Organ distribution", x=0.01, y=1.05, ha='left', va='bottom', fontsize=9)
+fig.text(0.01, 1.10, "Organ distribution", fontsize=15, fontweight='bold',
+         ha='left', va='bottom', color='#111827')
+if mls:
+    fig.text(0.01, 1.06, f"curated marker: {', '.join(mls)}",
+             fontsize=10, ha='left', va='bottom', color='#374151')
 
 sns.despine()
 plt.tight_layout()
@@ -671,7 +672,9 @@ if 'PANGEA_annotation' in mdf.columns and (cell in set(mdf['PANGEA_annotation'])
         axin.set_xticks([]); axin.set_yticks([])
         for sp in axin.spines.values(): sp.set_visible(False)
 
-        add_fig_note(plt.gcf(), f"Matching annotation", x=0.01, y=1.05, ha='left', va='bottom', fontsize=9)
+        plt.gcf().text(0.01, 1.06, "Matching annotation",
+                       fontsize=15, fontweight='bold',
+                       ha='left', va='bottom', color='#111827')
 
         # colorbar
         shrink = 1 if n_rows==1 else (0.2 + (0.2 / max(1, n_rows/3 + .75)))
@@ -765,10 +768,17 @@ try:
         sns.barplot(data=pdf, x=cell, y='Cancer_Tissue', ax=ax3,
                     palette=cmapdic, order=order, estimator=np.mean,
                     linewidth=0.5, edgecolor='black',
-                    errorbar='se', capsize=.15, errwidth=0.8, errcolor='#6b7280')
+                    errorbar='se', capsize=.15, errwidth=0.8, errcolor='black')
         ax3.grid(True, axis='x', linestyle=':', linewidth=0.6, color=GRID_SOFT, alpha=0.8)
         ax3.set_axisbelow(True)
         sns.despine()
+        # Override the global rcParams (axes spines/ticks default to grey
+        # site-wide) so the TME panel reads with high-contrast black axes.
+        for _sp in ('left', 'bottom'):
+            ax3.spines[_sp].set_color('black')
+        ax3.tick_params(axis='both', colors='black')
+        ax3.xaxis.label.set_color('black')
+        ax3.yaxis.label.set_color('black')
 
         ctrls = [x for x in ['Control','Non-malignant disease','Cancer_AdjNorm'] if x in set(pdf['Cancer_Tissue'])]
         comps = [('Cancer_Tumor', c) for c in ctrls]
@@ -805,15 +815,29 @@ try:
                 eps = 1e-6
                 lfc = float(np.log2((float(np.mean(tv)) + eps) / (float(np.mean(cv)) + eps)))
                 p_disp = "<0.001" if (np.isfinite(mwu_p) and mwu_p < 0.001) else f"{mwu_p:.3f}"
-                ax3.text(0.985, 0.97,
-                         f"Tumor vs Control\\nlog$_2$FC = {lfc:+.2f}\\nMWU p = {p_disp}",
-                         transform=ax3.transAxes, ha='right', va='top',
-                         fontsize=7, color='#374151', linespacing=1.3,
-                         bbox=dict(boxstyle='round,pad=0.3', facecolor='#fafbfc',
-                                   edgecolor=GRID_SOFT, linewidth=0.5))
+                # Bracket connecting the two groups being compared (Control
+                # row ↔ Cancer_Tumor row), with the log2FC + p stats sitting
+                # next to the bracket midpoint.
+                y_ctrl  = order.index('Control')
+                y_tumor = order.index('Cancer_Tumor')
+                xmin, xmax = ax3.get_xlim()
+                xr  = xmax - xmin if xmax > xmin else 1.0
+                x_b = xmax + 0.04 * xr
+                cap = 0.012 * xr
+                _bk = dict(color='black', lw=0.8, clip_on=False, zorder=10)
+                ax3.plot([x_b, x_b], [y_ctrl, y_tumor], **_bk)
+                ax3.plot([x_b - cap, x_b], [y_ctrl,  y_ctrl ], **_bk)
+                ax3.plot([x_b - cap, x_b], [y_tumor, y_tumor], **_bk)
+                ax3.text(x_b + 0.025 * xr, (y_ctrl + y_tumor) / 2,
+                         f"log$_2$FC = {lfc:+.2f}\\np = {p_disp}",
+                         ha='left', va='center', fontsize=7,
+                         color='black', linespacing=1.3, clip_on=False)
+                ax3.set_xlim(xmin, x_b + 0.32 * xr)
 
         ax3.set_xlabel(cell); ax3.set_ylabel('')
-        add_fig_note(plt.gcf(), f"TME distribution", x=0.01, y=1.05, ha='left', va='bottom', fontsize=9)
+        plt.gcf().text(0.01, 1.06, "TME distribution",
+                       fontsize=15, fontweight='bold',
+                       ha='left', va='bottom', color='#111827')
 
         plt.tight_layout()
         fig3buf = io.BytesIO()
