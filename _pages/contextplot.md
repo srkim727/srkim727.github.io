@@ -511,7 +511,7 @@ cmap_name = "OrRd"
 
 # ---- load compressed npz bundle ----
 stage(55, "Reading bundle …")
-_npz = np.load("/work/context.npz", allow_pickle=False)
+_npz = np.load("/work/context.npz", allow_pickle=True)
 genes_arr = _npz["genes"]
 if gene not in genes_arr:
     raise ValueError(f"gene '{gene}' not found in {cell} (n_genes={genes_arr.size:,})")
@@ -565,7 +565,7 @@ sample_df = None
 if has_sample and os.path.exists("/work/samples.npz"):
     try:
         stage(70, "Reading sample-level data …")
-        _smp = np.load("/work/samples.npz", allow_pickle=False)
+        _smp = np.load("/work/samples.npz", allow_pickle=True)
         # samples.npz uses the same gene order as context.npz (built that way at conversion).
         sample_col = _smp["sample_avg"][:, g_idx].astype(np.float32)
         sample_df = pd.DataFrame({
