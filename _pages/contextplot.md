@@ -232,14 +232,20 @@ excerpt: ""
     across organ × disease combinations from the PANGEA database.
   </p>
   <ol style="margin:0 0 0 18px;">
-    <li style="margin:2px 0;">rows = organ &nbsp;·&nbsp; columns = disease &nbsp;·&nbsp; <code>Control</code> always on the left</li>
+    <li style="margin:2px 0;">rows = organ &nbsp;·&nbsp; columns = disease</li>
     <li style="margin:2px 0;">dot <strong>color</strong> = mean expression &nbsp;·&nbsp; dot <strong>size</strong> = coverage (fraction expressing)</li>
     <li style="margin:2px 0;">organ × disease combinations not covered by the database → light grey cell</li>
     <li style="margin:2px 0;">By default rows and (non-Control) columns are ordered by total dotplot signal (mean × coverage)</li>
   </ol>
-  <div style="margin-top:6px;">
-    <small>Data base: <code id="assetBaseShow">/assets/data/expression_context_profile/</code></small>
-  </div>
+
+  <p style="margin:12px 0 6px 0;"><strong>Enrichment plot</strong></p>
+  <p style="margin:0 0 6px 0;">GSEA-style test of preferential expression in <code>Disease</code> (vs <code>Control</code>) and <code>Tumor</code> (vs non-tumor) samples, ranked by gene-level z-score.</p>
+  <ol style="margin:0 0 0 18px;">
+    <li style="margin:2px 0;">top curve = running enrichment score (ES) &nbsp;·&nbsp; rug = hit-sample positions &nbsp;·&nbsp; gradient + bottom bar = ranked z-score</li>
+    <li style="margin:2px 0;"><code>NES</code> = normalized ES from 200-permutation null (Subramanian 2005)</li>
+    <li style="margin:2px 0;"><code>p-adj</code> = two-sided Mann–Whitney <em>U</em>, Benjamini–Hochberg adjusted across the two contrasts</li>
+    <li style="margin:2px 0;">shown only when sample-level data and ≥ 8 samples are available</li>
+  </ol>
 </div>
 
 <!-- Log (collapsed by default) -->
@@ -257,7 +263,6 @@ excerpt: ""
 (function(){
   // --- config: where the per-cell avg_od / cov_od files live on the site ---
   const ASSET_BASE = "/assets/data/expression_context_profile/";
-  document.getElementById("assetBaseShow").textContent = ASSET_BASE;
 
   // --- helpers ---
   const $ = (id)=>document.getElementById(id);
@@ -918,7 +923,7 @@ if sample_df is not None and len(sample_df) >= 8:
             ax.text(0.0, 1.04, label, fontsize=7, va="bottom", ha="left",
                     transform=ax.transAxes, color="#111827", weight="bold", **_FONT)
             ax.text(0.985, 0.95,
-                    f"NES={res['nes']:+.2f}\\nadj. p={adj_p_str}",
+                    f"NES={res['nes']:+.2f}\\np-adj={adj_p_str}",
                     fontsize=6, va="top", ha="right",
                     transform=ax.transAxes, color="#374151",
                     linespacing=1.3, **_FONT)
