@@ -217,8 +217,10 @@ excerpt: ""
       <div class="result-summary" id="resultSummary"></div>
       <a class="btn-download" id="downloadPNG" download="plot.png" style="display:none;">⬇ Download PNG</a>
       <a class="btn-download" id="downloadCSV" download="plot.csv" style="display:none;">⬇ Download CSV</a>
+      <a class="btn-download" id="downloadEnrichmentPNG" download="enrichment.png" style="display:none;">⬇ Download enrichment</a>
     </div>
     <img class="plot-img" id="plotImg" alt="plot" style="display:none;">
+    <img class="plot-img" id="plotImgEnrichment" alt="enrichment plot" style="display:none;margin-top:12px;">
   </div>
 </div>
 
@@ -284,8 +286,11 @@ excerpt: ""
     $("resultSummary").textContent = "";
     $("plotImg").style.display = "none";
     $("plotImg").removeAttribute("src");
+    $("plotImgEnrichment").style.display = "none";
+    $("plotImgEnrichment").removeAttribute("src");
     $("downloadPNG").style.display = "none";
     $("downloadCSV").style.display = "none";
+    $("downloadEnrichmentPNG").style.display = "none";
   }
   async function fetchToFS(path, fsPath){
     const r = await fetch(path);
@@ -300,9 +305,12 @@ excerpt: ""
   function clearImage(){
     $("plotImg").style.display = "none";
     $("plotImg").removeAttribute("src");
+    $("plotImgEnrichment").style.display = "none";
+    $("plotImgEnrichment").removeAttribute("src");
     $("resultCard").style.display = "none";
     $("downloadPNG").style.display = "none";
     $("downloadCSV").style.display = "none";
+    $("downloadEnrichmentPNG").style.display = "none";
   }
   function waitForGlobal(fnName, timeoutMs){
     return new Promise((resolve, reject)=>{
@@ -321,7 +329,7 @@ excerpt: ""
   let currentCellLoaded=null;
   let samplesReady=false;             // true once {cell}_samples.npz finished downloading
   let samplesPromise=null;            // in-flight samples fetch (non-blocking)
-  let pngURL=null, csvURL=null;
+  let pngURL=null, csvURL=null, epngURL=null;
 
   // --- reusable asset loader for a cell type ---
   async function loadAssetsForCell(cell){
@@ -730,7 +738,7 @@ plt.savefig(buf, format="png", bbox_inches="tight", dpi=150, facecolor="white")
 plt.close(fig)
 open("/plot.png","wb").write(buf.getbuffer())
 
-stage(96, "Saving CSV …")
+stage(94, "Saving CSV …")
 F_ix, G_ix = np.meshgrid(np.arange(n_o), np.arange(n_d), indexing="ij")
 df_out = pd.DataFrame({
     "organ":           [organs[i]   for i in F_ix.ravel()],
@@ -739,6 +747,186 @@ df_out = pd.DataFrame({
     "coverage":        C.ravel(),
 })
 df_out.to_csv("/plot.csv", index=False)
+
+# ---- GSEA-style enrichment plot (only when sample-level data is available) ----
+# Two tests share one ranked-by-expression metric (z-scored across samples):
+#   Disease enrichment  (hits = disease != "Control")
+#   Tumor / Metastasis enrichment (hits = disease starts with Tumor / Metastasis)
+# NES + NES-permutation p-value, then BH-adjusted across the two tests → q.
+try: os.unlink("/plot_enrichment.png")
+except FileNotFoundError: pass
+
+if sample_df is not None and len(sample_df) >= 8:
+    stage(95, "Computing enrichment …")
+
+    def _running_es(hit_mask, w, n, n_hit):
+        if n_hit == 0 or n_hit == n: return 0.0, np.zeros(n), 0
+        hit_w_sum = float(w[hit_mask].sum())
+        if hit_w_sum == 0: return 0.0, np.zeros(n), 0
+        steps = np.where(hit_mask, w / hit_w_sum, -1.0 / (n - n_hit))
+        running = np.cumsum(steps)
+        peak = int(np.argmax(np.abs(running)))
+        return float(running[peak]), running, peak
+
+    def _bh_fdr(pvals):
+        p = np.asarray(pvals, dtype=float)
+        n_p = len(p)
+        if n_p == 0: return p
+        order = np.argsort(p)
+        adj = p[order] * n_p / np.arange(1, n_p + 1)
+        adj = np.minimum.accumulate(adj[::-1])[::-1]
+        q = np.empty_like(adj)
+        q[order] = np.clip(adj, 0, 1)
+        return q
+
+    def _fmt_pq(v):
+        if not np.isfinite(v): return "n/a"
+        if v < 0.001: return "<0.001"
+        return f"{v:.3f}"
+
+    def _enrich(values, hits, n_perms=500, rng_seed=42):
+        n = values.size
+        metric = values.astype(np.float64)
+        mu = float(np.nanmean(metric)); sigma = float(np.nanstd(metric))
+        if sigma > 0: metric = (metric - mu) / sigma
+        else:        metric = metric - mu
+        order = np.argsort(-metric, kind="stable")
+        sorted_metric = metric[order].astype(np.float32)
+        sorted_hits = hits[order]
+        n_hit = int(sorted_hits.sum())
+        w = np.abs(sorted_metric).astype(np.float64)
+        es, running, peak = _running_es(sorted_hits, w, n, n_hit)
+        null = np.zeros(n_perms, dtype=np.float64)
+        if 0 < n_hit < n and n_perms > 0:
+            rng = np.random.default_rng(rng_seed)
+            shuf = np.tile(sorted_hits, (n_perms, 1))
+            shuf = rng.permuted(shuf, axis=1)
+            sums = (shuf.astype(np.float64) * w[None, :]).sum(axis=1)
+            sums[sums == 0] = 1.0
+            miss_step = -1.0 / (n - n_hit)
+            steps = np.where(shuf, w[None, :] / sums[:, None], miss_step)
+            run_all = np.cumsum(steps, axis=1)
+            peak_idx = np.argmax(np.abs(run_all), axis=1)
+            null = run_all[np.arange(n_perms), peak_idx]
+        pos = null[null >= 0]; neg = null[null < 0]
+        denom_pos = max(float(pos.mean()) if pos.size > 0 else 1.0, 1e-12)
+        denom_neg = max(float(abs(neg).mean()) if neg.size > 0 else 1.0, 1e-12)
+        nes = float(es / denom_pos) if es >= 0 else float(es / denom_neg)
+        nes_null = np.where(null >= 0, null / denom_pos, null / denom_neg)
+        if nes >= 0:
+            pvalue = float((nes_null >= nes).sum()) / max(1, n_perms)
+        else:
+            pvalue = float((nes_null <= nes).sum()) / max(1, n_perms)
+        return dict(running=running, sorted_metric=sorted_metric, sorted_hits=sorted_hits,
+                    es=es, peak=peak, nes=nes, pvalue=pvalue, n_hit=n_hit, n=n,
+                    q_value=float("nan"))
+
+    expr_s     = sample_df[gene].values.astype(np.float32)
+    diseases_s = sample_df["disease"].astype(str).values
+    is_disease = diseases_s != "Control"
+    is_tumor   = np.array([d.startswith("Tumor") or d.startswith("Metastasis")
+                           for d in diseases_s])
+
+    # Skip enrichment if either contrast is degenerate (all-hit or no-hit).
+    skip_enrichment = (is_disease.all() or (~is_disease).all()
+                       or is_tumor.all()  or (~is_tumor).all())
+    if skip_enrichment:
+        print("ℹ️ enrichment skipped (no contrast — all samples on one side)")
+    else:
+        res_dis = _enrich(expr_s, is_disease, n_perms=500)
+        res_tum = _enrich(expr_s, is_tumor,   n_perms=500)
+        qs = _bh_fdr([res_dis["pvalue"], res_tum["pvalue"]])
+        res_dis["q_value"] = float(qs[0])
+        res_tum["q_value"] = float(qs[1])
+
+        stage(97, "Drawing enrichment …")
+        _FONT = {"family": "sans-serif"}
+
+        fig_e = plt.figure(figsize=(3.0, 3.0), dpi=150)
+        LEFT_E, RIGHT_E = 0.17, 0.97
+        gs_e = fig_e.add_gridspec(
+            7, 1,
+            height_ratios=[2.1, 0.28, 0.55, 2.1, 0.28, 0.14, 1.0],
+            hspace=0.05,
+            top=0.83, bottom=0.11, left=LEFT_E, right=RIGHT_E,
+        )
+        ax_es_d = fig_e.add_subplot(gs_e[0])
+        ax_h_d  = fig_e.add_subplot(gs_e[1], sharex=ax_es_d)
+        ax_es_t = fig_e.add_subplot(gs_e[3], sharex=ax_es_d)
+        ax_h_t  = fig_e.add_subplot(gs_e[4], sharex=ax_es_d)
+        ax_grad = fig_e.add_subplot(gs_e[5], sharex=ax_es_d)
+        ax_m    = fig_e.add_subplot(gs_e[6], sharex=ax_es_d)
+
+        def _draw_es(ax, res, color, label):
+            n = res["n"]; running = res["running"]; x = np.arange(n)
+            ax.plot(x, running, color=color, linewidth=1.1, zorder=3)
+            ax.fill_between(x, 0, running, color=color, alpha=0.18, zorder=2)
+            ax.axhline(0, color="#9ca3af", linewidth=0.4, zorder=0)
+            p_str = _fmt_pq(res["pvalue"]); q_str = _fmt_pq(res["q_value"])
+            ax.text(0.0, 1.04, label, fontsize=7, va="bottom", ha="left",
+                    transform=ax.transAxes, color="#111827", weight="bold", **_FONT)
+            ax.text(0.985, 0.95, f"NES={res['nes']:+.2f}  p={p_str}  q={q_str}",
+                    fontsize=6.5, va="top", ha="right",
+                    transform=ax.transAxes, color="#374151", **_FONT)
+            ax.set_ylabel("ES", fontsize=7, color="#374151", **_FONT)
+            ax.tick_params(axis="y", labelsize=6, colors="#374151", length=2, pad=1)
+            ax.tick_params(axis="x", length=0, colors="#374151")
+            plt.setp(ax.get_xticklabels(), visible=False)
+            ax.set_xlim(0, n)
+            for sp in ("top", "right"): ax.spines[sp].set_visible(False)
+            for sp in ("left", "bottom"):
+                ax.spines[sp].set_color("#9ca3af"); ax.spines[sp].set_linewidth(0.5)
+
+        def _draw_rug(ax, res):
+            n = res["n"]; hit_x = np.where(res["sorted_hits"])[0]
+            ax.vlines(hit_x, 0, 1, color="black", linewidth=0.5, alpha=0.9)
+            ax.set_xlim(0, n); ax.set_ylim(0, 1)
+            ax.set_yticks([]); ax.set_xticks([])
+            plt.setp(ax.get_xticklabels(), visible=False)
+            for sp in ("top", "bottom"):
+                ax.spines[sp].set_visible(True)
+                ax.spines[sp].set_color("#9ca3af"); ax.spines[sp].set_linewidth(0.4)
+            for sp in ("left", "right"): ax.spines[sp].set_visible(False)
+
+        def _draw_grad(ax, sm, n):
+            img = np.asarray(sm).reshape(1, -1)
+            vmax = float(np.nanmax(np.abs(img))) or 1.0
+            ax.imshow(img, aspect="auto", cmap="RdBu_r", vmin=-vmax, vmax=vmax,
+                      extent=[0, n, 0, 1], interpolation="nearest")
+            ax.set_xlim(0, n); ax.set_ylim(0, 1)
+            ax.set_xticks([]); ax.set_yticks([])
+            plt.setp(ax.get_xticklabels(), visible=False)
+            for sp in ax.spines.values(): sp.set_visible(False)
+
+        def _draw_metric_e(ax, sm, n):
+            x = np.arange(n)
+            ax.fill_between(x, 0, sm, color="#9ca3af", alpha=0.6, linewidth=0)
+            ax.axhline(0, color="#9ca3af", linewidth=0.4)
+            ax.set_ylabel("Rank\\n(z-score)", fontsize=7, color="#374151", **_FONT)
+            ax.set_xlabel("Rank in ordered samples", fontsize=7, color="#374151", **_FONT)
+            ax.tick_params(labelsize=6, colors="#374151", length=2, pad=1)
+            ax.set_xlim(0, n)
+            for sp in ("top", "right"): ax.spines[sp].set_visible(False)
+            for sp in ("left", "bottom"):
+                ax.spines[sp].set_color("#9ca3af"); ax.spines[sp].set_linewidth(0.5)
+
+        _draw_es(ax_es_d, res_dis, COLOR_OTHER,  "Disease enrichment")
+        _draw_rug(ax_h_d, res_dis)
+        _draw_es(ax_es_t, res_tum, COLOR_CANCER, "Tumor / Metastasis enrichment")
+        _draw_rug(ax_h_t, res_tum)
+        _draw_grad(ax_grad, res_dis["sorted_metric"], res_dis["n"])
+        _draw_metric_e(ax_m, res_dis["sorted_metric"], res_dis["n"])
+
+        fig_e.suptitle(f"{gene} ({cell})", fontsize=10.5, weight="bold",
+                       color="#111827",
+                       x=(LEFT_E + RIGHT_E) / 2, y=0.94,
+                       ha="center", **_FONT)
+
+        buf2 = io.BytesIO()
+        plt.savefig(buf2, format="png", bbox_inches="tight", dpi=150, facecolor="white")
+        plt.close(fig_e)
+        open("/plot_enrichment.png", "wb").write(buf2.getbuffer())
+
 print("DONE", n_o, "organs ×", n_d, "diseases")
 "OK"
       `;
@@ -771,6 +959,27 @@ print("DONE", n_o, "organs ×", n_d, "diseases")
       $("downloadCSV").download = csvName;
       $("downloadCSV").textContent = `⬇ Download ${csvName}`;
       $("downloadCSV").style.display = "inline-flex";
+
+      // Enrichment plot is best-effort — only present when sample-level data
+      // is available *and* both contrasts (Disease, Tumor) have at least one
+      // hit and one miss. Read attempts that fail are silent.
+      try {
+        const epngBytes = FS.readFile("/plot_enrichment.png");
+        const epngBlob  = new Blob([epngBytes], { type: "image/png" });
+        if(epngURL) URL.revokeObjectURL(epngURL);
+        epngURL = URL.createObjectURL(epngBlob);
+        const epngName = `${safeCell}_${safeGene}_enrichment.png`;
+        $("plotImgEnrichment").src = epngURL;
+        $("plotImgEnrichment").style.display = "block";
+        $("downloadEnrichmentPNG").href = epngURL;
+        $("downloadEnrichmentPNG").download = epngName;
+        $("downloadEnrichmentPNG").textContent = `⬇ Download ${epngName}`;
+        $("downloadEnrichmentPNG").style.display = "inline-flex";
+      } catch(_) {
+        $("plotImgEnrichment").style.display = "none";
+        $("downloadEnrichmentPNG").style.display = "none";
+      }
+
       $("resultSummary").innerHTML = `${cell} · ${gene} <span class="stat">organ × disease context</span>`;
       $("resultCard").classList.remove("err");
       $("resultCard").style.display = "block";
