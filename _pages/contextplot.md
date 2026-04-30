@@ -509,56 +509,78 @@ sort_mode = ${JSON.stringify(sortMode)}
 has_sample = ${samplesReady ? "True" : "False"}
 cmap_name = "OrRd"
 
-# ---- load compressed npz bundle ----
+# ---- load compressed npz bundle (cached per cell across runs) ----
+# A persistent dict in globals() lets us skip npz load + index parsing when the
+# user hits Run repeatedly with different genes on the same cell.
 stage(55, "Reading bundle …")
-_npz = np.load("/work/context.npz", allow_pickle=True)
-genes_arr = _npz["genes"]
+if "_ctx_cache" not in globals():
+    _ctx_cache = {"cell": None}
+if _ctx_cache.get("cell") != cell:
+    _z = np.load("/work/context.npz", allow_pickle=True)
+    od_arr = _z["od_index"]
+    # split "Organ@Disease" once, vectorized
+    _split = np.array([s.split("@", 1) if isinstance(s, str) else (str(s).split("@", 1)) for s in od_arr])
+    _ctx_cache = {
+        "cell":     cell,
+        "genes":    _z["genes"],
+        "od_index": od_arr,
+        "avg_od":   _z["avg_od"],          # float16
+        "cov_od":   _z["cov_od_u8"],       # uint8
+        "organs":   _split[:, 0].astype(str),
+        "diseases": _split[:, 1].astype(str),
+    }
+genes_arr        = _ctx_cache["genes"]
+od_index_arr     = _ctx_cache["od_index"]
+organs_per_od    = _ctx_cache["organs"]
+diseases_per_od  = _ctx_cache["diseases"]
+avg_od_full      = _ctx_cache["avg_od"]
+cov_od_full      = _ctx_cache["cov_od"]
+
 if gene not in genes_arr:
     raise ValueError(f"gene '{gene}' not found in {cell} (n_genes={genes_arr.size:,})")
 g_idx = int(np.where(genes_arr == gene)[0][0])
 
 # Pull only the gene's column from each matrix (cheap — float16 / uint8).
-avg_col = _npz["avg_od"][:, g_idx].astype(np.float32)
-cov_col = _npz["cov_od_u8"][:, g_idx].astype(np.float32) / np.float32(255.0)
-od_index_arr = _npz["od_index"]
+avg_col = avg_od_full[:, g_idx].astype(np.float32)
+cov_col = cov_od_full[:, g_idx].astype(np.float32) * np.float32(1.0/255.0)
 
-# Build small DataFrames so the rest of the code keeps using familiar syntax
-od_strings = pd.Index([str(x) for x in od_index_arr])
-avg_series = pd.Series(avg_col, index=od_strings, name=gene)
-cov_series = pd.Series(cov_col, index=od_strings, name=gene)
+diseases_all = np.unique(diseases_per_od)
 
-# ---- split o@d index ----
-parts = od_strings.to_series().str.split("@", n=1, expand=True)
-parts.columns = ["organ", "disease"]
-diseases_all = parts["disease"].unique()
-
-# ---- ordering ----
+# ---- ordering (pure numpy, no pandas groupby) ----
 stage(63, "Computing layout …")
+sig = np.nan_to_num(avg_col) * np.nan_to_num(cov_col)
+
+# Sum signal per organ and per disease in one shot via numpy bincount-style accumulation
+def _agg_sum(keys, values):
+    uniq, inv = np.unique(keys, return_inverse=True)
+    out = np.zeros(uniq.size, dtype=np.float32)
+    np.add.at(out, inv, values.astype(np.float32))
+    return uniq, out
+
 if sort_mode == "expression":
-    sig = (np.nan_to_num(avg_series.values) * np.nan_to_num(cov_series.values))
-    per = pd.DataFrame({"o": parts["organ"].values,
-                        "d": parts["disease"].values,
-                        "sig": sig})
-    organs = per.groupby("o")["sig"].sum().sort_values(ascending=False).index.tolist()
-    d_score = per.groupby("d")["sig"].sum()
-    rest = d_score.drop(labels=[d for d in ["Control"] if d in d_score.index])\\
-                  .sort_values(ascending=False).index.tolist()
+    o_uniq, o_sum = _agg_sum(organs_per_od, sig)
+    organs = o_uniq[np.argsort(-o_sum)].tolist()
+    d_uniq, d_sum = _agg_sum(diseases_per_od, sig)
+    order = np.argsort(-d_sum)
+    rest = [str(d) for d in d_uniq[order] if d != "Control"]
 else:
-    organs = sorted(parts["organ"].unique())
+    organs = sorted(np.unique(organs_per_od).tolist())
     rest   = sorted(d for d in diseases_all if d != "Control")
 control = ["Control"] if "Control" in diseases_all else []
 diseases = control + rest
 
-def pivot_g(values, parts, organ_order, disease_order):
-    df = pd.DataFrame({"organ":   parts["organ"].values,
-                       "disease": parts["disease"].values,
-                       "v":       values.values})
-    grid = df.pivot(index="organ", columns="disease", values="v")
-    return grid.reindex(index=organ_order, columns=disease_order)
-
-A = pivot_g(avg_series, parts, organs, diseases)
-C = pivot_g(cov_series, parts, organs, diseases)
+# ---- pivot via direct numpy indexing (skips pandas DataFrame.pivot) ----
+o_to_idx = {o: i for i, o in enumerate(organs)}
+d_to_idx = {d: j for j, d in enumerate(diseases)}
 n_o, n_d = len(organs), len(diseases)
+A = np.full((n_o, n_d), np.nan, dtype=np.float32)
+C = np.full((n_o, n_d), np.nan, dtype=np.float32)
+for i_od, (o, d) in enumerate(zip(organs_per_od, diseases_per_od)):
+    ii = o_to_idx.get(o); jj = d_to_idx.get(d)
+    if ii is None or jj is None:
+        continue
+    A[ii, jj] = avg_col[i_od]
+    C[ii, jj] = cov_col[i_od]
 
 # ---- optionally read sample-level data from the separate samples.npz ----
 sample_df = None
@@ -593,20 +615,19 @@ else:
     ax_bar = None
 ax.set_facecolor("white")
 
-present_mask = ~A.isna().values
-miss_y, miss_x = np.where(~present_mask)
+present_mask = ~np.isnan(A)
 pres_y, pres_x = np.where(present_mask)
-for i, j in zip(miss_y, miss_x):
-    ax.add_patch(plt.Rectangle((j-0.5, i-0.5), 1, 1,
-                               facecolor=EMPTY_FILL, edgecolor="white",
-                               linewidth=0.4, zorder=0))
-for i, j in zip(pres_y, pres_x):
-    ax.add_patch(plt.Rectangle((j-0.5, i-0.5), 1, 1,
-                               facecolor=PRESENT_FILL, edgecolor="white",
-                               linewidth=0.4, zorder=0))
 
-cov_vals = np.clip(C.values[pres_y, pres_x], 0, 1)
-avg_vals = A.values[pres_y, pres_x]
+# Background lattice as a SINGLE imshow (was n_o*n_d Rectangle add_patch calls).
+import matplotlib.colors as _mcolors
+_bg = present_mask.astype(np.int8)   # 0 = NaN cell, 1 = present
+_bg_cmap = _mcolors.ListedColormap([EMPTY_FILL, PRESENT_FILL])
+ax.imshow(_bg, cmap=_bg_cmap, vmin=0, vmax=1,
+          interpolation="nearest", aspect="auto",
+          extent=[-0.5, n_d - 0.5, n_o - 0.5, -0.5], zorder=0)
+
+cov_vals = np.clip(C[pres_y, pres_x], 0, 1)
+avg_vals = A[pres_y, pres_x]
 vmax = max(float(np.nanmax(avg_vals)) if np.isfinite(avg_vals).any() else 1.0, 1e-6)
 sc = ax.scatter(pres_x, pres_y, s=cov_vals * SIZE_FACTOR, c=avg_vals,
                 cmap=cmap_name, vmin=0, vmax=vmax,
@@ -702,8 +723,8 @@ F_ix, G_ix = np.meshgrid(np.arange(n_o), np.arange(n_d), indexing="ij")
 df_out = pd.DataFrame({
     "organ":           [organs[i]   for i in F_ix.ravel()],
     "disease":         [diseases[j] for j in G_ix.ravel()],
-    "mean_expression": A.values.ravel(),
-    "coverage":        C.values.ravel(),
+    "mean_expression": A.ravel(),
+    "coverage":        C.ravel(),
 })
 df_out.to_csv("/plot.csv", index=False)
 print("DONE", n_o, "organs ×", n_d, "diseases")
