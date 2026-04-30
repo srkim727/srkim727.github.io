@@ -243,7 +243,6 @@ excerpt: ""
   <ol style="margin:0 0 0 18px;">
     <li style="margin:2px 0;"><code>NES</code> = normalized ES from 200-permutation null</li>
     <li style="margin:2px 0;"><code>FDR</code> = GSEA-style false discovery rate from the pooled-NES permutation distribution across both contrasts</li>
-    <li style="margin:2px 0;">shown only when sample-level data and ≥ 8 samples are available</li>
   </ol>
 </div>
 
