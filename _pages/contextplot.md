@@ -863,23 +863,31 @@ if sample_df is not None and len(sample_df) >= 8:
         stage(97, "Drawing enrichment …")
         _FONT = {"family": "sans-serif"}
 
-        fig_e = plt.figure(figsize=(5.2, 2.7), dpi=150)
+        # Two truly-independent enrichment columns (each with its own gradient
+        # and ranked metric, so the left + right read as 2 self-contained plots).
+        # Shorter Y than before — the per-column metric/gradient lets the figure
+        # be more compact vertically.
+        fig_e = plt.figure(figsize=(5.4, 2.2), dpi=150)
         LEFT_E, RIGHT_E = 0.10, 0.97
         gs_e = fig_e.add_gridspec(
             4, 2,
-            height_ratios=[2.0, 0.24, 0.13, 0.65],
+            height_ratios=[1.6, 0.18, 0.10, 0.55],
             width_ratios=[1, 1],
-            hspace=0.06, wspace=0.14,
-            top=0.80, bottom=0.16, left=LEFT_E, right=RIGHT_E,
+            hspace=0.07, wspace=0.24,
+            top=0.78, bottom=0.18, left=LEFT_E, right=RIGHT_E,
         )
+        # Disease column (left)
         ax_es_d = fig_e.add_subplot(gs_e[0, 0])
         ax_h_d  = fig_e.add_subplot(gs_e[1, 0], sharex=ax_es_d)
+        ax_g_d  = fig_e.add_subplot(gs_e[2, 0], sharex=ax_es_d)
+        ax_m_d  = fig_e.add_subplot(gs_e[3, 0], sharex=ax_es_d)
+        # Tumor column (right)
         ax_es_t = fig_e.add_subplot(gs_e[0, 1])
         ax_h_t  = fig_e.add_subplot(gs_e[1, 1], sharex=ax_es_t)
-        ax_grad = fig_e.add_subplot(gs_e[2, :])
-        ax_m    = fig_e.add_subplot(gs_e[3, :])
+        ax_g_t  = fig_e.add_subplot(gs_e[2, 1], sharex=ax_es_t)
+        ax_m_t  = fig_e.add_subplot(gs_e[3, 1], sharex=ax_es_t)
 
-        def _draw_es(ax, res, color, label, show_ylabel=True):
+        def _draw_es(ax, res, color, label):
             n = res["n"]; running = res["running"]; x = np.arange(n)
             ax.plot(x, running, color=color, linewidth=1.1, zorder=3)
             ax.fill_between(x, 0, running, color=color, alpha=0.18, zorder=2)
@@ -892,8 +900,7 @@ if sample_df is not None and len(sample_df) >= 8:
                     fontsize=6, va="top", ha="right",
                     transform=ax.transAxes, color="#374151",
                     linespacing=1.25, **_FONT)
-            if show_ylabel:
-                ax.set_ylabel("ES", fontsize=7, color="#374151", **_FONT)
+            ax.set_ylabel("ES", fontsize=7, color="#374151", **_FONT)
             ax.tick_params(axis="y", labelsize=6, colors="#374151", length=2, pad=1)
             ax.tick_params(axis="x", length=0, colors="#374151")
             plt.setp(ax.get_xticklabels(), visible=False)
@@ -927,24 +934,29 @@ if sample_df is not None and len(sample_df) >= 8:
             x = np.arange(n)
             ax.fill_between(x, 0, sm, color="#9ca3af", alpha=0.6, linewidth=0)
             ax.axhline(0, color="#9ca3af", linewidth=0.4)
-            ax.set_ylabel("Rank\\n(z-score)", fontsize=7, color="#374151", **_FONT)
-            ax.set_xlabel("Rank in ordered samples", fontsize=7, color="#374151", **_FONT)
-            ax.tick_params(labelsize=6, colors="#374151", length=2, pad=1)
+            ax.set_ylabel("Rank\\n(z-score)", fontsize=6.5, color="#374151", **_FONT)
+            ax.set_xlabel("Rank in ordered samples", fontsize=6.5, color="#374151", **_FONT)
+            ax.tick_params(labelsize=5.5, colors="#374151", length=2, pad=1)
             ax.set_xlim(0, n)
             for sp in ("top", "right"): ax.spines[sp].set_visible(False)
             for sp in ("left", "bottom"):
                 ax.spines[sp].set_color("#9ca3af"); ax.spines[sp].set_linewidth(0.5)
 
+        # left: disease
         _draw_es(ax_es_d, res_dis, COLOR_OTHER,  "Disease enrichment")
         _draw_rug(ax_h_d, res_dis)
-        _draw_es(ax_es_t, res_tum, COLOR_CANCER, "Tumor / Metastasis enrichment", show_ylabel=False)
+        _draw_grad(ax_g_d, res_dis["sorted_metric"], res_dis["n"])
+        _draw_metric_e(ax_m_d, res_dis["sorted_metric"], res_dis["n"])
+
+        # right: tumor (own gradient + metric, even though the data is the same)
+        _draw_es(ax_es_t, res_tum, COLOR_CANCER, "Tumor enrichment")
         _draw_rug(ax_h_t, res_tum)
-        _draw_grad(ax_grad, res_dis["sorted_metric"], res_dis["n"])
-        _draw_metric_e(ax_m, res_dis["sorted_metric"], res_dis["n"])
+        _draw_grad(ax_g_t, res_tum["sorted_metric"], res_tum["n"])
+        _draw_metric_e(ax_m_t, res_tum["sorted_metric"], res_tum["n"])
 
         fig_e.suptitle(f"{gene} ({cell})", fontsize=10, weight="bold",
                        color="#111827",
-                       x=(LEFT_E + RIGHT_E) / 2, y=0.94,
+                       x=(LEFT_E + RIGHT_E) / 2, y=0.93,
                        ha="center", **_FONT)
 
         buf2 = io.BytesIO()
