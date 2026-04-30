@@ -1,5 +1,5 @@
 ---
-title: Explore gene expression
+title: Gene expression by cell type
 author: S. Kim
 date: 2025-10-16
 layout: post

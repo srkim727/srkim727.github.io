@@ -1,5 +1,5 @@
 ---
-title: Explore gene expression (context)
+title: Gene expression by organ × disease
 author: S. Kim
 date: 2025-10-16
 layout: post

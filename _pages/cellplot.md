@@ -1,5 +1,5 @@
 ---
-title: Explore cell distribution
+title: Cell type profiles
 author: S. Kim
 date: 2025-10-16
 layout: post
