@@ -291,9 +291,7 @@ layout: post
         <li>Raw expression must be <code>1e4</code>-normalized &amp; <code>log1p</code>-transformed<br>
             <small>normalized up to 10,000 counts per cell, then log-transformed with 1 pseudocount</small>
         </li>
-        <li>Supported formats: <code>.csv</code>, <strong><code>.csv.gz</code></strong> (recommended for fastest upload), or <code>.h5ad</code> (AnnData / HDF5)<br>
-            <small>For <code>.h5ad</code>: gene names are read from <code>var/_index</code> (or whichever column <code>var.attrs._index</code> points to); cell IDs from <code>obs/_index</code>; the X matrix is auto-detected as dense or sparse (CSR / CSC).</small>
-        </li>
+        <li>Supported formats: <code>.csv</code>, <strong><code>.csv.gz</code></strong> (recommended for fastest upload), or <code>.h5ad</code> (AnnData / HDF5)</li>
       </ul>
     </li>
     <li><strong>Cell annotation</strong>

@@ -394,6 +394,18 @@ excerpt: ""
       setStageState("boot","active");
       stage(2, "Initializing Pyodide…");
       log("⏳ Boot: waiting for pyodide.js …");
+
+      // Cache-warm: kick off the initial cell's data fetch IN PARALLEL with
+      // Pyodide loading. When loadAssetsForCell runs after boot the npz files
+      // are already in the browser HTTP cache, so its explicit fetch is
+      // ~instant. Saves ~1–3 s on first-load wall time.
+      const _initialCell = $("cellSelect").value.trim();
+      if (_initialCell) {
+        fetch(ASSET_BASE + `${_initialCell}_context.npz`).catch(()=>{});
+        fetch(ASSET_BASE + `${_initialCell}_samples.npz`).catch(()=>{});
+        log(`⏳ Pre-fetching ${_initialCell} (parallel to Pyodide boot)…`);
+      }
+
       await waitForGlobal("loadPyodide", 20000);
 
       log("⏳ Boot: initializing Pyodide…");
@@ -486,7 +498,10 @@ print("matplotlib", mpl.__version__)
     const unhookErr = pyodide.setStderr({ batched: (s)=>{ s && s.trim() && log("ERR: " + s); } });
 
     try{
-      const code = `
+      // Two-phase render: dotplot first (Phase A) so it paints fast,
+      // enrichment compute second (Phase B) — it kicks off only after
+      // the dotplot is already on screen.
+      const codeA = `
 import os, io, gzip, sys
 import numpy as np, pandas as pd
 import matplotlib as mpl
@@ -748,6 +763,13 @@ df_out = pd.DataFrame({
 })
 df_out.to_csv("/plot.csv", index=False)
 
+print("DONE_A", n_o, "organs ×", n_d, "diseases")
+"OK"
+      `;
+
+      // Phase B uses globals from Phase A (sample_df, cell, gene, COLOR_*,
+      // os, io, np, pd, plt, mpl, stage). All persist across runPythonAsync.
+      const codeB = `
 # ---- GSEA-style enrichment plot (only when sample-level data is available) ----
 # Disease and tumor contrasts share one ranked-by-expression metric (z-scored
 # across samples). Layout: disease ES + rug LEFT, tumor ES + rug RIGHT, with
@@ -840,7 +862,7 @@ if sample_df is not None and len(sample_df) >= 8:
         pvalue = _mannwhitney_p(values, hits)
         return dict(running=running, sorted_metric=sorted_metric, sorted_hits=sorted_hits,
                     es=es, peak=peak, nes=nes, pvalue=pvalue, n_hit=n_hit, n=n,
-                    q_value=float("nan"))
+                    adj_p=float("nan"))
 
     expr_s     = sample_df[gene].values.astype(np.float32)
     diseases_s = sample_df["disease"].astype(str).values
@@ -856,9 +878,9 @@ if sample_df is not None and len(sample_df) >= 8:
     else:
         res_dis = _enrich(expr_s, is_disease, n_perms=200)
         res_tum = _enrich(expr_s, is_tumor,   n_perms=200)
-        qs = _bh_fdr([res_dis["pvalue"], res_tum["pvalue"]])
-        res_dis["q_value"] = float(qs[0])
-        res_tum["q_value"] = float(qs[1])
+        adj = _bh_fdr([res_dis["pvalue"], res_tum["pvalue"]])
+        res_dis["adj_p"] = float(adj[0])
+        res_tum["adj_p"] = float(adj[1])
 
         stage(97, "Drawing enrichment …")
         _FONT = {"family": "sans-serif"}
@@ -892,14 +914,14 @@ if sample_df is not None and len(sample_df) >= 8:
             ax.plot(x, running, color=color, linewidth=1.1, zorder=3)
             ax.fill_between(x, 0, running, color=color, alpha=0.18, zorder=2)
             ax.axhline(0, color="#9ca3af", linewidth=0.4, zorder=0)
-            p_str = _fmt_pq(res["pvalue"]); q_str = _fmt_pq(res["q_value"])
+            adj_p_str = _fmt_pq(res["adj_p"])
             ax.text(0.0, 1.04, label, fontsize=7, va="bottom", ha="left",
                     transform=ax.transAxes, color="#111827", weight="bold", **_FONT)
             ax.text(0.985, 0.95,
-                    f"NES={res['nes']:+.2f}\\np={p_str}\\nq={q_str}",
+                    f"NES={res['nes']:+.2f}\\nadj. p={adj_p_str}",
                     fontsize=6, va="top", ha="right",
                     transform=ax.transAxes, color="#374151",
-                    linespacing=1.25, **_FONT)
+                    linespacing=1.3, **_FONT)
             ax.set_ylabel("ES", fontsize=7, color="#374151", **_FONT)
             ax.tick_params(axis="y", labelsize=6, colors="#374151", length=2, pad=1)
             ax.tick_params(axis="x", length=0, colors="#374151")
@@ -954,9 +976,10 @@ if sample_df is not None and len(sample_df) >= 8:
         _draw_grad(ax_g_t, res_tum["sorted_metric"], res_tum["n"])
         _draw_metric_e(ax_m_t, res_tum["sorted_metric"], res_tum["n"])
 
-        fig_e.suptitle(f"{gene} ({cell})", fontsize=10, weight="bold",
+        fig_e.suptitle(f"{gene} expression in {cell}",
+                       fontsize=8.5, weight="bold",
                        color="#111827",
-                       x=(LEFT_E + RIGHT_E) / 2, y=0.93,
+                       x=(LEFT_E + RIGHT_E) / 2, y=0.94,
                        ha="center", **_FONT)
 
         buf2 = io.BytesIO()
@@ -964,12 +987,12 @@ if sample_df is not None and len(sample_df) >= 8:
         plt.close(fig_e)
         open("/plot_enrichment.png", "wb").write(buf2.getbuffer())
 
-print("DONE", n_o, "organs ×", n_d, "diseases")
+print("DONE_B")
 "OK"
       `;
-      await pyodide.runPythonAsync(code);
-      stage(100, "Done");
-      setStageState("plot","done");
+
+      // ---- PHASE A: dotplot + barplot + CSV — display ASAP ----
+      await pyodide.runPythonAsync(codeA);
 
       const pngBytes = FS.readFile("/plot.png");
       const pngBlob  = new Blob([pngBytes], { type: "image/png" });
@@ -997,30 +1020,46 @@ print("DONE", n_o, "organs ×", n_d, "diseases")
       $("downloadCSV").textContent = `⬇ Download ${csvName}`;
       $("downloadCSV").style.display = "inline-flex";
 
-      // Enrichment plot is best-effort — only present when sample-level data
-      // is available *and* both contrasts (Disease, Tumor) have at least one
-      // hit and one miss. Read attempts that fail are silent.
-      try {
-        const epngBytes = FS.readFile("/plot_enrichment.png");
-        const epngBlob  = new Blob([epngBytes], { type: "image/png" });
-        if(epngURL) URL.revokeObjectURL(epngURL);
-        epngURL = URL.createObjectURL(epngBlob);
-        const epngName = `${safeCell}_${safeGene}_enrichment.png`;
-        $("plotImgEnrichment").src = epngURL;
-        $("plotImgEnrichment").style.display = "block";
-        $("downloadEnrichmentPNG").href = epngURL;
-        $("downloadEnrichmentPNG").download = epngName;
-        $("downloadEnrichmentPNG").textContent = `⬇ Download ${epngName}`;
-        $("downloadEnrichmentPNG").style.display = "inline-flex";
-      } catch(_) {
-        $("plotImgEnrichment").style.display = "none";
-        $("downloadEnrichmentPNG").style.display = "none";
-      }
+      // Hide stale enrichment image until Phase B repopulates it (or fails).
+      $("plotImgEnrichment").style.display = "none";
+      $("downloadEnrichmentPNG").style.display = "none";
 
       $("resultSummary").innerHTML = `${cell} · ${gene} <span class="stat">organ × disease context</span>`;
       $("resultCard").classList.remove("err");
       $("resultCard").style.display = "block";
-      log("✅ Plot ready.");
+      setStageState("plot","done");
+      stage(85, "Dotplot ready · computing enrichment …");
+      log("✅ Dotplot rendered — computing enrichment …");
+
+      // Yield to the browser event loop so the dotplot actually paints before
+      // Phase B (matplotlib + permutation) starts blocking the main thread.
+      // Two double-rAF + setTimeout to be sure the paint fires.
+      await new Promise(r => requestAnimationFrame(()=> requestAnimationFrame(()=> setTimeout(r, 0))));
+
+      // ---- PHASE B: enrichment compute + render ----
+      try {
+        await pyodide.runPythonAsync(codeB);
+        try {
+          const epngBytes = FS.readFile("/plot_enrichment.png");
+          const epngBlob  = new Blob([epngBytes], { type: "image/png" });
+          if(epngURL) URL.revokeObjectURL(epngURL);
+          epngURL = URL.createObjectURL(epngBlob);
+          const epngName = `${safeCell}_${safeGene}_enrichment.png`;
+          $("plotImgEnrichment").src = epngURL;
+          $("plotImgEnrichment").style.display = "block";
+          $("downloadEnrichmentPNG").href = epngURL;
+          $("downloadEnrichmentPNG").download = epngName;
+          $("downloadEnrichmentPNG").textContent = `⬇ Download ${epngName}`;
+          $("downloadEnrichmentPNG").style.display = "inline-flex";
+          log("✅ Enrichment ready.");
+        } catch(_) {
+          // No enrichment file (degenerate contrast or no sample data) — silent.
+        }
+      } catch(eb) {
+        log("⚠️ Enrichment failed: " + (eb?.message||eb));
+      }
+
+      stage(100, "Done");
     }catch(e){
       stage(0, "Error");
       setStageState("plot","err");
