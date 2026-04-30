@@ -636,43 +636,59 @@ if has_sample and os.path.exists("/work/samples.npz"):
 # ---- figure ----
 stage(75, "Drawing dotplot …")
 # ---- Layout: rows=disease, cols=organ; barplot on the right; legends above ----
-# Cleaner, less cramped sizing. Barplot is capped at TOP_N_BARS to keep its
-# y-tick labels readable rather than overlapping into a black band.
+# Each bar row is rendered at the SAME visual height as one dotplot cell
+# (DOT_Y_PER), so the right panel reads like a horizontal extension of the
+# dotplot's row height. TOP_N_BARS is capped so the barplot panel never
+# exceeds the dotplot height.
 DOT_X_PER = 0.11                              # inch per organ column
 DOT_Y_PER = 0.18                              # inch per disease row
-TOP_N_BARS = 30                               # cap o@d categories shown on the right
+TOP_N_BARS_REQ = 10                           # preferred number of o@d bars
 fig_w_dot = max(3.5, DOT_X_PER * n_o + PAD_W)
 fig_h_dot = max(1.6, DOT_Y_PER * n_d + PAD_H)
-fig_w_bar = 2.2                               # wider horizontal-bar panel
+fig_w_bar = 2.2
 
-# Top row left empty for legend/colorbar placed via ax.inset_axes / bbox_to_anchor.
+# Match per-bar visual height to one dotplot cell, then size the bar panel.
+desired_h_bar = TOP_N_BARS_REQ * DOT_Y_PER
+if desired_h_bar >= fig_h_dot:
+    TOP_N_BARS = max(1, int((fig_h_dot - 0.1) / DOT_Y_PER))
+    fig_h_bar = TOP_N_BARS * DOT_Y_PER
+else:
+    TOP_N_BARS = TOP_N_BARS_REQ
+    fig_h_bar = desired_h_bar
+# Tiny floor so the (fig_h_dot - fig_h_bar) gridspec row never collapses to 0.
+fig_h_bar = min(fig_h_bar, fig_h_dot - 0.05)
+
+# 3-row × 2-col gridspec — ax spans rows 1+2 (full dotplot height), ax_bar
+# sits only in row 1 (smaller, top-aligned with dotplot). Tight `top` and a
+# small top-row ratio keep the title close to the plots.
+TOP_LEG_RATIO = 0.28
 if sample_df is not None:
-    fig = plt.figure(figsize=(fig_w_dot + fig_w_bar + 1.2, fig_h_dot + 1.0), dpi=150)
+    fig = plt.figure(figsize=(fig_w_dot + fig_w_bar + 1.2, fig_h_dot + 0.7), dpi=150)
     gs = fig.add_gridspec(
-        2, 2,
-        height_ratios=[0.40, fig_h_dot],
+        3, 2,
+        height_ratios=[TOP_LEG_RATIO, fig_h_bar, fig_h_dot - fig_h_bar],
         width_ratios=[fig_w_dot, fig_w_bar],
         hspace=0.04, wspace=0.40,
-        top=0.92, bottom=0.10, left=0.07, right=0.93,
+        top=0.96, bottom=0.10, left=0.07, right=0.93,
     )
-    ax     = fig.add_subplot(gs[1, 0])
+    ax     = fig.add_subplot(gs[1:, 0])
     ax_bar = fig.add_subplot(gs[1, 1])
 else:
-    fig = plt.figure(figsize=(fig_w_dot, fig_h_dot + 1.0), dpi=150)
+    fig = plt.figure(figsize=(fig_w_dot, fig_h_dot + 0.7), dpi=150)
     gs = fig.add_gridspec(
         2, 1,
-        height_ratios=[0.40, fig_h_dot],
+        height_ratios=[TOP_LEG_RATIO, fig_h_dot],
         hspace=0.04,
-        top=0.92, bottom=0.10, left=0.10, right=0.97,
+        top=0.96, bottom=0.10, left=0.10, right=0.97,
     )
     ax     = fig.add_subplot(gs[1, 0])
     ax_bar = None
 ax.set_facecolor("white")
 
-# Title — top-left of the figure
+# Title — top-left of the figure, sitting right above the legend zone
 fig.suptitle(f"{gene} expression in {cell}",
              fontsize=11, weight="semibold", color="#111827",
-             x=0.07, y=0.97, ha="left")
+             x=0.07, y=0.985, ha="left")
 
 # ---- Swap axes for the plot only (CSV still uses A,C in (n_o, n_d) order) ----
 A_p = A.T   # plot view: (n_d, n_o)
