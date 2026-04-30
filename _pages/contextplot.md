@@ -239,11 +239,10 @@ excerpt: ""
   </ol>
 
   <p style="margin:12px 0 6px 0;"><strong>Enrichment plot</strong></p>
-  <p style="margin:0 0 6px 0;">GSEA-style test of preferential expression in <code>Disease</code> (vs <code>Control</code>) and <code>Tumor</code> (vs non-tumor) samples, ranked by gene-level z-score.</p>
+  <p style="margin:0 0 6px 0;">GSEA-style test of preferential expression in Disease (vs Control) and Tumor (vs non-tumor) samples, ranked by gene expression (pseudobulk).</p>
   <ol style="margin:0 0 0 18px;">
-    <li style="margin:2px 0;">top curve = running enrichment score (ES) &nbsp;·&nbsp; rug = hit-sample positions &nbsp;·&nbsp; gradient + bottom bar = ranked z-score</li>
-    <li style="margin:2px 0;"><code>NES</code> = normalized ES from 200-permutation null (Subramanian 2005)</li>
-    <li style="margin:2px 0;"><code>p-adj</code> = two-sided Mann–Whitney <em>U</em>, Benjamini–Hochberg adjusted across the two contrasts</li>
+    <li style="margin:2px 0;"><code>NES</code> = normalized ES from 200-permutation null</li>
+    <li style="margin:2px 0;"><code>FDR</code> = GSEA-style false discovery rate from the pooled-NES permutation distribution across both contrasts</li>
     <li style="margin:2px 0;">shown only when sample-level data and ≥ 8 samples are available</li>
   </ol>
 </div>
@@ -792,8 +791,6 @@ except FileNotFoundError: pass
 if sample_df is not None and len(sample_df) >= 8:
     stage(95, "Computing enrichment …")
 
-    from math import erf as _erf, sqrt as _sqrt
-
     def _running_es(hit_mask, w, n, n_hit):
         if n_hit == 0 or n_hit == n: return 0.0, np.zeros(n), 0
         hit_w_sum = float(w[hit_mask].sum())
@@ -803,37 +800,28 @@ if sample_df is not None and len(sample_df) >= 8:
         peak = int(np.argmax(np.abs(running)))
         return float(running[peak]), running, peak
 
-    def _bh_fdr(pvals):
-        p = np.asarray(pvals, dtype=float)
-        n_p = len(p)
-        if n_p == 0: return p
-        order = np.argsort(p)
-        adj = p[order] * n_p / np.arange(1, n_p + 1)
-        adj = np.minimum.accumulate(adj[::-1])[::-1]
-        q = np.empty_like(adj)
-        q[order] = np.clip(adj, 0, 1)
-        return q
-
     def _fmt_pq(v):
         if not np.isfinite(v): return "n/a"
         if v < 0.001: return "<0.001"
         return f"{v:.3f}"
 
-    def _mannwhitney_p(values, hits):
-        # Two-sided MW-U with normal approximation + tie correction.
-        n1 = int(hits.sum()); n2 = int((~hits).sum())
-        if n1 == 0 or n2 == 0: return float("nan")
-        n = n1 + n2
-        ranks = pd.Series(values).rank(method="average").to_numpy()
-        R1 = float(ranks[hits].sum())
-        U1 = R1 - n1*(n1+1)/2.0
-        mean_U = n1*n2/2.0
-        _, counts = np.unique(values, return_counts=True)
-        tie_term = float(np.sum(counts**3 - counts))
-        var_U = n1*n2/12.0 * ((n+1) - tie_term/(n*(n-1))) if n > 1 else 0.0
-        if var_U <= 0: return 1.0
-        z = (U1 - mean_U) / np.sqrt(var_U)
-        return float(2.0 * (1.0 - 0.5*(1.0 + _erf(abs(z)/_sqrt(2.0)))))
+    def _gsea_fdr(nes_obs, all_null_nes, all_obs_nes):
+        # GSEA-style FDR on pooled NES distributions across all contrasts.
+        if not np.isfinite(nes_obs): return float("nan")
+        if nes_obs >= 0:
+            ssn = all_null_nes[all_null_nes >= 0]
+            sso = all_obs_nes[all_obs_nes >= 0]
+            if ssn.size == 0 or sso.size == 0: return 1.0
+            num   = float((ssn >= nes_obs).sum()) / ssn.size
+            denom = float((sso >= nes_obs).sum()) / sso.size
+        else:
+            ssn = all_null_nes[all_null_nes < 0]
+            sso = all_obs_nes[all_obs_nes < 0]
+            if ssn.size == 0 or sso.size == 0: return 1.0
+            num   = float((ssn <= nes_obs).sum()) / ssn.size
+            denom = float((sso <= nes_obs).sum()) / sso.size
+        if denom == 0: return float(min(num, 1.0))
+        return float(min(num / denom, 1.0))
 
     def _enrich(values, hits, n_perms=200, rng_seed=42):
         n = values.size
@@ -863,11 +851,10 @@ if sample_df is not None and len(sample_df) >= 8:
         denom_pos = max(float(pos.mean()) if pos.size > 0 else 1.0, 1e-12)
         denom_neg = max(float(abs(neg).mean()) if neg.size > 0 else 1.0, 1e-12)
         nes = float(es / denom_pos) if es >= 0 else float(es / denom_neg)
-        # Well-calibrated p-value (NOT the permutation tail).
-        pvalue = _mannwhitney_p(values, hits)
+        nes_null = np.where(null >= 0, null / denom_pos, null / denom_neg)
         return dict(running=running, sorted_metric=sorted_metric, sorted_hits=sorted_hits,
-                    es=es, peak=peak, nes=nes, pvalue=pvalue, n_hit=n_hit, n=n,
-                    adj_p=float("nan"))
+                    es=es, peak=peak, nes=nes, nes_null=nes_null,
+                    n_hit=n_hit, n=n, fdr=float("nan"))
 
     expr_s     = sample_df[gene].values.astype(np.float32)
     diseases_s = sample_df["disease"].astype(str).values
@@ -877,15 +864,17 @@ if sample_df is not None and len(sample_df) >= 8:
 
     # Skip enrichment if either contrast is degenerate (all-hit or no-hit).
     skip_enrichment = (is_disease.all() or (~is_disease).all()
-                       or is_tumor.all()  or (~is_tumor).all())
+                       or is_tumor.all()   or (~is_tumor).all())
     if skip_enrichment:
         print("ℹ️ enrichment skipped (no contrast — all samples on one side)")
     else:
-        res_dis = _enrich(expr_s, is_disease, n_perms=200)
-        res_tum = _enrich(expr_s, is_tumor,   n_perms=200)
-        adj = _bh_fdr([res_dis["pvalue"], res_tum["pvalue"]])
-        res_dis["adj_p"] = float(adj[0])
-        res_tum["adj_p"] = float(adj[1])
+        res_dis = _enrich(expr_s, is_disease, n_perms=200, rng_seed=42)
+        res_tum = _enrich(expr_s, is_tumor,   n_perms=200, rng_seed=43)
+        # Pool NES distributions across both contrasts → GSEA-style FDR.
+        all_null = np.concatenate([res_dis["nes_null"], res_tum["nes_null"]])
+        all_obs  = np.array([res_dis["nes"], res_tum["nes"]], dtype=np.float64)
+        res_dis["fdr"] = _gsea_fdr(res_dis["nes"], all_null, all_obs)
+        res_tum["fdr"] = _gsea_fdr(res_tum["nes"], all_null, all_obs)
 
         stage(97, "Drawing enrichment …")
         _FONT = {"family": "sans-serif"}
@@ -919,11 +908,11 @@ if sample_df is not None and len(sample_df) >= 8:
             ax.plot(x, running, color=color, linewidth=1.1, zorder=3)
             ax.fill_between(x, 0, running, color=color, alpha=0.18, zorder=2)
             ax.axhline(0, color="#9ca3af", linewidth=0.4, zorder=0)
-            adj_p_str = _fmt_pq(res["adj_p"])
+            fdr_str = _fmt_pq(res["fdr"])
             ax.text(0.0, 1.04, label, fontsize=7, va="bottom", ha="left",
                     transform=ax.transAxes, color="#111827", weight="bold", **_FONT)
             ax.text(0.985, 0.95,
-                    f"NES={res['nes']:+.2f}\\np-adj={adj_p_str}",
+                    f"NES={res['nes']:+.2f}\\nFDR={fdr_str}",
                     fontsize=6, va="top", ha="right",
                     transform=ax.transAxes, color="#374151",
                     linespacing=1.3, **_FONT)
@@ -936,9 +925,14 @@ if sample_df is not None and len(sample_df) >= 8:
             for sp in ("left", "bottom"):
                 ax.spines[sp].set_color("#9ca3af"); ax.spines[sp].set_linewidth(0.5)
 
-        def _draw_rug(ax, res):
-            n = res["n"]; hit_x = np.where(res["sorted_hits"])[0]
-            ax.vlines(hit_x, 0, 1, color="black", linewidth=0.5, alpha=0.9)
+        def _draw_rug(ax, res, show="hits", color="black"):
+            # show='hits'  → ticks at hit positions (default, black)
+            # show='misses'→ ticks at non-hit positions (grey, used for Disease
+            #                where hits dominate)
+            n = res["n"]
+            mask = res["sorted_hits"] if show == "hits" else (~res["sorted_hits"])
+            rug_x = np.where(mask)[0]
+            ax.vlines(rug_x, 0, 1, color=color, linewidth=0.5, alpha=0.9)
             ax.set_xlim(0, n); ax.set_ylim(0, 1)
             ax.set_yticks([]); ax.set_xticks([])
             plt.setp(ax.get_xticklabels(), visible=False)
@@ -969,13 +963,14 @@ if sample_df is not None and len(sample_df) >= 8:
             for sp in ("left", "bottom"):
                 ax.spines[sp].set_color("#9ca3af"); ax.spines[sp].set_linewidth(0.5)
 
-        # left: disease
+        # left: disease — invert rug to show the minority Control samples as
+        # grey ticks (hits dominate, so a hit-rug would be a near-solid band).
         _draw_es(ax_es_d, res_dis, COLOR_OTHER,  "Disease enrichment")
-        _draw_rug(ax_h_d, res_dis)
+        _draw_rug(ax_h_d, res_dis, show="misses", color=COLOR_CONTROL)
         _draw_grad(ax_g_d, res_dis["sorted_metric"], res_dis["n"])
         _draw_metric_e(ax_m_d, res_dis["sorted_metric"], res_dis["n"])
 
-        # right: tumor (own gradient + metric, even though the data is the same)
+        # right: tumor — default rug (black hits)
         _draw_es(ax_es_t, res_tum, COLOR_CANCER, "Tumor enrichment")
         _draw_rug(ax_h_t, res_tum)
         _draw_grad(ax_g_t, res_tum["sorted_metric"], res_tum["n"])

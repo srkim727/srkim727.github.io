@@ -196,9 +196,9 @@ excerpt: ""
     <li style="margin:2px 0;">Organ distribution patterns</li>
     <li style="margin:2px 0;">Matching annotation from previous literatures
       <ul style="margin:6px 0 0 18px;">
-        <li>row indicates <code>{cell_annotation_from_the_literature}@{source_literature}</code></li>
-        <li><code>SEN</code>: sensitivity: ratio of <code>{cell_annotation_from_the_literature}</code> assigned to this <code>{PANGEA annotation}</code></li>
-        <li><code>PPV</code>: positive-predictive value: ratio of <code>{PANGEA annotation}</code> assigned to this <code>{cell_annotation_from_the_literature}</code></li>
+        <li>row indicates <code>{literature_annotation}@{source_literature}</code></li>
+        <li><code>SEN</code>: sensitivity: ratio of <code>{literature_annotation}</code> assigned to this <code>{PANGEA_annotation}</code></li>
+        <li><code>PPV</code>: positive-predictive value: ratio of <code>{PANGEA_annotation}</code> assigned to this <code>{literature_annotation}</code></li>
         <li><code>CFS</code>: confidence score: average prediction confidence score (<code>PG_combined_score</code>)</li>
         <li><code>score</code>: overall score, i.e., cubic root of above parameters</li>
       </ul>
@@ -557,7 +557,7 @@ sns.scatterplot(data=overall, y='avg', x='spec', s=26, linewidth=0,
 # scatter (highlight)
 if cell in overall.index:
     sns.scatterplot(data=overall.loc[[cell]], y='avg', x='spec', s=140,
-                    linewidth=1.2, edgecolor='white', color=ACCENT, ax=axes[0])
+                    linewidth=0.8, edgecolor='black', color=ACCENT, ax=axes[0])
     x, y = float(overall.loc[cell, 'spec']), float(overall.loc[cell, 'avg'])
     axes[0].text(x, y, f"  {cell}", fontsize=9, fontweight='semibold',
                  ha='left', va='center', color=ACCENT)
@@ -584,7 +584,7 @@ else:
 sns.barplot(data=prop, y=cell if cell in prop.columns else 'Organ', x='Organ',
             order=order, ax=axes[1],
             capsize=.15, errorbar='se', errwidth=0.8, errcolor='#6b7280',
-            linewidth=0.6, edgecolor='white', color=ACCENT)
+            linewidth=0.5, edgecolor='black', color=ACCENT)
 axes[1].tick_params(axis='x', rotation=90)
 axes[1].set_xlabel("")
 axes[1].set_ylabel('Proportion')
@@ -636,9 +636,11 @@ if 'PANGEA_annotation' in mdf.columns and (cell in set(mdf['PANGEA_annotation'])
         norm01 = mpl.colors.Normalize(vmin=0.0, vmax=1.0)
         sizes = 250 * np.clip(vals, 0, 1)
 
-        fig2, ax = plt.subplots(figsize=(n_cols*2, n_rows*0.6), dpi=150)
+        # row height 0.6 → 0.42 (30% smaller) to tighten the per-row grey
+        # background around each SEN/PPV/CFS dot.
+        fig2, ax = plt.subplots(figsize=(n_cols*2, n_rows*0.42), dpi=150)
         sc = ax.scatter(x, y, s=sizes, c=vals, cmap=cmap, norm=norm01,
-                        edgecolor="white", linewidth=0.8)
+                        edgecolor="black", linewidth=0.5)
 
         ax.set_xticks([0,1,2,3.5])
         ax.set_xticklabels(['SEN','PPV','CFS','score'])
@@ -664,7 +666,7 @@ if 'PANGEA_annotation' in mdf.columns and (cell in set(mdf['PANGEA_annotation'])
                              transform=ax.transData)
         bar_vals = np.clip(mdf1[metric_bar].values, 0, 1)
         axin.barh(y_rows, bar_vals, height=0.7, color=ACCENT,
-                  edgecolor='white', linewidth=0.8)
+                  edgecolor='black', linewidth=0.5)
         axin.set_ylim(ax.get_ylim()); axin.set_xlim(0,1.1)
         axin.set_xticks([]); axin.set_yticks([])
         for sp in axin.spines.values(): sp.set_visible(False)
@@ -762,7 +764,7 @@ try:
         fig3, ax3 = plt.subplots(figsize=(4, 2.2), dpi=150)
         sns.barplot(data=pdf, x=cell, y='Cancer_Tissue', ax=ax3,
                     palette=cmapdic, order=order, estimator=np.mean,
-                    linewidth=0.6, edgecolor='white',
+                    linewidth=0.5, edgecolor='black',
                     errorbar='se', capsize=.15, errwidth=0.8, errcolor='#6b7280')
         ax3.grid(True, axis='x', linestyle=':', linewidth=0.6, color=GRID_SOFT, alpha=0.8)
         ax3.set_axisbelow(True)
@@ -771,6 +773,44 @@ try:
         ctrls = [x for x in ['Control','Non-malignant disease','Cancer_AdjNorm'] if x in set(pdf['Cancer_Tissue'])]
         comps = [('Cancer_Tumor', c) for c in ctrls]
         # annotate_barh_stars(ax3, cell, 'Cancer_Tissue', df1, comps, order)
+
+        # ---- Cancer_Tumor vs Control: log2FC + Mann-Whitney U p ----
+        # Manual MWU (normal approx + tie correction) — avoids pulling in scipy.
+        from math import erf as _erf, sqrt as _sqrt
+        def _mwu_p(a, b):
+            a = np.asarray(a, dtype=float); a = a[~np.isnan(a)]
+            b = np.asarray(b, dtype=float); b = b[~np.isnan(b)]
+            n1, n2 = len(a), len(b)
+            if n1 == 0 or n2 == 0: return float('nan')
+            n = n1 + n2
+            combined = np.concatenate([a, b])
+            ranks = pd.Series(combined).rank(method='average').to_numpy()
+            R1 = float(ranks[:n1].sum())
+            U1 = R1 - n1*(n1+1)/2.0
+            mean_U = n1*n2/2.0
+            _, cts = np.unique(combined, return_counts=True)
+            tie = float(np.sum(cts**3 - cts))
+            var_U = n1*n2/12.0 * ((n+1) - tie/(n*(n-1))) if n > 1 else 0.0
+            if var_U <= 0: return 1.0
+            z = (U1 - mean_U) / np.sqrt(var_U)
+            return float(2.0 * (1.0 - 0.5*(1.0 + _erf(abs(z)/_sqrt(2.0)))))
+
+        tt_set = set(pdf['Cancer_Tissue'])
+        if 'Cancer_Tumor' in tt_set and 'Control' in tt_set:
+            tv = pdf.loc[pdf['Cancer_Tissue']=='Cancer_Tumor', cell].dropna().values
+            cv = pdf.loc[pdf['Cancer_Tissue']=='Control',     cell].dropna().values
+            if len(tv) > 0 and len(cv) > 0:
+                mwu_p = _mwu_p(tv, cv)
+                # log2FC on group means (small pseudocount to handle zeros)
+                eps = 1e-6
+                lfc = float(np.log2((float(np.mean(tv)) + eps) / (float(np.mean(cv)) + eps)))
+                p_disp = "<0.001" if (np.isfinite(mwu_p) and mwu_p < 0.001) else f"{mwu_p:.3f}"
+                ax3.text(0.985, 0.97,
+                         f"Tumor vs Control\\nlog$_2$FC = {lfc:+.2f}\\nMWU p = {p_disp}",
+                         transform=ax3.transAxes, ha='right', va='top',
+                         fontsize=7, color='#374151', linespacing=1.3,
+                         bbox=dict(boxstyle='round,pad=0.3', facecolor='#fafbfc',
+                                   edgecolor=GRID_SOFT, linewidth=0.5))
 
         ax3.set_xlabel(cell); ax3.set_ylabel('')
         add_fig_note(plt.gcf(), f"TME distribution", x=0.01, y=1.05, ha='left', va='bottom', fontsize=9)
