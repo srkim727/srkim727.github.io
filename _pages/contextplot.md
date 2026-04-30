@@ -148,7 +148,6 @@ excerpt: ""
     <label class="inline-ctl">
       <span>Cell</span>
       <select id="cellSelect" style="min-width:160px;">
-        <option selected>Mural</option>
         <option>Astrocyte</option>
         <option>B_GC</option>
         <option>B_mature</option>
@@ -167,6 +166,7 @@ excerpt: ""
         <option>Melanocyte</option>
         <option>Monocyte</option>
         <option>Muller</option>
+        <option selected>Mural</option>
         <option>Neuron_bipolar</option>
         <option>Neuron_excitatory</option>
         <option>Neuron_inhibitory</option>
@@ -446,8 +446,17 @@ print("matplotlib", mpl.__version__)
     const sortMode = $("sortSelect").value.trim();
     if(!gene){ alert("Enter a gene symbol."); return; }
 
+    // If sample-level data is still streaming in the background, wait for it
+    // so the bar plot is included. Without this, fast-clicking users on bigger
+    // cells (Mural/Ductal/T&NK) would see only the dotplot.
+    if (samplesPromise && !samplesReady) {
+      stage(48, "Waiting for sample-level data …");
+      log("⏳ samples.npz still loading — waiting before plot …");
+      try { await samplesPromise; } catch(_) { /* 404 etc. handled in catch */ }
+    }
+
     stage(50, "Plotting …");
-    log(`▶️ Plot: cell=${cell}, gene=${gene}, sort=${sortMode}`);
+    log(`▶️ Plot: cell=${cell}, gene=${gene}, sort=${sortMode}, samples=${samplesReady}`);
     clearImage();
     setStageState("plot","active");
 
@@ -602,7 +611,10 @@ if has_sample and os.path.exists("/work/samples.npz"):
 
 # ---- figure ----
 stage(75, "Drawing dotplot …")
-fig_w = max(5.0, CELL_W * n_d + PAD_W)
+# Lower the width floor so small-disease cells (e.g. Astrocyte, Neutrophil) get
+# a tight figure instead of being stretched to 5 in. Height floor stays so very
+# few-organ cells still have room for the title + colorbar.
+fig_w = max(3.0, CELL_W * n_d + PAD_W)
 fig_h_dot = max(2.0, CELL_H * n_o + PAD_H)
 if sample_df is not None:
     fig_h_bar = 1.4
@@ -644,7 +656,7 @@ ax.set_title(f"{gene} expression in {cell}", fontsize=9, weight="semibold",
              color="#111827", pad=10, loc="left")
 
 # ---- compact colorbar — pinned top-right; label on the LEFT (vertical) ----
-cax = ax.inset_axes([1.018, 0.91, 0.008, 0.09])
+cax = ax.inset_axes([1.05, 0.91, 0.008, 0.09])
 cbar = fig.colorbar(sc, cax=cax)
 cbar.ax.yaxis.set_label_position("left")
 cbar.set_label("mean exp.", fontsize=4.5, color="#374151", labelpad=2)
@@ -657,7 +669,7 @@ leg_handles = [plt.scatter([], [], s=max(s * SIZE_FACTOR * LEG_DOT_SCALE, 0.5),
                for s in LEG_SIZES]
 leg = ax.legend(leg_handles, [f"{s:g}" for s in LEG_SIZES],
                 loc="lower left",
-                bbox_to_anchor=(1.018, 0.0),
+                bbox_to_anchor=(1.05, 0.0),
                 fontsize=4.5, frameon=False,
                 labelspacing=0.35, borderpad=0.05,
                 handletextpad=1.2, handlelength=0.4,
@@ -666,7 +678,7 @@ leg = ax.legend(leg_handles, [f"{s:g}" for s in LEG_SIZES],
 fig.canvas.draw()
 leg_bbox = leg.get_window_extent().transformed(ax.transAxes.inverted())
 y_center = (leg_bbox.y0 + leg_bbox.y1) / 2.0
-ax.text(1.012, y_center, "coverage", rotation=90, fontsize=4.5,
+ax.text(1.044, y_center, "coverage", rotation=90, fontsize=4.5,
         color="#374151", ha="center", va="center", transform=ax.transAxes)
 
 # ---- bar + strip plot below the dotplot (per-sample expression by o@d) ----
