@@ -197,10 +197,10 @@ excerpt: ""
     <li style="margin:2px 0;">Matching annotation from previous literatures
       <ul style="margin:6px 0 0 18px;">
         <li>row indicates <code>{cell_annotation_from_the_literature}@{source_literature}</code></li>
-        <li><code>SEN</code>: ratio of author_annotated_cells assigned to this PANGEA annotation</li>
-        <li><code>PPV</code>: ratio of PANGEA annotation assigned to this author_annotated_cells</li>
-        <li><code>CFS</code>: average prediction score (<code>PG_combined_score</code>)</li>
-        <li><code>score</code>: overall score = cubic root of these parameters</li>
+        <li><code>SEN</code>: sensitivity: ratio of <code>{cell_annotation_from_the_literature}</code> assigned to this <code>{PANGEA annotation}</code></li>
+        <li><code>PPV</code>: positive-predictive value: ratio of <code>{PANGEA annotation}</code> assigned to this <code>{cell_annotation_from_the_literature}</code></li>
+        <li><code>CFS</code>: confidence score: average prediction confidence score (<code>PG_combined_score</code>)</li>
+        <li><code>score</code>: overall score, i.e., cubic root of above parameters</li>
       </ul>
     </li>
     <li style="margin:2px 0;">Distribution patterns in tumor contexts
@@ -209,12 +209,6 @@ excerpt: ""
       </ul>
     </li>
   </ol>
-  <div style="margin-top:8px;">
-    <small>for each PANGEA cell annotation</small>
-  </div>
-  <div style="margin-top:6px;">
-    <small>Data base: <code id="dataBaseShow">/assets/data/</code></small>
-  </div>
 </div>
 
 <!-- Log (collapsed by default) -->
@@ -232,7 +226,6 @@ excerpt: ""
 (function(){
   // -------- config --------
   const DATA_BASE = "/assets/data/"; // trailing slash
-  document.getElementById("dataBaseShow").textContent = DATA_BASE;
 
   // -------- helpers --------
   const $ = (id)=>document.getElementById(id);
