@@ -711,7 +711,7 @@ import matplotlib.ticker as _mticker
 # thin (~3% height), label on the LEFT (inline) to save vertical space.
 cax = ax.inset_axes([0.0, 1.04, 0.12, 0.04])
 cbar = fig.colorbar(sc, cax=cax, orientation="horizontal")
-cbar.set_label("mean\nexp.", fontsize=5, color="#374151", labelpad=2,
+cbar.set_label("mean\\nexp.", fontsize=5, color="#374151", labelpad=2,
                rotation=0, ha="right", va="center")
 cbar.ax.yaxis.set_label_coords(-0.10, 0.5)
 cbar.ax.xaxis.set_major_locator(_mticker.MaxNLocator(nbins=2))
