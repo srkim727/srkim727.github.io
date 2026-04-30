@@ -378,13 +378,21 @@ excerpt: ""
       FS = pyodide.FS;
       log("✅ Pyodide " + pyodide.version + " loaded.");
 
-      stage(6, "Loading core packages (numpy, pandas, matplotlib, seaborn)…");
-      log("⏳ Boot: loading numpy, pandas, matplotlib, seaborn …");
-      // seaborn is shipped as a built-in pyodide package since 0.25; loading it
-      // directly avoids the ~3–5 s `micropip.install("seaborn")` round-trip
-      // that previously dominated boot time.
-      await pyodide.loadPackage(["numpy","pandas","matplotlib","seaborn"]);
+      stage(6, "Loading core packages (numpy, pandas, matplotlib)…");
+      log("⏳ Boot: loading core packages (numpy, pandas, matplotlib, micropip) …");
+      await pyodide.loadPackage(["numpy","pandas","matplotlib","micropip"]);
       log("✅ Core packages loaded.");
+
+      stage(12, "Installing seaborn…");
+      log("⏳ Installing seaborn via micropip …");
+      // Pyodide 0.26.3 doesn't ship seaborn as a built-in package, so install
+      // it via micropip. (Previously tried loading seaborn directly via
+      // loadPackage — that broke boot. Reverted to the safe path.)
+      await pyodide.runPythonAsync(`
+import micropip
+await micropip.install("seaborn")
+      `);
+      log("✅ seaborn installed.");
       stage(16, "Importing Python libs…");
 
       await pyodide.runPythonAsync(`
