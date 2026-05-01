@@ -591,8 +591,21 @@ def _agg_sum(keys, values):
     return uniq, out
 
 if sort_mode == "expression":
-    o_uniq, o_sum = _agg_sum(organs_per_od, sig)
-    organs = o_uniq[np.argsort(-o_sum)].tolist()
+    # Organ rows are ordered primarily by their Control-sample signal so the
+    # baseline (non-disease) expression dominates the layout. Organs absent
+    # from Control fall back to their total-signal rank, appended after.
+    is_ctrl_od    = (diseases_per_od == "Control")
+    sig_ctrl_only = sig * is_ctrl_od                       # signal contribution from Control rows only
+    o_uniq, o_ctrl_sum = _agg_sum(organs_per_od, sig_ctrl_only)
+    _,      o_total    = _agg_sum(organs_per_od, sig)
+    has_ctrl_organ     = o_ctrl_sum > 0
+    # Sort: organs with Control first (by Control signal desc), then the rest
+    # (no Control coverage) by total signal desc — keeps every organ ordered
+    # by *something* meaningful instead of randomly trailing.
+    primary   = np.where(has_ctrl_organ, -o_ctrl_sum, np.inf)
+    secondary = -o_total
+    rank      = np.lexsort((secondary, primary))
+    organs    = o_uniq[rank].tolist()
     d_uniq, d_sum = _agg_sum(diseases_per_od, sig)
     order = np.argsort(-d_sum)
     rest = [str(d) for d in d_uniq[order] if d != "Control"]
