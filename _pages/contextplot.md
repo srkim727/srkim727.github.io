@@ -232,7 +232,7 @@ excerpt: ""
   </p>
   <ol style="margin:0 0 0 18px;">
     <li style="margin:2px 0;">rows = organ &nbsp;·&nbsp; columns = disease</li>
-    <li style="margin:2px 0;">dot <strong>color</strong> = mean expression &nbsp;&amp;&nbsp; dot <strong>size</strong> = coverage (fraction expressing)</li>
+    <li style="margin:2px 0;">dot <strong>color</strong> = mean <strong>expression</strong> &nbsp;&amp;&nbsp; dot <strong>size</strong> = <strong>coverage</strong> (fraction expressing)</li>
     <li style="margin:2px 0;">organ × disease combinations not covered by the database → light grey cell</li>
   </ol>
 
@@ -240,7 +240,7 @@ excerpt: ""
   <p style="margin:0 0 6px 0;">GSEA-style test of preferential expression in Disease (vs Control) and Tumor (vs non-tumor) samples, ranked by gene expression (pseudobulk).</p>
   <ol style="margin:0 0 0 18px;">
     <li style="margin:2px 0;"><code>NES</code> = normalized ES from 200-permutation null</li>
-    <li style="margin:2px 0;"><code>FDR</code> = GSEA-style false discovery rate from the pooled-NES permutation distribution across both contrasts</li>
+    <li style="margin:2px 0;"><code>FDR</code> = false discovery rate from the NES permutation null</li>
   </ol>
 </div>
 
