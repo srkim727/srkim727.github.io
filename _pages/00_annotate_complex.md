@@ -223,17 +223,17 @@ permalink: /pages/annotate_complex/
     font-weight:500;color:var(--accent);font-size:12px;font-variant-numeric:tabular-nums;
   }
   .annot-wrap .meta-probs{
-    width:100%;border-collapse:collapse;font-size:12px;font-variant-numeric:tabular-nums;
-    table-layout:fixed;
+    width:100%;border-collapse:collapse;font-size:11px;font-variant-numeric:tabular-nums;
+    table-layout:fixed;line-height:1.25;
   }
-  .annot-wrap .meta-probs td{padding:3px 4px;vertical-align:middle;}
+  .annot-wrap .meta-probs td{padding:1px 4px;vertical-align:middle;}
   .annot-wrap .meta-probs .pb-name{
     color:var(--text);font-family:ui-monospace,SFMono-Regular,Menlo,monospace;
     white-space:nowrap;overflow:hidden;text-overflow:ellipsis;width:38%;
   }
-  .annot-wrap .meta-probs .pb-bar-cell{padding:3px 6px;width:auto;}
+  .annot-wrap .meta-probs .pb-bar-cell{padding:1px 6px;width:auto;}
   .annot-wrap .meta-probs .pb-bar{
-    position:relative;height:12px;background:#f3f4f6;border-radius:3px;overflow:hidden;
+    position:relative;height:9px;background:#f3f4f6;border-radius:3px;overflow:hidden;
   }
   .annot-wrap .meta-probs .pb-fill{
     position:absolute;left:0;top:0;height:100%;background:var(--accent-light);border-radius:3px;
@@ -253,18 +253,18 @@ permalink: /pages/annotate_complex/
 
   /* Top abundant cell types */
   .annot-wrap .abund-list{
-    width:100%;border-collapse:collapse;font-size:12px;font-variant-numeric:tabular-nums;
-    table-layout:fixed;
+    width:100%;border-collapse:collapse;font-size:11px;font-variant-numeric:tabular-nums;
+    table-layout:fixed;line-height:1.25;
   }
-  .annot-wrap .abund-list td{padding:3px 4px;vertical-align:middle;}
+  .annot-wrap .abund-list td{padding:1px 4px;vertical-align:middle;}
   .annot-wrap .abund-list .rank{color:var(--muted);width:22px;text-align:right;}
   .annot-wrap .abund-list .name{
     color:var(--text);font-family:ui-monospace,SFMono-Regular,Menlo,monospace;
     white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
   }
-  .annot-wrap .abund-list .pct-cell{padding:3px 6px;width:38%;}
+  .annot-wrap .abund-list .pct-cell{padding:1px 6px;width:38%;}
   .annot-wrap .abund-list .pb-bar{
-    position:relative;height:12px;background:#f3f4f6;border-radius:3px;overflow:hidden;
+    position:relative;height:9px;background:#f3f4f6;border-radius:3px;overflow:hidden;
   }
   .annot-wrap .abund-list .pb-fill{
     position:absolute;left:0;top:0;height:100%;background:var(--accent-light);border-radius:3px;
@@ -478,6 +478,7 @@ permalink: /pages/annotate_complex/
   const META_GROUP_CUTOFF = 50;    // per-Level1-type cell count for Level2 prop inclusion
   const META_TOTAL_CUTOFF = 500;   // total cells (after filtering) required to run meta
   const META_BLOOD_PROB_CUTOFF = 0.5;  // organ-prob threshold to switch to Blood phenotype model
+  const META_TOP_N = 5;                // how many top classes to display per meta model
   const TOP_ABUNDANT_N = 7;
 
   // ---------- Helpers ----------
@@ -599,8 +600,9 @@ permalink: /pages/annotate_complex/
       sec.appendChild(cov);
     }
 
-    const pairs = result.classes.map((c, i) => [String(c), Number(result.probs[i])])
+    const allPairs = result.classes.map((c, i) => [String(c), Number(result.probs[i])])
       .sort((a, b) => b[1] - a[1]);
+    const pairs = allPairs.slice(0, META_TOP_N);
     const maxProb = pairs.length ? pairs[0][1] : 0;
     const tbl = document.createElement("table");
     tbl.className = "meta-probs";
