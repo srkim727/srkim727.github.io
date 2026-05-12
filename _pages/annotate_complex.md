@@ -1035,15 +1035,17 @@ print(f"__PRED_DONE__:{n_cells}:{n_classes}:{matched}/{n_feat}:{n_batches}")
       detachStdHooks();
 
       // Save Level1 results in Python; pull labels to JS for grouping.
+      // toJs() can't convert numpy object-dtype arrays directly (format char 'O'),
+      // so we expose a plain Python list of strings for the JS side.
       await pyodide.runPythonAsync(`
 level1_labels = np.array(_last_labels, copy=True)
 level1_scores = np.array(_last_scores, copy=True)
+level1_labels_py = [str(x) for x in level1_labels]
 cell_ids = [str(c) for c in cell_ids_js]
-# Pre-init Level2 result vectors (will be filled in per group)
 level2_labels = np.array([None] * len(level1_labels), dtype=object)
 level2_scores = np.full(len(level1_labels), np.nan, dtype=np.float32)
 `);
-      const level1LabelsJs = pyodide.globals.get('level1_labels').toJs();
+      const level1LabelsJs = pyodide.globals.get('level1_labels_py').toJs();
       setStageState("level1", "done");
       setStage(48, "Level1 complete", `${parsedNCells.toLocaleString()} cells labeled`);
       log(`✅ Level1 done (${parsedNCells.toLocaleString()} cells)`);
