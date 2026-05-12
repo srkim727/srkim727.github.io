@@ -216,11 +216,14 @@ permalink: /pages/annotate_complex/
     text-transform:none;letter-spacing:0;font-size:10px;color:var(--muted);
   }
   .annot-wrap .meta-top{
-    font-size:14px;font-weight:600;color:var(--text);display:flex;align-items:baseline;gap:10px;
-    margin-bottom:6px;
+    font-size:13px;font-weight:600;color:var(--text);display:flex;align-items:baseline;gap:8px;
+    margin-bottom:4px;
   }
   .annot-wrap .meta-top .meta-prob{
-    font-weight:500;color:var(--accent);font-size:12px;font-variant-numeric:tabular-nums;
+    font-weight:500;color:var(--accent);font-size:11px;font-variant-numeric:tabular-nums;
+  }
+  .annot-wrap .meta-sep{
+    margin:14px 0 12px 0;border-top:1px solid var(--border);
   }
   .annot-wrap .meta-probs{
     width:100%;border-collapse:collapse;font-size:11px;font-variant-numeric:tabular-nums;
@@ -393,7 +396,7 @@ permalink: /pages/annotate_complex/
         <li>Raw expression must be <code>1e4</code>-normalized &amp; <code>log1p</code>-transformed<br>
             <small>normalized up to 10,000 counts per cell, then log-transformed with 1 pseudocount</small>
         </li>
-        <li>Supported formats: <code>.csv</code>, <strong><code>.csv.gz</code></strong>, or <code>.h5ad</code></li>
+        <li>Supported formats: <code>.csv</code>, <strong><code>.csv.gz</code></strong>, <code>.h5ad</code>, or <code>.h5</code> (10x Cell Ranger v2 / v3)</li>
       </ul>
     </li>
     <li><strong>Pipeline</strong>
@@ -624,10 +627,50 @@ permalink: /pages/annotate_complex/
     const el = $("metaResult");
     el.innerHTML = "";
 
-    // Heading
-    const h = document.createElement("h4");
-    h.innerHTML = `Meta prediction <span class="h4-note">organ &amp; phenotype, based on cell composition</span>`;
-    el.appendChild(h);
+    // ===== 1. Top abundant cell types (shown first) =====
+    if (topAbundant && topAbundant.length && totalCells > 0) {
+      const h = document.createElement("h4");
+      h.innerHTML = `Top abundant cell types ` +
+        `<span class="h4-note">PG_annotations, top ${topAbundant.length}</span>`;
+      el.appendChild(h);
+
+      const top1 = topAbundant[0];
+      const top1Pct = (top1[1] / totalCells) * 100;
+      const topDiv = document.createElement("div");
+      topDiv.className = "meta-top";
+      topDiv.innerHTML =
+        `${escapeHtml(top1[0])} ` +
+        `<span class="meta-prob">${top1Pct.toFixed(1)}% · ${top1[1].toLocaleString()} cells</span>`;
+      el.appendChild(topDiv);
+
+      const tbl = document.createElement("table");
+      tbl.className = "abund-list";
+      const maxPct = top1Pct;
+      topAbundant.forEach(([name, count], i) => {
+        const pct = (count / totalCells) * 100;
+        const tr = document.createElement("tr");
+        if (i === 0) tr.className = "top";
+        const w = maxPct > 0 ? Math.max(1, (pct / maxPct) * 100) : 0;
+        tr.innerHTML =
+          `<td class="rank">${i+1}</td>` +
+          `<td class="name" title="${escapeHtml(name)}">${escapeHtml(name)}</td>` +
+          `<td class="pct-cell"><div class="pb-bar"><div class="pb-fill" style="width:${w.toFixed(2)}%;"></div></div></td>` +
+          `<td class="pct">${pct.toFixed(1)}%</td>` +
+          `<td class="count">${count.toLocaleString()}</td>`;
+        tbl.appendChild(tr);
+      });
+      el.appendChild(tbl);
+
+      // Visual separator before Meta prediction block
+      const sep = document.createElement("div");
+      sep.className = "meta-sep";
+      el.appendChild(sep);
+    }
+
+    // ===== 2. Meta prediction (organ + phenotype) =====
+    const h2 = document.createElement("h4");
+    h2.innerHTML = `Meta prediction <span class="h4-note">organ &amp; phenotype, based on cell composition</span>`;
+    el.appendChild(h2);
 
     if (meta.skipped) {
       const warn = document.createElement("div");
@@ -661,45 +704,6 @@ permalink: /pages/annotate_complex/
           : `Tissue model selected — organ ≠ Blood (or Blood prob < ${META_BLOOD_PROB_CUTOFF})`;
         el.appendChild(renderProbSection(phenoLabel, meta.pheno, phenoNote));
       }
-    }
-
-    // Top abundant from PG_annotations (always shown when present)
-    if (topAbundant && topAbundant.length && totalCells > 0) {
-      const sec = document.createElement("div");
-      sec.className = "meta-section";
-      const title = document.createElement("div");
-      title.className = "meta-section-title";
-      title.innerHTML =
-        `Top abundant cell types <span class="sub-note">(from PG_annotations, top ${topAbundant.length})</span>`;
-      sec.appendChild(title);
-
-      const top1 = topAbundant[0];
-      const top1Pct = (top1[1] / totalCells) * 100;
-      const topDiv = document.createElement("div");
-      topDiv.className = "meta-top";
-      topDiv.innerHTML =
-        `${escapeHtml(top1[0])} ` +
-        `<span class="meta-prob">${top1Pct.toFixed(1)}% · ${top1[1].toLocaleString()} cells</span>`;
-      sec.appendChild(topDiv);
-
-      const tbl = document.createElement("table");
-      tbl.className = "abund-list";
-      const maxPct = top1Pct;
-      topAbundant.forEach(([name, count], i) => {
-        const pct = (count / totalCells) * 100;
-        const tr = document.createElement("tr");
-        if (i === 0) tr.className = "top";
-        const w = maxPct > 0 ? Math.max(1, (pct / maxPct) * 100) : 0;
-        tr.innerHTML =
-          `<td class="rank">${i+1}</td>` +
-          `<td class="name" title="${escapeHtml(name)}">${escapeHtml(name)}</td>` +
-          `<td class="pct-cell"><div class="pb-bar"><div class="pb-fill" style="width:${w.toFixed(2)}%;"></div></div></td>` +
-          `<td class="pct">${pct.toFixed(1)}%</td>` +
-          `<td class="count">${count.toLocaleString()}</td>`;
-        tbl.appendChild(tr);
-      });
-      sec.appendChild(tbl);
-      el.appendChild(sec);
     }
 
     el.classList.add("show");
@@ -968,9 +972,124 @@ permalink: /pages/annotate_complex/
     return { cellIds, xFlat, keepMask, nCells, nFeat, nMatched };
   }
 
+  // Probe an HDF5 file to classify its layout. Returns:
+  //   { kind: "h5ad" }                    — AnnData (/var, /obs, /X)
+  //   { kind: "10x", version, group }     — 10x Cell Ranger (v3: /matrix, v2: /<genome>)
+  //   { kind: "unknown" }
+  async function _detectHdf5Layout(bytes){
+    const lib = await ensureH5wasm();
+    const tmpName = "_probe.h5";
+    try { lib.FS.unlink("/" + tmpName); } catch(_) {}
+    lib.FS.writeFile("/" + tmpName, bytes);
+    const file = new lib.File("/" + tmpName, "r");
+    try {
+      // 10x v3
+      if (file.get("matrix") && file.get("matrix/data") && file.get("matrix/indices") && file.get("matrix/indptr")) {
+        return { kind: "10x", version: "v3", group: "matrix" };
+      }
+      // h5ad
+      if (file.get("var") && file.get("obs") && file.get("X")) {
+        return { kind: "h5ad" };
+      }
+      // 10x v2 — single genome group at root with data/indices/indptr/barcodes
+      let rootKeys = [];
+      try { rootKeys = (typeof file.keys === "function") ? (file.keys() || []) : []; } catch(_) {}
+      const skip = new Set(["var", "obs", "X", "matrix", "uns", "obsm", "varm", "layers", "raw", "obsp", "varp"]);
+      for (const k of rootKeys) {
+        if (skip.has(k)) continue;
+        try {
+          const g = file.get(k);
+          if (!g || (g.constructor && g.constructor.name !== "Group")) continue;
+          if (file.get(`${k}/data`) && file.get(`${k}/indices`) && file.get(`${k}/indptr`) && file.get(`${k}/barcodes`)) {
+            return { kind: "10x", version: "v2", group: k };
+          }
+        } catch(_) {}
+      }
+      return { kind: "unknown" };
+    } finally {
+      try { file.close(); } catch(_) {}
+      try { lib.FS.unlink("/" + tmpName); } catch(_) {}
+    }
+  }
+
+  // ---------- 10x Cell Ranger HDF5 parser ----------
+  // Reads 10x CSC sparse where shape = [n_genes, n_cells]; indptr indexes
+  // columns (= barcodes/cells), indices are row indices (= gene indices).
+  // groupName is "matrix" (v3) or the genome key like "GRCh38" (v2).
+  async function parse10xBytes(bytes, groupName, version, featureMap, nFeat, onRowProgress){
+    const lib = await ensureH5wasm();
+    const tmpName = "input.h5";
+    try { lib.FS.unlink("/" + tmpName); } catch(_) {}
+    lib.FS.writeFile("/" + tmpName, bytes);
+    const file = new lib.File("/" + tmpName, "r");
+    let xFlat = null;
+    let keepMask = null;
+    let cellIds = [];
+    let nCells = 0;
+    try {
+      cellIds = _h5ReadStringArray(file, `${groupName}/barcodes`);
+      nCells = cellIds.length;
+
+      // Prefer gene symbol; fall back to ID if name dataset is missing.
+      let geneNames;
+      const namePath = (version === "v3") ? `${groupName}/features/name` : `${groupName}/gene_names`;
+      const idPath   = (version === "v3") ? `${groupName}/features/id`   : `${groupName}/genes`;
+      if (file.get(namePath)) {
+        geneNames = _h5ReadStringArray(file, namePath);
+      } else if (file.get(idPath)) {
+        geneNames = _h5ReadStringArray(file, idPath);
+      } else {
+        throw new Error(`10x ${version}: missing gene-name dataset under ${groupName}`);
+      }
+
+      keepMask = new Uint8Array(nFeat);
+      const colToFeatIdx = new Int32Array(geneNames.length);
+      for (let i = 0; i < geneNames.length; i++) {
+        const g = String(geneNames[i] || "").toLowerCase();
+        const fi = featureMap.get(g);
+        if (fi === undefined) {
+          colToFeatIdx[i] = -1;
+        } else {
+          colToFeatIdx[i] = fi;
+          keepMask[fi] = 1;
+        }
+      }
+
+      xFlat = new Float32Array(nCells * nFeat);
+      const data    = file.get(`${groupName}/data`).value;
+      const indices = file.get(`${groupName}/indices`).value;
+      const indptr  = file.get(`${groupName}/indptr`).value;
+      for (let c = 0; c < nCells; c++) {
+        const start = indptr[c];
+        const end   = indptr[c + 1];
+        const offDst = c * nFeat;
+        for (let k = start; k < end; k++) {
+          const fi = colToFeatIdx[indices[k]];
+          if (fi < 0) continue;
+          xFlat[offDst + fi] = data[k];
+        }
+        if (onRowProgress && (c % 200 === 0)) onRowProgress(c);
+      }
+    } finally {
+      try { file.close(); } catch(_) {}
+      try { lib.FS.unlink("/" + tmpName); } catch(_) {}
+    }
+
+    let nMatched = 0;
+    for (let i = 0; i < nFeat; i++) if (keepMask[i]) nMatched++;
+    return { cellIds, xFlat, keepMask, nCells, nFeat, nMatched };
+  }
+
   async function parseInputBytes(bytes, featureMap, nFeat, onRowProgress){
     if (isHDF5(bytes)) {
-      return await parseH5adBytes(bytes, featureMap, nFeat, onRowProgress);
+      const layout = await _detectHdf5Layout(bytes);
+      if (layout.kind === "h5ad") {
+        return await parseH5adBytes(bytes, featureMap, nFeat, onRowProgress);
+      }
+      if (layout.kind === "10x") {
+        return await parse10xBytes(bytes, layout.group, layout.version, featureMap, nFeat, onRowProgress);
+      }
+      throw new Error("HDF5 file: cannot detect layout — expected h5ad (/var, /obs, /X) or 10x Cell Ranger (/matrix or /<genome>).");
     }
     return await parseCsvBytes(bytes, featureMap, nFeat, onRowProgress);
   }
