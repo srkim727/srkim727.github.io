@@ -1,9 +1,8 @@
 ---
 title: Annotate cells (latest)
 author: S. Kim
-date: 2026-05-13
+date: 2025-10-15
 layout: post
-permalink: /pages/annotate_complex/
 ---
 
 {% raw %}
@@ -198,56 +197,62 @@ permalink: /pages/annotate_complex/
   }
   .annot-wrap .meta-result.show{display:block;}
   .annot-wrap .meta-result h4{
-    margin:0 0 4px 0;font-size:13px;font-weight:600;color:var(--text);
+    margin:0 0 6px 0;font-size:13px;font-weight:600;color:var(--text);
     display:flex;align-items:center;gap:8px;
   }
   .annot-wrap .meta-result .h4-note{
-    font-size:11px;color:var(--muted);font-weight:400;
+    font-size:12px;color:var(--muted);font-weight:400;
   }
   .annot-wrap .meta-result .meta-section{
-    margin-top:10px;padding-top:10px;border-top:1px dashed var(--border);
+    margin-top:12px;padding-top:10px;border-top:1px dashed var(--border);
   }
   .annot-wrap .meta-result .meta-section:first-of-type{border-top:none;padding-top:0;margin-top:8px;}
   .annot-wrap .meta-section-title{
-    font-size:11px;letter-spacing:.06em;text-transform:uppercase;color:var(--muted);
-    margin-bottom:4px;display:flex;align-items:baseline;gap:6px;
+    font-size:12px;font-weight:600;color:var(--text);
+    margin-bottom:6px;display:flex;align-items:baseline;gap:8px;
   }
   .annot-wrap .meta-section-title .sub-note{
-    text-transform:none;letter-spacing:0;font-size:10px;color:var(--muted);
+    font-weight:400;font-size:12px;color:var(--muted);
   }
   .annot-wrap .meta-top{
     font-size:13px;font-weight:600;color:var(--text);display:flex;align-items:baseline;gap:8px;
-    margin-bottom:4px;
+    margin-bottom:6px;
   }
   .annot-wrap .meta-top .meta-prob{
-    font-weight:500;color:var(--accent);font-size:11px;font-variant-numeric:tabular-nums;
+    font-weight:500;color:var(--accent);font-size:12px;font-variant-numeric:tabular-nums;
   }
   .annot-wrap .meta-sep{
     margin:14px 0 12px 0;border-top:1px solid var(--border);
   }
-  .annot-wrap .meta-probs{
-    width:100%;border-collapse:collapse;font-size:11px;font-variant-numeric:tabular-nums;
-    table-layout:fixed;line-height:1.25;
+  .annot-wrap table.meta-probs{
+    width:100% !important;border-collapse:collapse !important;
+    font-size:12px !important;font-variant-numeric:tabular-nums;
+    table-layout:fixed;margin:0 !important;
   }
-  .annot-wrap .meta-probs td{padding:1px 4px;vertical-align:middle;}
-  .annot-wrap .meta-probs .pb-name{
-    color:var(--text);font-family:ui-monospace,SFMono-Regular,Menlo,monospace;
-    white-space:nowrap;overflow:hidden;text-overflow:ellipsis;width:38%;
+  .annot-wrap table.meta-probs td{
+    padding:6px 10px !important;vertical-align:middle !important;
+    border:none !important;border-bottom:1px solid var(--border) !important;
+    font-size:12px !important;line-height:1.4 !important;background:transparent !important;
   }
-  .annot-wrap .meta-probs .pb-bar-cell{padding:1px 6px;width:auto;}
-  .annot-wrap .meta-probs .pb-bar{
-    position:relative;height:9px;background:#f3f4f6;border-radius:3px;overflow:hidden;
+  .annot-wrap table.meta-probs tr:last-child td{border-bottom:none !important;}
+  .annot-wrap table.meta-probs .pb-name{
+    color:var(--text);font-family:ui-monospace,SFMono-Regular,Menlo,monospace !important;
+    white-space:nowrap !important;overflow:hidden;text-overflow:ellipsis;width:38%;
   }
-  .annot-wrap .meta-probs .pb-fill{
+  .annot-wrap table.meta-probs .pb-bar-cell{width:auto;}
+  .annot-wrap table.meta-probs .pb-bar{
+    position:relative;height:10px;background:#f3f4f6;border-radius:3px;overflow:hidden;
+  }
+  .annot-wrap table.meta-probs .pb-fill{
     position:absolute;left:0;top:0;height:100%;background:var(--accent-light);border-radius:3px;
     transition:width .25s ease-out;
   }
-  .annot-wrap .meta-probs tr.top .pb-fill{background:var(--accent);}
-  .annot-wrap .meta-probs .pb-pct{
-    width:54px;text-align:right;color:var(--muted);
+  .annot-wrap table.meta-probs tr.top .pb-fill{background:var(--accent);}
+  .annot-wrap table.meta-probs .pb-pct{
+    width:64px;text-align:right !important;color:var(--muted);white-space:nowrap !important;
   }
-  .annot-wrap .meta-probs tr.top .pb-name{font-weight:600;color:var(--text);}
-  .annot-wrap .meta-probs tr.top .pb-pct{color:var(--accent);font-weight:600;}
+  .annot-wrap table.meta-probs tr.top .pb-name{font-weight:600;color:var(--text);}
+  .annot-wrap table.meta-probs tr.top .pb-pct{color:var(--accent);font-weight:600;}
 
   .annot-wrap .meta-warn{
     font-size:12px;color:#92400e;padding:8px 10px;background:#fef9e7;
@@ -255,28 +260,38 @@ permalink: /pages/annotate_complex/
   }
 
   /* Top abundant cell types */
-  .annot-wrap .abund-list{
-    width:100%;border-collapse:collapse;font-size:11px;font-variant-numeric:tabular-nums;
-    table-layout:fixed;line-height:1.25;
+  .annot-wrap table.abund-list{
+    width:100% !important;border-collapse:collapse !important;
+    font-size:12px !important;font-variant-numeric:tabular-nums;
+    table-layout:fixed;margin:0 !important;
   }
-  .annot-wrap .abund-list td{padding:1px 4px;vertical-align:middle;}
-  .annot-wrap .abund-list .rank{color:var(--muted);width:22px;text-align:right;}
-  .annot-wrap .abund-list .name{
-    color:var(--text);font-family:ui-monospace,SFMono-Regular,Menlo,monospace;
-    white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
+  .annot-wrap table.abund-list td{
+    padding:6px 10px !important;vertical-align:middle !important;
+    border:none !important;border-bottom:1px solid var(--border) !important;
+    font-size:12px !important;line-height:1.4 !important;background:transparent !important;
   }
-  .annot-wrap .abund-list .pct-cell{padding:1px 6px;width:38%;}
-  .annot-wrap .abund-list .pb-bar{
-    position:relative;height:9px;background:#f3f4f6;border-radius:3px;overflow:hidden;
+  .annot-wrap table.abund-list tr:last-child td{border-bottom:none !important;}
+  .annot-wrap table.abund-list .rank{color:var(--muted);width:24px;text-align:right !important;}
+  .annot-wrap table.abund-list .name{
+    color:var(--text);font-family:ui-monospace,SFMono-Regular,Menlo,monospace !important;
+    white-space:nowrap !important;overflow:hidden;text-overflow:ellipsis;
   }
-  .annot-wrap .abund-list .pb-fill{
+  .annot-wrap table.abund-list .pct-cell{width:34%;}
+  .annot-wrap table.abund-list .pb-bar{
+    position:relative;height:10px;background:#f3f4f6;border-radius:3px;overflow:hidden;
+  }
+  .annot-wrap table.abund-list .pb-fill{
     position:absolute;left:0;top:0;height:100%;background:var(--accent-light);border-radius:3px;
   }
-  .annot-wrap .abund-list tr.top .pb-fill{background:var(--accent);}
-  .annot-wrap .abund-list .pct{width:54px;text-align:right;color:var(--muted);}
-  .annot-wrap .abund-list .count{width:62px;text-align:right;color:var(--muted);}
-  .annot-wrap .abund-list tr.top .name{font-weight:600;color:var(--text);}
-  .annot-wrap .abund-list tr.top .pct{color:var(--accent);font-weight:600;}
+  .annot-wrap table.abund-list tr.top .pb-fill{background:var(--accent);}
+  .annot-wrap table.abund-list .pct{
+    width:64px;text-align:right !important;color:var(--muted);white-space:nowrap !important;
+  }
+  .annot-wrap table.abund-list .count{
+    width:72px;text-align:right !important;color:var(--muted);white-space:nowrap !important;
+  }
+  .annot-wrap table.abund-list tr.top .name{font-weight:600;color:var(--text);}
+  .annot-wrap table.abund-list tr.top .pct{color:var(--accent);font-weight:600;}
 
   /* Info meta-panel */
   .annot-wrap .meta-panel{
@@ -482,7 +497,7 @@ permalink: /pages/annotate_complex/
   const META_TOTAL_CUTOFF = 500;   // total cells (after filtering) required to run meta
   const META_BLOOD_PROB_CUTOFF = 0.5;  // organ-prob threshold to switch to Blood phenotype model
   const META_TOP_N = 5;                // how many top classes to display per meta model
-  const TOP_ABUNDANT_N = 7;
+  const TOP_ABUNDANT_N = 5;
 
   // ---------- Helpers ----------
   function $(id){ return document.getElementById(id); }
