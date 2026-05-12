@@ -1,7 +1,7 @@
 ---
-title: Annotate cells (hierarchical)
+title: Annotate cells (latest)
 author: S. Kim
-date: 2026-05-12
+date: 2026-05-13
 layout: post
 permalink: /pages/annotate_complex/
 ---
