@@ -3,6 +3,7 @@ title: Annotate cells (hierarchical)
 author: S. Kim
 date: 2026-05-12
 layout: post
+permalink: /pages/annotate_complex/
 ---
 
 {% raw %}
@@ -190,6 +191,90 @@ layout: post
   }
   .annot-wrap .btn-download:hover{background:var(--ok-dark);border-color:var(--ok-dark);color:#fff;text-decoration:none;}
 
+  /* ---------- Meta-prediction result panel ---------- */
+  .annot-wrap .meta-result{
+    margin-top:14px;padding:12px 14px;border:1px solid var(--border);border-radius:10px;
+    background:#fff;display:none;
+  }
+  .annot-wrap .meta-result.show{display:block;}
+  .annot-wrap .meta-result h4{
+    margin:0 0 4px 0;font-size:13px;font-weight:600;color:var(--text);
+    display:flex;align-items:center;gap:8px;
+  }
+  .annot-wrap .meta-result .h4-note{
+    font-size:11px;color:var(--muted);font-weight:400;
+  }
+  .annot-wrap .meta-result .meta-section{
+    margin-top:10px;padding-top:10px;border-top:1px dashed var(--border);
+  }
+  .annot-wrap .meta-result .meta-section:first-of-type{border-top:none;padding-top:0;margin-top:8px;}
+  .annot-wrap .meta-section-title{
+    font-size:11px;letter-spacing:.06em;text-transform:uppercase;color:var(--muted);
+    margin-bottom:4px;display:flex;align-items:baseline;gap:6px;
+  }
+  .annot-wrap .meta-section-title .sub-note{
+    text-transform:none;letter-spacing:0;font-size:10px;color:var(--muted);
+  }
+  .annot-wrap .meta-top{
+    font-size:14px;font-weight:600;color:var(--text);display:flex;align-items:baseline;gap:10px;
+    margin-bottom:6px;
+  }
+  .annot-wrap .meta-top .meta-prob{
+    font-weight:500;color:var(--accent);font-size:12px;font-variant-numeric:tabular-nums;
+  }
+  .annot-wrap .meta-probs{
+    width:100%;border-collapse:collapse;font-size:12px;font-variant-numeric:tabular-nums;
+    table-layout:fixed;
+  }
+  .annot-wrap .meta-probs td{padding:3px 4px;vertical-align:middle;}
+  .annot-wrap .meta-probs .pb-name{
+    color:var(--text);font-family:ui-monospace,SFMono-Regular,Menlo,monospace;
+    white-space:nowrap;overflow:hidden;text-overflow:ellipsis;width:38%;
+  }
+  .annot-wrap .meta-probs .pb-bar-cell{padding:3px 6px;width:auto;}
+  .annot-wrap .meta-probs .pb-bar{
+    position:relative;height:12px;background:#f3f4f6;border-radius:3px;overflow:hidden;
+  }
+  .annot-wrap .meta-probs .pb-fill{
+    position:absolute;left:0;top:0;height:100%;background:var(--accent-light);border-radius:3px;
+    transition:width .25s ease-out;
+  }
+  .annot-wrap .meta-probs tr.top .pb-fill{background:var(--accent);}
+  .annot-wrap .meta-probs .pb-pct{
+    width:54px;text-align:right;color:var(--muted);
+  }
+  .annot-wrap .meta-probs tr.top .pb-name{font-weight:600;color:var(--text);}
+  .annot-wrap .meta-probs tr.top .pb-pct{color:var(--accent);font-weight:600;}
+
+  .annot-wrap .meta-warn{
+    font-size:12px;color:#92400e;padding:8px 10px;background:#fef9e7;
+    border:1px solid #fde68a;border-radius:6px;margin-top:4px;
+  }
+
+  /* Top abundant cell types */
+  .annot-wrap .abund-list{
+    width:100%;border-collapse:collapse;font-size:12px;font-variant-numeric:tabular-nums;
+    table-layout:fixed;
+  }
+  .annot-wrap .abund-list td{padding:3px 4px;vertical-align:middle;}
+  .annot-wrap .abund-list .rank{color:var(--muted);width:22px;text-align:right;}
+  .annot-wrap .abund-list .name{
+    color:var(--text);font-family:ui-monospace,SFMono-Regular,Menlo,monospace;
+    white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
+  }
+  .annot-wrap .abund-list .pct-cell{padding:3px 6px;width:38%;}
+  .annot-wrap .abund-list .pb-bar{
+    position:relative;height:12px;background:#f3f4f6;border-radius:3px;overflow:hidden;
+  }
+  .annot-wrap .abund-list .pb-fill{
+    position:absolute;left:0;top:0;height:100%;background:var(--accent-light);border-radius:3px;
+  }
+  .annot-wrap .abund-list tr.top .pb-fill{background:var(--accent);}
+  .annot-wrap .abund-list .pct{width:54px;text-align:right;color:var(--muted);}
+  .annot-wrap .abund-list .count{width:62px;text-align:right;color:var(--muted);}
+  .annot-wrap .abund-list tr.top .name{font-weight:600;color:var(--text);}
+  .annot-wrap .abund-list tr.top .pct{color:var(--accent);font-weight:600;}
+
   /* Info meta-panel */
   .annot-wrap .meta-panel{
     background:var(--bg-panel);border:1px solid var(--border);border-radius:10px;
@@ -253,11 +338,9 @@ layout: post
     </label>
 
     <button class="btn btn-primary" id="runBtn" type="button" disabled>Annotate (hierarchical)</button>
-
-    <span class="pipeline-tag">Level1 → Level2 · n<sub>cutoff</sub>=<strong>50</strong></span>
   </div>
 
-  <!-- Stepper: Upload → Parse → Level1 → Level2 → Output -->
+  <!-- Stepper: Upload → Parse → Level1 → Level2 → Meta → Output -->
   <div class="stages" id="stages">
     <span class="stage" id="stage-upload"><span class="stage-dot"></span><span class="stage-label">Upload</span></span>
     <span class="stage-sep"></span>
@@ -266,6 +349,8 @@ layout: post
     <span class="stage" id="stage-level1"><span class="stage-dot"></span><span class="stage-label">Level1</span></span>
     <span class="stage-sep"></span>
     <span class="stage" id="stage-level2"><span class="stage-dot"></span><span class="stage-label">Level2</span></span>
+    <span class="stage-sep"></span>
+    <span class="stage" id="stage-meta"><span class="stage-dot"></span><span class="stage-label">Meta</span></span>
     <span class="stage-sep"></span>
     <span class="stage" id="stage-output"><span class="stage-dot"></span><span class="stage-label">Output</span></span>
   </div>
@@ -287,6 +372,9 @@ layout: post
     <div class="result-summary" id="resultSummary"></div>
     <a class="btn-download" id="downloadLink" download="pred.csv" style="display:none;">⬇ Download</a>
   </div>
+
+  <!-- Meta-prediction panel (organ + phenotype probability distributions, top-abundant cell types) -->
+  <div class="meta-result" id="metaResult"></div>
 </div>
 
 <!-- Info panel -->
@@ -294,7 +382,7 @@ layout: post
   <strong>Hierarchical cell annotation: Level1 → Level2</strong>
   <div style="margin:4px 0 8px 0; font-size:13px; color:#555;">
     Mirrors the <a href="https://github.com/srkim727/pangeapy" target="_blank" rel="noopener">pangeapy</a>
-    <code>CellAnnotator().annotate(target_level=2, n_cutoff=50)</code> flow in the browser. Level1 runs on every cell;
+    hierarchical annotation flow in the browser. Level1 runs on every cell;
     Level2 runs only on groups whose Level1 label has ≥ 50 cells and a matching Level2 model.
     For large inputs or many samples, use the <a href="https://github.com/srkim727/pangeapy" target="_blank" rel="noopener">pangeapy API</a> instead.
   </div>
@@ -316,6 +404,16 @@ layout: post
           <code>Fibroblast</code>, <code>Macrophage</code>, <code>Monocyte</code>, <code>Mural</code>,
           <code>Squamous</code>, <code>T&amp;NK</code>), run the corresponding model on just those cells</li>
         <li>Level2 models are downloaded on demand (only the ones needed)</li>
+      </ul>
+    </li>
+    <li><strong>Meta prediction</strong> — mirrors <code>MetaAnnotator().annotate()</code>
+      <ul>
+        <li>Filter cells: <code>Level1|conf_score &gt; 0.5</code> AND <code>Level2|conf_score &gt; 0.5</code></li>
+        <li>If fewer than <strong>500</strong> cells remain, meta is skipped</li>
+        <li>Build a composition vector (Level1 proportions + per-Level1 Level2 proportions with ≥ 50 cells)</li>
+        <li><strong>Organ predictor</strong> → top organ + probability distribution</li>
+        <li><strong>Phenotype predictor</strong>: Blood model if organ=Blood (prob ≥ 0.5), otherwise Tissue model</li>
+        <li>Requires <code>meta_*_portable.npz</code> in <code>/assets/models/</code> — see <code>tools/convert_meta_models.py</code></li>
       </ul>
     </li>
     <li><strong>Output file configuration</strong> — <code>pred.csv</code> with columns
@@ -371,6 +469,17 @@ layout: post
   ];
   const N_CUTOFF = 50;
 
+  // Meta-prediction constants (mirror pangeapy/meta.py defaults).
+  const META_ORGAN_FILE   = "meta_Organ_predictor_portable.npz";
+  const META_BLOOD_FILE   = "meta_Blood_predictor_portable.npz";
+  const META_TISSUE_FILE  = "meta_Tissue_predictor_portable.npz";
+  const META_L1_CUTOFF    = 0.5;   // Level1 conf-score cutoff for composition
+  const META_L2_CUTOFF    = 0.5;   // Level2 conf-score cutoff for composition
+  const META_GROUP_CUTOFF = 50;    // per-Level1-type cell count for Level2 prop inclusion
+  const META_TOTAL_CUTOFF = 500;   // total cells (after filtering) required to run meta
+  const META_BLOOD_PROB_CUTOFF = 0.5;  // organ-prob threshold to switch to Blood phenotype model
+  const TOP_ABUNDANT_N = 7;
+
   // ---------- Helpers ----------
   function $(id){ return document.getElementById(id); }
   function setDisabled(elOrId, v){ const el = typeof elOrId==="string" ? $(elOrId) : elOrId; if(el) el.disabled = !!v; }
@@ -398,7 +507,10 @@ layout: post
     if(state && state !== "pending") el.classList.add(state);
   }
   function resetStages(){
-    ["upload","parse","level1","level2","output"].forEach(s => setStageState(s, "pending"));
+    ["upload","parse","level1","level2","meta","output"].forEach(s => setStageState(s, "pending"));
+  }
+  function clearMetaResult(){
+    const el = $("metaResult"); el.innerHTML = ""; el.classList.remove("show");
   }
   function hideResultCard(){
     $("resultCard").style.display = "none";
@@ -447,6 +559,148 @@ layout: post
     if (!row) return;
     row.classList.remove("active","done","err");
     if (state && state !== "pending") row.classList.add(state);
+  }
+
+  // ---------- Meta-result rendering ----------
+  function escapeHtml(s){
+    return String(s).replace(/[&<>"']/g, c => (
+      {"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]
+    ));
+  }
+
+  function renderProbSection(label, result, subNote){
+    const sec = document.createElement("div");
+    sec.className = "meta-section";
+
+    const title = document.createElement("div");
+    title.className = "meta-section-title";
+    title.innerHTML = subNote
+      ? `${escapeHtml(label)} <span class="sub-note">${escapeHtml(subNote)}</span>`
+      : escapeHtml(label);
+    sec.appendChild(title);
+
+    if (!result || result.error) {
+      const warn = document.createElement("div");
+      warn.className = "meta-warn";
+      warn.textContent = `Unavailable: ${result?.error || "model not loaded"}`;
+      sec.appendChild(warn);
+      return sec;
+    }
+
+    const top = document.createElement("div");
+    top.className = "meta-top";
+    top.innerHTML = `${escapeHtml(result.top)} <span class="meta-prob">${(result.topProb*100).toFixed(1)}%</span>`;
+    sec.appendChild(top);
+
+    if (result.nFeatPresent != null) {
+      const cov = document.createElement("div");
+      cov.style.cssText = "font-size:11px;color:var(--muted);margin-bottom:4px;";
+      cov.textContent = `${result.nFeatPresent}/${result.nFeatTotal} composition features matched`;
+      sec.appendChild(cov);
+    }
+
+    const pairs = result.classes.map((c, i) => [String(c), Number(result.probs[i])])
+      .sort((a, b) => b[1] - a[1]);
+    const maxProb = pairs.length ? pairs[0][1] : 0;
+    const tbl = document.createElement("table");
+    tbl.className = "meta-probs";
+    pairs.forEach(([name, prob], i) => {
+      const tr = document.createElement("tr");
+      if (i === 0) tr.className = "top";
+      const w = maxProb > 0 ? Math.max(1, (prob / maxProb) * 100) : 0;
+      tr.innerHTML =
+        `<td class="pb-name" title="${escapeHtml(name)}">${escapeHtml(name)}</td>` +
+        `<td class="pb-bar-cell"><div class="pb-bar"><div class="pb-fill" style="width:${w.toFixed(2)}%;"></div></div></td>` +
+        `<td class="pb-pct">${(prob*100).toFixed(1)}%</td>`;
+      tbl.appendChild(tr);
+    });
+    sec.appendChild(tbl);
+    return sec;
+  }
+
+  function renderMetaResult(meta, topAbundant, totalCells){
+    const el = $("metaResult");
+    el.innerHTML = "";
+
+    // Heading
+    const h = document.createElement("h4");
+    h.innerHTML = `Meta prediction <span class="h4-note">organ &amp; phenotype, based on cell composition</span>`;
+    el.appendChild(h);
+
+    if (meta.skipped) {
+      const warn = document.createElement("div");
+      warn.className = "meta-warn";
+      if (meta.reason === "insufficient_cells") {
+        warn.textContent =
+          `Skipped: ${Number(meta.nKept||0).toLocaleString()} cells remain after the conf-score filter `+
+          `(Level1>${META_L1_CUTOFF} AND Level2>${META_L2_CUTOFF}); ` +
+          `pangeapy requires ≥ ${META_TOTAL_CUTOFF}.`;
+      } else if (meta.reason === "error") {
+        warn.textContent = `Skipped: ${meta.error || "internal error"}`;
+      } else {
+        warn.textContent = `Skipped: ${meta.reason}`;
+      }
+      el.appendChild(warn);
+    } else {
+      const note = document.createElement("div");
+      note.style.cssText = "font-size:11px;color:var(--muted);margin:2px 0 8px 0;";
+      note.textContent =
+        `Composition built from ${Number(meta.nKept||0).toLocaleString()} / `+
+        `${Number(meta.nTotal||0).toLocaleString()} cells `+
+        `(Level1 conf > ${META_L1_CUTOFF} AND Level2 conf > ${META_L2_CUTOFF})`;
+      el.appendChild(note);
+
+      el.appendChild(renderProbSection("Organ", meta.organ));
+
+      if (meta.pheno) {
+        const phenoLabel = `Phenotype (${meta.phenoUsed || "?"})`;
+        const phenoNote = meta.phenoUsed === "Blood"
+          ? `Blood model selected — organ=Blood with prob ≥ ${META_BLOOD_PROB_CUTOFF}`
+          : `Tissue model selected — organ ≠ Blood (or Blood prob < ${META_BLOOD_PROB_CUTOFF})`;
+        el.appendChild(renderProbSection(phenoLabel, meta.pheno, phenoNote));
+      }
+    }
+
+    // Top abundant from PG_annotations (always shown when present)
+    if (topAbundant && topAbundant.length && totalCells > 0) {
+      const sec = document.createElement("div");
+      sec.className = "meta-section";
+      const title = document.createElement("div");
+      title.className = "meta-section-title";
+      title.innerHTML =
+        `Top abundant cell types <span class="sub-note">(from PG_annotations, top ${topAbundant.length})</span>`;
+      sec.appendChild(title);
+
+      const top1 = topAbundant[0];
+      const top1Pct = (top1[1] / totalCells) * 100;
+      const topDiv = document.createElement("div");
+      topDiv.className = "meta-top";
+      topDiv.innerHTML =
+        `${escapeHtml(top1[0])} ` +
+        `<span class="meta-prob">${top1Pct.toFixed(1)}% · ${top1[1].toLocaleString()} cells</span>`;
+      sec.appendChild(topDiv);
+
+      const tbl = document.createElement("table");
+      tbl.className = "abund-list";
+      const maxPct = top1Pct;
+      topAbundant.forEach(([name, count], i) => {
+        const pct = (count / totalCells) * 100;
+        const tr = document.createElement("tr");
+        if (i === 0) tr.className = "top";
+        const w = maxPct > 0 ? Math.max(1, (pct / maxPct) * 100) : 0;
+        tr.innerHTML =
+          `<td class="rank">${i+1}</td>` +
+          `<td class="name" title="${escapeHtml(name)}">${escapeHtml(name)}</td>` +
+          `<td class="pct-cell"><div class="pb-bar"><div class="pb-fill" style="width:${w.toFixed(2)}%;"></div></div></td>` +
+          `<td class="pct">${pct.toFixed(1)}%</td>` +
+          `<td class="count">${count.toLocaleString()}</td>`;
+        tbl.appendChild(tr);
+      });
+      sec.appendChild(tbl);
+      el.appendChild(sec);
+    }
+
+    el.classList.add("show");
   }
 
   function readFileWithProgress(file){
@@ -771,6 +1025,7 @@ layout: post
       $("statusBox").dataset.state = "idle";
       hideResultCard();
       clearL2List();
+      clearMetaResult();
       if (resultUrl) { URL.revokeObjectURL(resultUrl); resultUrl = null; }
 
       fileBytes = await readFileWithProgress(f);
@@ -1140,9 +1395,9 @@ level2_scores[indices_arr] = np.asarray(_last_scores, dtype=np.float32)
       }
       setStageState("level2", "done");
 
-      // === Stage: Output ===
-      setStageState("output", "active");
-      setStage(94, "Building output CSV…");
+      // Compute PG_annotations / PG_combined_score in Python (shared by Meta filter,
+      // Output CSV, and the Top-abundant panel).
+      setStage(82, "Aggregating Level1+Level2 labels…");
       await pyodide.runPythonAsync(`
 import pandas as pd
 n = len(cell_ids)
@@ -1163,7 +1418,183 @@ for i in range(n):
     else:
         pg_annotations.append(l1)
         pg_combined.append(s1 if not np.isnan(s1) else float('nan'))
+`);
 
+      // === Stage: Meta ===
+      setStageState("meta", "active");
+      setStage(84, "Computing cell composition…", "filtering by conf-score");
+
+      let metaPayload = { skipped: true, reason: 'unknown' };
+      try {
+        await pyodide.runPythonAsync(`
+# Mirror pangeapy/meta.py: keep cells where both L1 & L2 conf > cutoff
+# (NaN > cutoff is False, so cells without a Level2 prediction drop out.)
+l1_arr = np.asarray([('' if v is None else str(v)) for v in level1_labels], dtype=object)
+l2_arr = np.asarray([('' if v is None else str(v)) for v in level2_labels], dtype=object)
+s1_arr = np.asarray(level1_scores, dtype=np.float32)
+s2_arr = np.asarray(level2_scores, dtype=np.float32)
+mask = (s1_arr > ${META_L1_CUTOFF}) & (s2_arr > ${META_L2_CUTOFF}) & (l2_arr != '')
+meta_n_kept = int(mask.sum())
+meta_n_total = int(len(level1_labels))
+meta_status = ''
+_meta_composition = None
+if meta_n_kept < ${META_TOTAL_CUTOFF}:
+    meta_status = 'insufficient_cells'
+else:
+    l1_kept = l1_arr[mask]
+    l2_kept = l2_arr[mask]
+    s_l1 = pd.Series(l1_kept).value_counts(normalize=True)
+    parts = [s_l1]
+    for cell_type in pd.unique(l1_kept):
+        sub_mask = (l1_kept == cell_type)
+        if int(sub_mask.sum()) < ${META_GROUP_CUTOFF}:
+            continue
+        l2_sub = l2_kept[sub_mask]
+        s_l2 = pd.Series(l2_sub).value_counts(normalize=True)
+        s_l2.index = [f"{cell_type}|{ix}" for ix in s_l2.index]
+        parts.append(s_l2)
+    _meta_composition = pd.concat(parts)
+    meta_status = 'ok'
+`);
+        const metaStatus = String(pyodide.globals.get('meta_status') || '');
+        const metaNKept  = Number(pyodide.globals.get('meta_n_kept') || 0);
+        const metaNTotal = Number(pyodide.globals.get('meta_n_total') || 0);
+
+        if (metaStatus !== 'ok') {
+          log(`⚠️ Meta skipped: ${metaNKept.toLocaleString()}/${metaNTotal.toLocaleString()} cells after `+
+              `(L1>${META_L1_CUTOFF}, L2>${META_L2_CUTOFF}) filter — need ≥ ${META_TOTAL_CUTOFF}`);
+          setStage(92, "Meta prediction skipped",
+            `${metaNKept.toLocaleString()}/${metaNTotal.toLocaleString()} cells after filter`);
+          metaPayload = { skipped: true, reason: 'insufficient_cells', nKept: metaNKept, nTotal: metaNTotal };
+          setStageState("meta", "done");
+        } else {
+          // ---- Organ prediction ----
+          setStage(86, "Predicting Organ…", "loading organ predictor");
+          let organResult = null;
+          try {
+            await ensureModelLoaded(META_ORGAN_FILE, "Meta Organ predictor");
+            await pyodide.runPythonAsync(`
+X = np.array([
+    float(_meta_composition.loc[f]) if f in _meta_composition.index else 0.0
+    for f in _feat_arr
+], dtype=np.float32).reshape(1, -1)
+if _with_mean:
+    X = X - _scaler_mean
+X = X * (np.float32(1.0) / (_scaler_scale + np.float32(1e-8)))
+np.clip(X, None, np.float32(10.0), out=X)
+logits = X @ _coef.T + _intercept
+if logits.ndim == 1:
+    logits = np.column_stack([-logits, logits])
+if logits.shape[1] == 1:
+    logits = np.column_stack([-logits, logits])
+z = logits - logits.max(axis=1, keepdims=True)
+np.exp(z, out=z)
+P = (z / z.sum(axis=1, keepdims=True)).flatten()
+organ_classes = [str(c) for c in _classes]
+organ_probs   = [float(p) for p in P]
+organ_feat_present = int(sum(1 for f in _feat_arr if f in _meta_composition.index))
+organ_feat_total   = int(len(_feat_arr))
+`);
+            const organClasses = pyodide.globals.get('organ_classes').toJs();
+            const organProbs   = pyodide.globals.get('organ_probs').toJs();
+            let topIdx = 0;
+            for (let i = 1; i < organProbs.length; i++) if (organProbs[i] > organProbs[topIdx]) topIdx = i;
+            organResult = {
+              classes: organClasses, probs: organProbs,
+              top: organClasses[topIdx], topProb: organProbs[topIdx],
+              nFeatPresent: Number(pyodide.globals.get('organ_feat_present')),
+              nFeatTotal:   Number(pyodide.globals.get('organ_feat_total')),
+            };
+            log(`🧪 Organ: ${organResult.top} (${(organResult.topProb*100).toFixed(1)}%) · ` +
+                `${organResult.nFeatPresent}/${organResult.nFeatTotal} composition features used`);
+          } catch(err) {
+            log(`⚠️ Organ predictor unavailable: ${err?.message || err}`);
+            organResult = { error: err?.message || String(err) };
+          }
+
+          // ---- Phenotype prediction (Blood vs Tissue based on organ top) ----
+          let phenoResult = null;
+          let phenoUsed = null;
+          if (organResult && !organResult.error) {
+            phenoUsed = (organResult.top === "Blood" && organResult.topProb >= META_BLOOD_PROB_CUTOFF)
+              ? "Blood" : "Tissue";
+            const phenoFile = (phenoUsed === "Blood") ? META_BLOOD_FILE : META_TISSUE_FILE;
+            setStage(89, `Predicting Phenotype (${phenoUsed})…`,
+              `organ=${organResult.top} (${(organResult.topProb*100).toFixed(1)}%)`);
+            try {
+              await ensureModelLoaded(phenoFile, `Meta ${phenoUsed} phenotype`);
+              await pyodide.runPythonAsync(`
+X = np.array([
+    float(_meta_composition.loc[f]) if f in _meta_composition.index else 0.0
+    for f in _feat_arr
+], dtype=np.float32).reshape(1, -1)
+if _with_mean:
+    X = X - _scaler_mean
+X = X * (np.float32(1.0) / (_scaler_scale + np.float32(1e-8)))
+np.clip(X, None, np.float32(10.0), out=X)
+logits = X @ _coef.T + _intercept
+if logits.ndim == 1:
+    logits = np.column_stack([-logits, logits])
+if logits.shape[1] == 1:
+    logits = np.column_stack([-logits, logits])
+z = logits - logits.max(axis=1, keepdims=True)
+np.exp(z, out=z)
+P = (z / z.sum(axis=1, keepdims=True)).flatten()
+pheno_classes = [str(c) for c in _classes]
+pheno_probs   = [float(p) for p in P]
+pheno_feat_present = int(sum(1 for f in _feat_arr if f in _meta_composition.index))
+pheno_feat_total   = int(len(_feat_arr))
+`);
+              const phenoClasses = pyodide.globals.get('pheno_classes').toJs();
+              const phenoProbs   = pyodide.globals.get('pheno_probs').toJs();
+              let topIdx = 0;
+              for (let i = 1; i < phenoProbs.length; i++) if (phenoProbs[i] > phenoProbs[topIdx]) topIdx = i;
+              phenoResult = {
+                classes: phenoClasses, probs: phenoProbs,
+                top: phenoClasses[topIdx], topProb: phenoProbs[topIdx],
+                nFeatPresent: Number(pyodide.globals.get('pheno_feat_present')),
+                nFeatTotal:   Number(pyodide.globals.get('pheno_feat_total')),
+              };
+              log(`🧪 Phenotype (${phenoUsed}): ${phenoResult.top} (${(phenoResult.topProb*100).toFixed(1)}%)`);
+            } catch(err) {
+              log(`⚠️ ${phenoUsed} phenotype predictor unavailable: ${err?.message || err}`);
+              phenoResult = { error: err?.message || String(err) };
+            }
+          }
+
+          metaPayload = {
+            skipped: false, nKept: metaNKept, nTotal: metaNTotal,
+            organ: organResult, pheno: phenoResult, phenoUsed,
+          };
+          setStageState("meta", "done");
+        }
+      } catch(metaErr) {
+        log(`⚠️ Meta stage error: ${metaErr?.message || metaErr}`);
+        setStageState("meta", "err");
+        metaPayload = { skipped: true, reason: 'error', error: metaErr?.message || String(metaErr) };
+      }
+
+      // === Top abundant from PG_annotations (used regardless of meta state) ===
+      await pyodide.runPythonAsync(`
+_pg_series = pd.Series(pg_annotations)
+_pg_top = _pg_series.value_counts().head(${TOP_ABUNDANT_N})
+pg_top_list = [(str(k), int(v)) for k, v in _pg_top.items()]
+pg_total = int(len(pg_annotations))
+`);
+      const pgTopRaw = pyodide.globals.get('pg_top_list').toJs();
+      const pgTotal = Number(pyodide.globals.get('pg_total') || 0);
+      const topAbundant = [];
+      for (const item of pgTopRaw) {
+        const arr = Array.isArray(item)
+          ? item
+          : (item && typeof item.toJs === 'function' ? item.toJs() : [item[0], item[1]]);
+        topAbundant.push([String(arr[0]), Number(arr[1])]);
+      }
+
+      // === Stage: Output ===
+      setStageState("output", "active");
+      setStage(95, "Building output CSV…");
+      await pyodide.runPythonAsync(`
 out = pd.DataFrame({
     'cell_id': cell_ids,
     'Level1|predicted_label': [('' if v is None else str(v)) for v in level1_labels],
@@ -1180,7 +1611,8 @@ print('DONE rows=', len(out))
       const elapsed = fmtElapsed(performance.now() - runT0);
       $("progBar").value = 100;
       $("progMsg").textContent = "Complete";
-      $("progSub").textContent = `${parsedNCells.toLocaleString()} cells · Level1 + ${l2RunCount} Level2`;
+      $("progSub").textContent = `${parsedNCells.toLocaleString()} cells · Level1 + ${l2RunCount} Level2` +
+        (metaPayload.skipped ? "" : " · meta ✓");
       $("progTime").textContent = elapsed;
       $("statusBox").dataset.state = "done";
       setStageState("output", "done");
@@ -1198,6 +1630,7 @@ print('DONE rows=', len(out))
       const summary = `${parsedNCells.toLocaleString()} cells annotated
         <span class="stat">Level1 + ${l2RunCount} Level2 model${l2RunCount===1?"":"s"} · ${elapsed}</span>`;
       showResult("ok", summary, resultUrl, outName);
+      renderMetaResult(metaPayload, topAbundant, pgTotal);
       log(`✅ ${outName} ready in ${elapsed}.`);
     } catch(err) {
       detachStdHooks();
