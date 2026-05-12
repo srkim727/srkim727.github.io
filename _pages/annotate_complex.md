@@ -293,6 +293,25 @@ layout: post
   .annot-wrap table.abund-list tr.top .name{font-weight:600;color:var(--text);}
   .annot-wrap table.abund-list tr.top .pct{color:var(--accent);font-weight:600;}
 
+  /* Expandable "show all" PG_annotations list */
+  .annot-wrap details.abund-all{margin-top:6px;}
+  .annot-wrap details.abund-all > summary{
+    cursor:pointer;font-size:12px;color:var(--muted);padding:6px 2px;
+    user-select:none;list-style:none;display:flex;align-items:center;gap:6px;
+  }
+  .annot-wrap details.abund-all > summary::-webkit-details-marker{display:none;}
+  .annot-wrap details.abund-all > summary::before{
+    content:"▸";display:inline-block;color:var(--muted);transition:transform .15s;
+    font-size:10px;width:10px;text-align:center;
+  }
+  .annot-wrap details.abund-all[open] > summary::before{transform:rotate(90deg);}
+  .annot-wrap details.abund-all > summary:hover{color:var(--text);}
+  .annot-wrap details.abund-all[open] > summary{color:var(--text);font-weight:500;}
+  .annot-wrap .abund-all-wrap{
+    max-height:320px;overflow-y:auto;border:1px solid var(--border);
+    border-radius:6px;margin-top:4px;
+  }
+
   /* Info meta-panel */
   .annot-wrap .meta-panel{
     background:var(--bg-panel);border:1px solid var(--border);border-radius:10px;
@@ -638,15 +657,31 @@ layout: post
     return sec;
   }
 
-  function renderMetaResult(meta, topAbundant, totalCells){
+  // Build a row for the abund-list table (rank, name, bar, pct, count).
+  function _abundRow(name, count, rank, totalCells, maxPct, isTop){
+    const pct = (count / totalCells) * 100;
+    const tr = document.createElement("tr");
+    if (isTop) tr.className = "top";
+    const w = maxPct > 0 ? Math.max(1, (pct / maxPct) * 100) : 0;
+    tr.innerHTML =
+      `<td class="rank">${rank}</td>` +
+      `<td class="name" title="${escapeHtml(name)}">${escapeHtml(name)}</td>` +
+      `<td class="pct-cell"><div class="pb-bar"><div class="pb-fill" style="width:${w.toFixed(2)}%;"></div></div></td>` +
+      `<td class="pct">${pct.toFixed(1)}%</td>` +
+      `<td class="count">${count.toLocaleString()}</td>`;
+    return tr;
+  }
+
+  function renderMetaResult(meta, topAbundant, allAbundant, totalCells){
     const el = $("metaResult");
     el.innerHTML = "";
 
     // ===== 1. Top abundant cell types (shown first) =====
     if (topAbundant && topAbundant.length && totalCells > 0) {
+      const totalLabels = (allAbundant && allAbundant.length) ? allAbundant.length : topAbundant.length;
       const h = document.createElement("h4");
       h.innerHTML = `Top abundant cell types ` +
-        `<span class="h4-note">PG_annotations, top ${topAbundant.length}</span>`;
+        `<span class="h4-note">PG_annotations, top ${topAbundant.length} of ${totalLabels.toLocaleString()}</span>`;
       el.appendChild(h);
 
       const top1 = topAbundant[0];
@@ -658,23 +693,36 @@ layout: post
         `<span class="meta-prob">${top1Pct.toFixed(1)}% · ${top1[1].toLocaleString()} cells</span>`;
       el.appendChild(topDiv);
 
+      // Top-N table (always visible)
+      const maxPct = top1Pct;
       const tbl = document.createElement("table");
       tbl.className = "abund-list";
-      const maxPct = top1Pct;
       topAbundant.forEach(([name, count], i) => {
-        const pct = (count / totalCells) * 100;
-        const tr = document.createElement("tr");
-        if (i === 0) tr.className = "top";
-        const w = maxPct > 0 ? Math.max(1, (pct / maxPct) * 100) : 0;
-        tr.innerHTML =
-          `<td class="rank">${i+1}</td>` +
-          `<td class="name" title="${escapeHtml(name)}">${escapeHtml(name)}</td>` +
-          `<td class="pct-cell"><div class="pb-bar"><div class="pb-fill" style="width:${w.toFixed(2)}%;"></div></div></td>` +
-          `<td class="pct">${pct.toFixed(1)}%</td>` +
-          `<td class="count">${count.toLocaleString()}</td>`;
-        tbl.appendChild(tr);
+        tbl.appendChild(_abundRow(name, count, i + 1, totalCells, maxPct, i === 0));
       });
       el.appendChild(tbl);
+
+      // Collapsible "show all" — only render if there are more entries than topAbundant
+      if (allAbundant && allAbundant.length > topAbundant.length) {
+        const remaining = allAbundant.length - topAbundant.length;
+        const det = document.createElement("details");
+        det.className = "abund-all";
+        const sum = document.createElement("summary");
+        sum.textContent = `Show all ${allAbundant.length.toLocaleString()} PG_annotations (${remaining.toLocaleString()} more)`;
+        det.appendChild(sum);
+
+        const wrap = document.createElement("div");
+        wrap.className = "abund-all-wrap";
+        const fullTbl = document.createElement("table");
+        fullTbl.className = "abund-list";
+        // Same bar-scaling baseline as the top table so they're visually comparable.
+        allAbundant.forEach(([name, count], i) => {
+          fullTbl.appendChild(_abundRow(name, count, i + 1, totalCells, maxPct, i === 0));
+        });
+        wrap.appendChild(fullTbl);
+        det.appendChild(wrap);
+        el.appendChild(det);
+      }
 
       // Visual separator before Meta prediction block
       const sep = document.createElement("div");
@@ -1710,22 +1758,24 @@ pheno_feat_total   = int(len(_feat_arr))
         metaPayload = { skipped: true, reason: 'error', error: metaErr?.message || String(metaErr) };
       }
 
-      // === Top abundant from PG_annotations (used regardless of meta state) ===
+      // === Top abundant from PG_annotations (full sorted list; top N shown by default,
+      //     full list exposed via a collapsible <details>) ===
       await pyodide.runPythonAsync(`
 _pg_series = pd.Series(pg_annotations)
-_pg_top = _pg_series.value_counts().head(${TOP_ABUNDANT_N})
-pg_top_list = [(str(k), int(v)) for k, v in _pg_top.items()]
+_pg_counts = _pg_series.value_counts()
+pg_all_list = [(str(k), int(v)) for k, v in _pg_counts.items()]
 pg_total = int(len(pg_annotations))
 `);
-      const pgTopRaw = pyodide.globals.get('pg_top_list').toJs();
+      const pgAllRaw = pyodide.globals.get('pg_all_list').toJs();
       const pgTotal = Number(pyodide.globals.get('pg_total') || 0);
-      const topAbundant = [];
-      for (const item of pgTopRaw) {
+      const pgAll = [];
+      for (const item of pgAllRaw) {
         const arr = Array.isArray(item)
           ? item
           : (item && typeof item.toJs === 'function' ? item.toJs() : [item[0], item[1]]);
-        topAbundant.push([String(arr[0]), Number(arr[1])]);
+        pgAll.push([String(arr[0]), Number(arr[1])]);
       }
+      const topAbundant = pgAll.slice(0, TOP_ABUNDANT_N);
 
       // === Stage: Output ===
       setStageState("output", "active");
@@ -1766,7 +1816,7 @@ print('DONE rows=', len(out))
       const summary = `${parsedNCells.toLocaleString()} cells annotated
         <span class="stat">Level1 + ${l2RunCount} Level2 model${l2RunCount===1?"":"s"} · ${elapsed}</span>`;
       showResult("ok", summary, resultUrl, outName);
-      renderMetaResult(metaPayload, topAbundant, pgTotal);
+      renderMetaResult(metaPayload, topAbundant, pgAll, pgTotal);
       log(`✅ ${outName} ready in ${elapsed}.`);
     } catch(err) {
       detachStdHooks();
