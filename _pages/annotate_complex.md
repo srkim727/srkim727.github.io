@@ -411,7 +411,7 @@ layout: post
         <li>Raw expression must be <code>1e4</code>-normalized &amp; <code>log1p</code>-transformed<br>
             <small>normalized up to 10,000 counts per cell, then log-transformed with 1 pseudocount</small>
         </li>
-        <li>Supported formats: <code>.csv</code>, <strong><code>.csv.gz</code></strong>, <code>.h5ad</code>, or <code>.h5</code> (10x Cell Ranger v2 / v3)</li>
+        <li>Supported formats: <code>.csv</code>, <code>.csv.gz</code>, <code>.h5ad</code>, or <code>.h5</code> (10x Cell Ranger v2 / v3)</li>
       </ul>
     </li>
     <li><strong>Pipeline</strong>
