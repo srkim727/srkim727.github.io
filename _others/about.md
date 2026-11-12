@@ -6,4 +6,4 @@ category: Jekyll
 layout: post
 ---
 
-S Kim et al., A cross-tissue cellular integration of human diseases, unpublished
+Kim, S., Cheong, S., Lee, S. et al. PANGEA: an integrated cell atlas across diverse biological contexts enables systematic profiling of multicellular responses in human diseases. Nat Methods (2026). https://doi.org/10.1038/s41592-026-03295-4
