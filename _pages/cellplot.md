@@ -408,9 +408,9 @@ excerpt: ""
     const b0 = sticky.filter(s=>s < lo + tol), b1 = sticky.filter(s=>s > hi - tol);
     return [b0.length ? Math.max(lo - d, ...b0) : lo - d, b1.length ? Math.min(hi + d, ...b1) : hi + d];
   }
-  function autoTicks(A, ax){
+  function autoTicks(A, ax, fs = 9){
     const lim = ax === "x" ? A.xl : A.yl, lo = Math.min(...lim), hi = Math.max(...lim);
-    const nb = Math.min(9, Math.max(1, Math.floor((ax === "x" ? A.w/27 : A.h/18))));
+    const nb = Math.min(9, Math.max(1, Math.floor(ax === "x" ? A.w/(3*fs) : A.h/(2*fs))));
     const raw = maxN(lo, hi, nb), fmt = scalarFmt(raw), tol = 1e-10*(hi - lo);
     return raw.filter(v=>v >= lo - tol && v <= hi + tol).map(v=>({v, s: fmt(v)}));
   }
@@ -512,6 +512,16 @@ excerpt: ""
       p.map((s,i)=>i % 2 ? `<tspan font-size="${n2(fs*0.7)}" dy="${sh}">${esc(s)}</tspan>` : i ? `<tspan dy="${-sh}">${esc(s)}</tspan>` : esc(s)).join("") + `</text>`).join("");
     return { box, svg: `<g font-size="${fs}"${o.b ? ' font-weight="bold"' : ""} fill="${o.color}"${tf ? ` transform="${tf}"` : ""}>${lines}</g>` };
   }
+  function wrap(s, fs, maxW, re = /[^ _|,]+[ _|,]*|[ _|,]+/g){
+    if(tw(s, fs) <= maxW) return s;
+    const i = s.indexOf("@"), d = i > 0 ? s.slice(i) : "", lines = [""];
+    const toks = [...((d ? s.slice(0, i) : s).match(re) || []), ...(!d ? [] : tw(d, fs) <= maxW ? [d] : d.match(re))];
+    for(const t of toks){
+      const k = lines.length - 1;
+      if(lines[k] && tw(lines[k] + t, fs) > maxW) lines.push(t); else lines[k] += t;
+    }
+    return lines.map(l=>l.trimEnd()).join("\n");
+  }
 
   function mkAx(x0, y0, w, h, xl, yl){
     return {x0, y0, w, h, xl, yl, X: (v)=>x0 + (v - xl[0])/(xl[1] - xl[0])*w, Y: (v)=>y0 + h - (v - yl[0])/(yl[1] - yl[0])*h};
@@ -524,7 +534,7 @@ excerpt: ""
   }
 
   function deco(A, o){
-    const under = [], over = [], x1 = A.x0 + A.w, y1 = A.y0 + A.h, L = 6, P = 3.5;
+    const fs = o.fs || 9, lfs = o.lfs || 10, under = [], over = [], x1 = A.x0 + A.w, y1 = A.y0 + A.h, L = 6, P = 3.5;
     let full = [A.x0, A.y0, x1, y1], lay = full.slice();
     const add = (t, f)=>{ over.push(t.svg); full = union(full, t.box); lay = union(lay, f ? f(t.box) : t.box); return t.box; };
     const tick = `stroke="${o.tc}" stroke-width="1.25"`;
@@ -533,19 +543,19 @@ excerpt: ""
       const x = A.X(t.v);
       if(o.gx) under.push(`<path d="M${n2(x)} ${n2(A.y0)}V${n2(y1)}" ${grid(o.gx)}/>`);
       over.push(`<path d="M${n2(x)} ${n2(y1)}v${L}" ${tick}/>`);
-      return add(text({x, y: y1 + L + P, s: t.s, fs: 9, color: o.tc, ha: "center", va: "top", rot: o.xrot}));
+      return add(text({x, y: y1 + L + P, s: t.s, fs: o.xfs || fs, color: o.tc, ha: "center", va: "top", rot: o.xrot}));
     });
     const yb = (o.yt || []).map(t=>{
       const y = A.Y(t.v), xe = o.yr ? x1 : A.x0, sg = o.yr ? 1 : -1;
       if(o.gy) under.push(`<path d="M${n2(A.x0)} ${n2(y)}H${n2(x1)}" ${grid(o.gy)}/>`);
       over.push(`<path d="M${n2(xe)} ${n2(y)}h${sg*L}" ${tick}/>`);
-      return add(text({x: xe + sg*(L + P), y, s: t.s, fs: 9, color: o.tc, ha: o.yr ? "left" : "right", va: "center_baseline"}));
+      return add(text({x: xe + sg*(L + P), y, s: t.s, fs, color: o.tc, ha: o.yr ? "left" : "right", va: o.yva || "center_baseline"}));
     });
     const cx = A.x0 + A.w/2, cy = A.y0 + A.h/2;
-    if(o.xlabel) add(text({x: cx, y: Math.max(y1, ...xb.map(b=>b[3])) + 4, s: o.xlabel, fs: 10, color: o.lc, ha: "center", va: "top"}), (b)=>[cx - 0.5, b[1], cx + 0.5, b[3]]);
-    if(o.ylabel) add(text({x: o.yr ? Math.max(x1, ...yb.map(b=>b[2])) + 4 : Math.min(A.x0, ...yb.map(b=>b[0])) - 4, y: cy, s: o.ylabel, fs: 10,
+    if(o.xlabel) add(text({x: cx, y: Math.max(y1, ...xb.map(b=>b[3])) + 4, s: o.xlabel, fs: lfs, color: o.lc, ha: "center", va: "top"}), (b)=>[cx - 0.5, b[1], cx + 0.5, b[3]]);
+    if(o.ylabel) add(text({x: o.yr ? Math.max(x1, ...yb.map(b=>b[2])) + 4 : Math.min(A.x0, ...yb.map(b=>b[0])) - 4, y: cy, s: o.ylabel, fs: lfs,
       color: o.lc, ha: "center", va: o.yr ? "top" : "bottom", rot: 1, anchor: 1}), (b)=>[b[0], cy - 0.5, b[2], cy + 0.5]);
-    if(o.title) add(text({x: cx, y: A.y0 - 8, s: o.title, fs: 11, b: 1, color: "#111827", ha: "center", va: "baseline"}), (b)=>[cx - 0.5, b[1], cx + 0.5, b[3]]);
+    if(o.title) add(text({x: cx, y: A.y0 - 8, s: o.title, fs: o.tfs || 11, b: 1, color: "#111827", ha: "center", va: "baseline"}), (b)=>[cx - 0.5, b[1], cx + 0.5, b[3]]);
     if(o.sp) over.push(`<path d="M${n2(A.x0)} ${n2(A.y0)}V${n2(y1)}H${n2(x1)}" fill="none" stroke="${o.sc}" stroke-width="0.8"/>`);
     if(o.outline) over.push(rect(A.x0, A.y0, x1, y1, ` fill="none" stroke="${o.outline}" stroke-width="0.8"`));
     return {under, over, full, lay};
@@ -556,32 +566,33 @@ excerpt: ""
     const mt = Math.max(pos[1] - lay[1], 0) + PAD, mb = Math.max(lay[3] - pos[3], 0) + PAD;
     return ml + mr < W && mt + mb < H ? {l: ml/W, r: 1 - mr/W, b: mb/H, t: 1 - mt/H} : null;
   }
-  const header = (W, H, f, s)=>text({x: 0.01*W, y: H - f*H, s, fs: 15, b: 1, color: "#111827", va: "bottom"});
+  const header = (x, y, s)=>text({x, y, s, fs: 19, b: 1, color: "#111827", va: "bottom"});
   const finish = (parts, box)=>({svg: parts.join(""), box: [box[0] - 7.2, box[1] - 7.2, box[2] + 7.2, box[3] + 7.2]});
 
   function fig1(D){
-    const W = 504, H = 720, xs = D.ov.map(r=>r[1]), ys = D.ov.map(r=>r[2]), nb = D.bars.length, ok = D.bars.filter(Boolean);
+    const W = 504, H = 720, F = 13.5, xs = D.ov.map(r=>r[1]), ys = D.ov.map(r=>r[2]), nb = D.bars.length, ok = D.bars.filter(Boolean);
     const xl = autoscale(Math.min(...xs), Math.max(...xs)), yl = autoscale(Math.min(...ys), Math.max(...ys));
     const bl = autoscale(Math.min(0, ...ok.map(b=>isNaN(b.lo) ? b.m : b.lo)), Math.max(0, ...ok.map(b=>isNaN(b.hi) ? b.m : b.hi)), [0]);
     const hl = D.ov.find(r=>r[0] === D.cell), fillB = rgbS(desat(hexRgb(ACCENT), 0.75));
     const build = (p)=>{
-      const x0 = p.l*W, w = (p.r - p.l)*W, top = (1 - p.t)*H, ch = (p.t - p.b)*H/(2 + p.hs), u = ch/5;
-      const A = mkAx(x0, top, w, 7*u, xl, yl), B = mkAx(x0, top + 7*u + p.hs*ch, w, 3*u, [-0.5, nb - 0.5], bl);
-      const dA = deco(A, {xt: autoTicks(A, "x"), yt: autoTicks(A, "y"), tc: "#374151", lc: "#111827", sc: "#9ca3af", sp: 1, gx: ":", gy: ":",
-        xlabel: "Organ specificity", ylabel: "Average proportion"});
-      const dB = deco(B, {xt: D.order.map((s,v)=>({v, s})), xrot: 1, yt: autoTicks(B, "y"), tc: "#374151", lc: "#111827", sc: "#9ca3af", sp: 1, gy: ":",
-        ylabel: "Proportion", title: D.cell});
+      const x0 = p.l*W, w = (p.r - p.l)*W, top = (1 - p.t)*H, ch = (p.t - p.b)*H/(2 + p.hs), u = ch/4;
+      const A = mkAx(x0, top, w, 5*u, xl, yl), B = mkAx(x0, top + 5*u + p.hs*ch, w, 3*u, [-0.5, nb - 0.5], bl);
+      const st = {fs: F, lfs: 15, tc: "#374151", lc: "#111827", sc: "#9ca3af", sp: 1};
+      const dA = deco(A, {...st, xt: autoTicks(A, "x", F), yt: autoTicks(A, "y", F), gx: ":", gy: ":", xlabel: "Organ specificity", ylabel: "Average proportion"});
+      const dB = deco(B, {...st, xt: D.order.map((s,v)=>({v, s})), xrot: 1, xfs: Math.min(F, (B.w/nb - 0.4)/0.97), yt: autoTicks(B, "y", F), gy: ":",
+        ylabel: "Proportion", title: D.cell, tfs: 16.5});
       const pts = [`<g fill="#d1d5db" fill-opacity="0.8">${D.ov.map(r=>`<circle cx="${n2(A.X(r[1]))}" cy="${n2(A.Y(r[2]))}" r="2.55"/>`).join("")}</g>`], extra = [];
       if(hl){
-        const x = A.X(hl[1]), y = A.Y(hl[2]), sp = tw("  " + D.cell, 9, 1) - tw(D.cell, 9, 1);
+        const x = A.X(hl[1]), y = A.Y(hl[2]), lw = tw(D.cell, F, 1), sp = tw("  " + D.cell, F, 1) - lw, rt = x + sp + lw <= A.x0 + A.w;
         pts.push(`<circle cx="${n2(x)}" cy="${n2(y)}" r="5.92" fill="${ACCENT}" stroke="#000" stroke-width="0.8"/>`);
-        const t1 = text({x: x + sp, y, s: D.cell, fs: 9, b: 1, color: ACCENT, va: "center"});
-        const t2 = text({x: A.X(Math.max(...xs)), y: A.Y(Math.max(...ys)), s: `Organ spec.: ${hl[1].toFixed(2)}\nAverage prop.: ${hl[2].toFixed(2)}`,
-          fs: 8, color: "#6b7280", ha: "right", va: "top"});
-        t1.box[0] -= sp;
-        const b = t2.box;
-        extra.push(t1.svg, rect(b[0] - 3.2, b[1] - 3.2, b[2] + 3.2, b[3] + 3.2, ` rx="3.2" fill="#fafbfc" stroke="${GRID}" stroke-width="0.6"`), t2.svg);
-        for(const bb of [t1.box, t2.box]){ dA.full = union(dA.full, bb); dA.lay = union(dA.lay, bb); }
+        const t1 = text({x: rt ? x + sp : x - sp, y, s: D.cell, fs: F, b: 1, color: ACCENT, ha: rt ? "left" : "right", va: "center"});
+        const hb = union(t1.box, [x - 6, y - 6, x + 6, y + 6]);
+        const note = (r)=>text({x: A.X(r ? Math.max(...xs) : Math.min(...xs)), y: A.Y(Math.max(...ys)), s: `Organ spec.: ${hl[1].toFixed(2)}\nAverage prop.: ${hl[2].toFixed(2)}`,
+          fs: 12, color: "#6b7280", ha: r ? "right" : "left", va: "top"});
+        let t2 = note(1), b = t2.box;
+        if(b[0] - 9 < hb[2] && hb[0] < b[2] + 9 && b[1] - 9 < hb[3] && hb[1] < b[3] + 9){ t2 = note(0); b = t2.box; }
+        extra.push(t1.svg, rect(b[0] - 4.8, b[1] - 4.8, b[2] + 4.8, b[3] + 4.8, ` rx="4.8" fill="#fafbfc" stroke="${GRID}" stroke-width="0.6"`), t2.svg);
+        for(const bb of [hb, b]){ dA.full = union(dA.full, bb); dA.lay = union(dA.lay, bb); }
       }
       const bars = D.bars.map((b,i)=>b ? rect(B.X(i - 0.4), B.Y(0), B.X(i + 0.4), B.Y(b.m)) : "").join("");
       const errs = D.bars.map((b,i)=>b && !isNaN(b.se) ? errPath(B, i, b.lo, b.hi, 1) : "").join("");
@@ -595,41 +606,39 @@ excerpt: ""
     const ml = Math.max(a[0], b[0], 0) + PAD, mr = Math.max(a[1], b[1], 0) + PAD, mt = Math.max(a[2], 0) + PAD, mb = Math.max(b[3], 0) + PAD;
     const vs = a[3] + b[2] + PAD, va = (H - mt - mb - vs)/2;
     const r = ml + mr < W && mt + mb < H && va > 0 ? build({l: ml/W, r: 1 - mr/W, b: mb/H, t: 1 - mt/H, hs: vs/va}) : r1;
-    const h1 = header(W, H, 1.10, "Organ distribution"), parts = [...r.parts, h1.svg];
-    let box = union(union(r.dA.full, r.dB.full), h1.box);
+    const parts = [...r.parts];
+    let box = union(r.dA.full, r.dB.full), y = box[1] - 16;
     if(D.mls.length){
-      const h2 = text({x: 0.01*W, y: H - 1.06*H, s: "curated marker: " + D.mls.join(", "), fs: 10, color: "#374151", va: "bottom"});
-      parts.push(h2.svg); box = union(box, h2.box);
+      const m = text({x: box[0], y, s: wrap("curated marker: " + D.mls.join(", "), 14, box[2] - box[0], /[^ ]+ */g), fs: 14, color: "#374151", va: "bottom"});
+      parts.push(m.svg); box = union(box, m.box); y = m.box[1] - 6;
     }
-    return finish(parts, box);
+    const h = header(box[0], y, "Organ distribution");
+    return finish([...parts, h.svg], union(box, h.box));
   }
 
   function fig2(D){
     const rows = D.match, n = rows.length;
     if(!n) return null;
-    const W = 576, H = n*0.42*72, s = n === 1 ? 1 : 0.2 + 0.2/Math.max(1, n/3 + 0.75);
-    const build = (p)=>{
-      const gx = p.l*W, GW = (p.r - p.l)*W, gy = (1 - p.t)*H, GH = (p.t - p.b)*H;
-      const A = mkAx(gx, gy, 0.65*GW, GH, [-0.5, 3.5], [-0.5, n - 0.5]);
-      const cw = 0.15*GW, chh = s*GH, [bw, bh] = chh > 10*cw ? [cw, 10*cw] : [chh/10, chh];
-      const C = mkAx(gx + 0.85*GW, gy + 0.5*(1 - s)*GH + (chh - bh)/2, bw, bh, [0, 1], [0, 1]);
-      const dA = deco(A, {xt: [[0,"SEN"],[1,"PPV"],[2,"CFS"],[3.5,"score"]].map(([v,s])=>({v, s})), yt: rows.map((r,k)=>({v: n - 1 - k, s: r.name})),
-        tc: "#374151", gx: "-", gy: "-"});
-      const dC = deco(C, {yt: [0, 0.5, 1].map(v=>({v, s: v.toFixed(1)})), yr: 1, tc: "#374151", lc: "#111827", ylabel: "values", outline: "#9ca3af"});
-      const ix0 = A.X(3), ix1 = A.X(3.9), ib = [ix0, A.y0, ix1, A.y0 + A.h];
-      const dots = [0, 1, 2].map(j=>rows.map((r,k)=>{
-        const c = Math.min(Math.max(r.v[j], 0), 1);
-        return c > 0 ? `<circle cx="${n2(A.X(j))}" cy="${n2(A.Y(n - 1 - k))}" r="${n2(Math.sqrt(250*c)/2)}" fill="${rdylbu(r.v[j])}"/>` : "";
-      }).join("")).join("");
-      const bars = rows.map((r,k)=>rect(ix0, A.Y(n - 1 - k + 0.35), ix0 + (ix1 - ix0)*Math.min(Math.max(r.v[3], 0), 1)/1.1, A.Y(n - 1 - k - 0.35))).join("");
-      const grad = `<linearGradient id="pc2g" x1="0" y1="1" x2="0" y2="0">${RDYLBU.map((c,k)=>`<stop offset="${k/10}" stop-color="${rgbS(c)}"/>`).join("")}</linearGradient>`;
-      const parts = [clip(A, "pc2a"), grad, ...dA.under, `<g clip-path="url(#pc2a)" stroke="#000" stroke-width="0.5">${dots}</g>`,
-        rect(...ib, ' fill="#fff"'), `<g fill="${ACCENT}" stroke="#000" stroke-width="0.5">${bars}</g>`, ...dA.over,
-        rect(C.x0, C.y0, C.x0 + C.w, C.y0 + C.h, ' fill="url(#pc2g)"'), ...dC.over];
-      return {pos: [gx, gy, gx + GW, gy + GH], lay: union(union(dA.lay, dC.lay), ib), full: union(union(dA.full, dC.full), ib), parts};
-    };
-    const r1 = build(DEF), p = tight1(W, H, r1.pos, r1.lay), r = p ? build(p) : r1, h = header(W, H, 1.06, "Matching annotation");
-    return finish([...r.parts, h.svg], union(r.full, h.box));
+    const W = 504, F = 13.5, xc = W - PAD - 38 - tw("1.0", F), lab = rows.map(r=>wrap(r.name, F, xc - 181.6 - PAD)), ln = lab.map(s=>s.split("\n"));
+    const hk = ln.map(l=>Math.max(30, l.length*F*1.2 + 8)), tops = hk.map((_,k)=>hk.slice(0, k).reduce((a,b)=>a + b, 0)), h = tops[n - 1] + hk[n - 1];
+    const x0 = PAD + Math.max(...ln.flat().map(l=>tw(l, F))) + 9.5, ch = Math.min(140, Math.max(60, 0.5*h));
+    const A = mkAx(x0, 0, Math.min(200, Math.max(136, (xc - 22 - x0)/1.1)), h, [-0.5, 3.5], [-0.5, n - 0.5]), C = mkAx(xc, (h - ch)/2, 10, ch, [0, 1], [0, 1]);
+    A.Y = (v)=>{ const k = Math.min(n - 1, Math.max(0, n - 1 - Math.round(v))); return tops[k] + hk[k]*(0.5 - v + n - 1 - k); };
+    const dA = deco(A, {fs: F, xt: [[0,"SEN"],[1,"PPV"],[2,"CFS"],[3.5,"score"]].map(([v,s])=>({v, s})), yt: lab.map((s,k)=>({v: n - 1 - k, s})), yva: "center",
+      tc: "#374151", gx: "-", gy: "-"});
+    const dC = deco(C, {fs: F, lfs: 15, yt: [0, 0.5, 1].map(v=>({v, s: v.toFixed(1)})), yr: 1, tc: "#374151", lc: "#111827", ylabel: "values", outline: "#9ca3af"});
+    const ix0 = A.X(3), ix1 = A.X(3.9), ib = [ix0, A.y0, ix1, A.y0 + A.h];
+    const dots = [0, 1, 2].map(j=>rows.map((r,k)=>{
+      const c = Math.min(Math.max(r.v[j], 0), 1);
+      return c > 0 ? `<circle cx="${n2(A.X(j))}" cy="${n2(A.Y(n - 1 - k))}" r="${n2(Math.sqrt(250*c)/2)}" fill="${rdylbu(r.v[j])}"/>` : "";
+    }).join("")).join("");
+    const bars = rows.map((r,k)=>{ const c = tops[k] + hk[k]/2, d = Math.min(0.35*hk[k], 11);
+      return rect(ix0, c - d, ix0 + (ix1 - ix0)*Math.min(Math.max(r.v[3], 0), 1)/1.1, c + d); }).join("");
+    const grad = `<linearGradient id="pc2g" x1="0" y1="1" x2="0" y2="0">${RDYLBU.map((c,k)=>`<stop offset="${k/10}" stop-color="${rgbS(c)}"/>`).join("")}</linearGradient>`;
+    const box = union(union(dA.full, dC.full), ib), hd = header(box[0], box[1] - 14, "Matching annotation");
+    return finish([clip(A, "pc2a"), grad, ...dA.under, `<g clip-path="url(#pc2a)" stroke="#000" stroke-width="0.5">${dots}</g>`,
+      rect(...ib, ' fill="#fff"'), `<g fill="${ACCENT}" stroke="#000" stroke-width="0.5">${bars}</g>`, ...dA.over,
+      rect(C.x0, C.y0, C.x0 + C.w, C.y0 + C.h, ' fill="url(#pc2g)"'), ...dC.over, hd.svg], union(box, hd.box));
   }
 
   function fig3(D){
@@ -644,14 +653,14 @@ excerpt: ""
     if(tv.length && cv.length){
       const p = mwuP(tv, cv), mean = (a)=>a.reduce((x,y)=>x + y, 0)/a.length, lfc = Math.log2((mean(tv) + 1e-6)/(mean(cv) + 1e-6));
       const xr = xl[1] - xl[0] > 0 ? xl[1] - xl[0] : 1, xb = xl[1] + 0.04*xr;
-      br = {y0: order.indexOf("Control"), y1: order.indexOf("Cancer_Tumor"), xb, cap: 0.012*xr, tx: xb + 0.025*xr,
+      br = {y0: order.indexOf("Control"), y1: order.indexOf("Cancer_Tumor"), xb, cap: 0.012*xr,
         s: `log$_2$FC = ${(lfc < 0 ? "-" : "+") + Math.abs(lfc).toFixed(2)}\np = ${isNaN(p) ? "nan" : p < 0.001 ? "<0.001" : p.toFixed(3)}`};
       xl = [xl[0], xb + 0.32*xr];
     }
-    const W = 288, H = 158.4, k = order.length, ya = autoscale(-0.4, k - 0.6), yl = br ? [ya[1], ya[0]] : [k - 0.5, -0.5];
+    const W = 504, H = 230, F = 13.5, k = order.length, ya = autoscale(-0.4, k - 0.6), yl = br ? [ya[1], ya[0]] : [k - 0.5, -0.5];
     const build = (p)=>{
       const A = mkAx(p.l*W, (1 - p.t)*H, (p.r - p.l)*W, (p.t - p.b)*H, xl, yl);
-      const d = deco(A, {xt: autoTicks(A, "x"), yt: order.map((s,v)=>({v, s})), tc: "#000", lc: "#000", sc: "#000", sp: 1, gx: ":", xlabel: D.cell});
+      const d = deco(A, {fs: F, lfs: 15, xt: autoTicks(A, "x", F), yt: order.map((s,v)=>({v, s})), tc: "#000", lc: "#000", sc: "#000", sp: 1, gx: ":", xlabel: D.cell});
       const bars = st.map((s,i)=>s ? rect(A.X(0), A.Y(i - 0.4), A.X(s.m), A.Y(i + 0.4), ` fill="${rgbS(desat(cmap[order[i]], 0.75))}"`) : "").join("");
       const errs = st.map((s,i)=>s && !isNaN(s.se) ? errPath(A, i, s.lo, s.hi, 0) : "").join("");
       const parts = [clip(A, "pc3a"), ...d.under, `<g clip-path="url(#pc3a)"><g stroke="#000" stroke-width="0.5">${bars}</g>` +
@@ -659,14 +668,16 @@ excerpt: ""
       let full = d.full, lay = d.lay;
       if(br){
         const xb = A.X(br.xb), xc = A.X(br.xb - br.cap), ya = A.Y(br.y0), yb = A.Y(br.y1);
-        const tt = text({x: A.X(br.tx), y: A.Y((br.y0 + br.y1)/2), s: br.s, fs: 7, color: "#000", va: "center", ls: 1.3});
+        const tt = text({x: xb + 6, y: A.Y((br.y0 + br.y1)/2), s: br.s, fs: 10.5, color: "#000", va: "center", ls: 1.3});
         const lb = [Math.min(xc, xb), Math.min(ya, yb), Math.max(xc, xb), Math.max(ya, yb)];
         parts.push(`<path d="M${n2(xb)} ${n2(ya)}V${n2(yb)}M${n2(xc)} ${n2(ya)}H${n2(xb)}M${n2(xc)} ${n2(yb)}H${n2(xb)}" fill="none" stroke="#000" stroke-width="0.8" stroke-linecap="round"/>`, tt.svg);
         full = union(union(full, lb), tt.box); lay = union(union(lay, lb), tt.box);
       }
       return {pos: [A.x0, A.y0, A.x0 + A.w, A.y0 + A.h], full, lay, parts};
     };
-    const r1 = build(DEF), p = tight1(W, H, r1.pos, r1.lay), r = p ? build(p) : r1, h = header(W, H, 1.06, "TME distribution");
+    let r = build(DEF);
+    for(let i = 0; i < 2; i++){ const p = tight1(W, H, r.pos, r.lay); if(p) r = build(p); }
+    const h = header(r.full[0], r.full[1] - 14, "TME distribution");
     return finish([...r.parts, h.svg], union(r.full, h.box));
   }
 
