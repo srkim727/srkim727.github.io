@@ -87,6 +87,12 @@ excerpt: ""
   }
   .pg-wrap .btn-download:hover{background:var(--ok-dark);border-color:var(--ok-dark);color:#fff !important;text-decoration:none;}
   .pg-wrap .plot-img{max-width:100%;border:1px solid var(--border);border-radius:6px;background:#fff;display:block;}
+  .pg-wrap .suggest{
+    display:none;position:absolute;top:100%;z-index:20;margin-top:2px;min-width:160px;overflow:hidden;
+    background:#fff;border:1px solid var(--border-strong);border-radius:6px;box-shadow:0 4px 12px rgba(0,0,0,.08);color:var(--text);
+  }
+  .pg-wrap .suggest div{padding:5px 10px;cursor:pointer;}
+  .pg-wrap .suggest div.on{background:var(--accent-light);}
 
   .pg-wrap .meta-panel{
     background:var(--bg-panel);border:1px solid var(--border);border-radius:10px;
@@ -178,9 +184,10 @@ excerpt: ""
       </select>
     </label>
 
-    <label class="inline-ctl" style="flex:1;min-width:200px;">
+    <label class="inline-ctl" style="flex:1;min-width:200px;position:relative;">
       <span>Gene</span>
-      <input id="geneInput" type="text" value="TNFAIP6" style="flex:1;min-width:160px;">
+      <input id="geneInput" type="text" value="TNFAIP6" autocomplete="off" style="flex:1;min-width:160px;">
+      <div class="suggest" id="geneSuggest"></div>
     </label>
 
     <label class="inline-ctl">
@@ -792,7 +799,7 @@ excerpt: ""
     if(imgId){ $(imgId).src = urls[id]; $(imgId).style.width = Math.round(W*150/72) + "px"; $(imgId).style.display = "block"; }
   }
 
-  let genes = null, geneIdx = null, cur = null, smp = null, smpP = null, seq = 0, timer = null;
+  let genes = null, geneIdx = null, gsort = null, cur = null, smp = null, smpP = null, seq = 0, timer = null;
 
   async function loadCell(cell){
     const my = ++seq;
@@ -826,6 +833,7 @@ excerpt: ""
       genes = await getJSON("genes.json");
       geneIdx = new Map();
       genes.forEach((g, i)=>{ if(!geneIdx.has(g)) geneIdx.set(g, i); });
+      gsort = [...geneIdx.keys()].map(g=>[g.toUpperCase(), g]).sort((a, b)=>cmp(a[0], b[0]));
       setStage("boot","done");
       await loadCell($("cellSelect").value.trim());
     }catch(e){
@@ -889,6 +897,35 @@ excerpt: ""
       $("resultCard").style.display = "block";
       log("❌ Run error: " + (e?.message||e));
     }
+  });
+
+  const gi = $("geneInput"), sg = $("geneSuggest");
+  let sel = 0;
+  function pick(g){ gi.value = g; sg.style.display = "none"; }
+  function suggest(){
+    const q = gi.value.trim().toUpperCase(), hits = [];
+    if(q && gsort) for(const [u, g] of gsort){ if(u.startsWith(q)){ hits.push(g); if(hits.length === 8) break; } }
+    sg.textContent = ""; sel = 0;
+    if(!hits.length){ sg.style.display = "none"; return; }
+    hits.forEach((g, i)=>{
+      const d = document.createElement("div");
+      d.textContent = g; if(!i) d.className = "on";
+      d.addEventListener("mousedown", (ev)=>{ ev.preventDefault(); pick(g); });
+      sg.appendChild(d);
+    });
+    sg.style.left = gi.offsetLeft + "px"; sg.style.display = "block";
+  }
+  gi.addEventListener("input", suggest);
+  gi.addEventListener("blur", ()=>{ sg.style.display = "none"; });
+  gi.addEventListener("keydown", (ev)=>{
+    const it = sg.children, n = it.length;
+    if(sg.style.display !== "block" || !n) return;
+    if(ev.key === "ArrowDown" || ev.key === "ArrowUp"){
+      ev.preventDefault(); it[sel].className = "";
+      sel = (sel + (ev.key === "ArrowDown" ? 1 : n - 1)) % n; it[sel].className = "on";
+    }
+    else if(ev.key === "Enter" || ev.key === "Tab"){ ev.preventDefault(); pick(it[sel].textContent); }
+    else if(ev.key === "Escape") sg.style.display = "none";
   });
 
   boot();
