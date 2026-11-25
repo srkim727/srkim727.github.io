@@ -166,7 +166,7 @@ excerpt: ""
 
     <label class="inline-ctl" style="flex:1;min-width:240px;">
       <span>Genes</span>
-      <input id="geneInput" type="text" value="CD3D,KRT5,CDH19,PTPRC,CD79A,MS4A1" style="flex:1;min-width:200px;">
+      <input id="geneInput" type="text" placeholder="CD3D,KRT5,PTPRC" style="flex:1;min-width:200px;">
     </label>
 
     <button class="btn btn-primary" id="runBtn" type="button" disabled>Explore</button>
@@ -388,7 +388,7 @@ excerpt: ""
   });
 
   $("runBtn").addEventListener("click", async ()=>{
-    const cell = $("cellSelect").value.trim(), geneStr = $("geneInput").value.trim();
+    const cell = $("cellSelect").value.trim(), geneStr = $("geneInput").value.trim() || $("geneInput").placeholder;
     if(!cur || cur.cell !== cell){ alert("Please wait until the assets finish loading."); return; }
     if(!geneStr){ alert("Enter gene symbols (comma-separated)."); return; }
     hideResult(); setStage("plot","active"); stage(60, "Plotting …");
@@ -419,17 +419,18 @@ excerpt: ""
       if(csvURL) URL.revokeObjectURL(csvURL);
       pngURL = URL.createObjectURL(png);
       csvURL = URL.createObjectURL(new Blob([lines.join("\n") + "\n"], {type:"text/csv"}));
-      const stem = (geneStr.split(",").map(g=>g.trim()).filter(Boolean).slice(0,4).join("_") || "plot").replace(/[\s/\\]+/g,"_");
+      const name = "geneplot_" + (1000 + Math.floor(Math.random()*9000));
       $("plotImg").src = pngURL;
       $("plotImg").style.width = Math.round(W*150/72) + "px";
       $("plotImg").style.display = "block";
       for(const [id, url, ext] of [["downloadPNG", pngURL, "png"], ["downloadCSV", csvURL, "csv"]]){
         $(id).href = url;
-        $(id).download = `${cell}_${stem}.${ext}`;
-        $(id).textContent = `⬇ Download ${cell}_${stem}.${ext}`;
+        $(id).download = `${name}.${ext}`;
+        $(id).textContent = `⬇ Download ${name}.${ext}`;
         $(id).style.display = "inline-flex";
       }
-      $("resultSummary").innerHTML = `${cell} · ${geneStr.split(',').length} genes <span class="stat">plot rendered</span>`;
+      const n = geneStr.split(",").length;
+      $("resultSummary").innerHTML = `${cell} · ${n} gene${n === 1 ? "" : "s"} <span class="stat">plot rendered</span>`;
       $("resultCard").style.display = "block";
       setStage("plot","done"); stage(100, "Done");
       log("✅ Plot ready.");
