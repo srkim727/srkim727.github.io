@@ -467,7 +467,7 @@ excerpt: ""
     const {v, s, e} = token(), q = v.slice(s, e).trim().toUpperCase(), hits = [];
     if(q && gsort) for(const [u, g] of gsort){ if(u.startsWith(q)){ hits.push(g); if(hits.length === 8) break; } }
     sg.textContent = ""; sel = 0;
-    if(!hits.length || (hits.length === 1 && hits[0].toUpperCase() === q)){ sg.style.display = "none"; return; }
+    if(!hits.length){ sg.style.display = "none"; return; }
     hits.forEach((g, i)=>{
       const d = document.createElement("div");
       d.textContent = g; if(!i) d.className = "on";
