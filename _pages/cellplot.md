@@ -8,9 +8,6 @@ excerpt: ""
 
 {% raw %}
 
-<!-- Pyodide -->
-<script defer src="https://cdn.jsdelivr.net/pyodide/v0.26.3/full/pyodide.js"></script>
-
 <style>
   .pg-wrap{
     --accent:#3b82f6; --accent-dark:#2563eb; --accent-light:#dbeafe;
@@ -88,12 +85,12 @@ excerpt: ""
   .pg-wrap .result-summary{font-size:14px;color:var(--text);font-weight:500;flex:1;min-width:180px;}
   .pg-wrap .result-summary .stat{color:var(--muted);font-weight:400;font-size:12px;margin-left:6px;}
   .pg-wrap .btn-download{
-    background:var(--ok);border-color:var(--ok);color:#fff;padding:0 10px;height:26px;
+    background:var(--ok);border-color:var(--ok);color:#fff !important;padding:0 10px;height:26px;
     font-size:11px;letter-spacing:.01em;
     display:inline-flex;align-items:center;gap:4px;text-decoration:none;font-weight:500;
     border:1px solid var(--ok);border-radius:5px;transition:background .15s,border-color .15s;
   }
-  .pg-wrap .btn-download:hover{background:var(--ok-dark);border-color:var(--ok-dark);color:#fff;text-decoration:none;}
+  .pg-wrap .btn-download:hover{background:var(--ok-dark);border-color:var(--ok-dark);color:#fff !important;text-decoration:none;}
   .pg-wrap .plot-img{max-width:100%;border:1px solid var(--border);border-radius:6px;background:#fff;display:block;}
 
   /* Info meta-panel */
@@ -113,6 +110,7 @@ excerpt: ""
     .pg-wrap{margin:8px;}
     .pg-wrap .panel{padding:12px;}
     .pg-wrap .stages{font-size:11px;}
+    .pg-wrap .btn-download{height:auto;min-height:26px;padding:4px 10px;word-break:break-all;}
   }
 
   /* ---------- polish v2 ---------- */
@@ -223,10 +221,16 @@ excerpt: ""
 
 <script>
 (function(){
-  // -------- config --------
-  const DATA_BASE = "/assets/data/"; // trailing slash
+  const DATA_BASE = "/assets/data/";
+  const FONT = "'DejaVu Sans', Verdana, sans-serif";
+  const ACCENT = "#3b82f6", GRID = "#e5e7eb", PAD = 1.08*10.8;
+  const DEF = {l:0.125, r:0.9, b:0.11, t:0.88, hs:0.2};
+  const RDYLBU = [[0.6470588235294118,0,0.14901960784313725],[0.8431372549019608,0.18823529411764706,0.15294117647058825],
+    [0.9568627450980393,0.42745098039215684,0.2627450980392157],[0.9921568627450981,0.6823529411764706,0.3803921568627451],
+    [0.996078431372549,0.8784313725490196,0.5647058823529412],[1,1,0.7490196078431373],[0.8784313725490196,0.9529411764705882,0.9725490196078431],
+    [0.6705882352941176,0.8509803921568627,0.9137254901960784],[0.4549019607843137,0.6784313725490196,0.8196078431372549],
+    [0.27058823529411763,0.4588235294117647,0.7058823529411765],[0.19215686274509805,0.21176470588235294,0.5843137254901961]].reverse();
 
-  // -------- helpers --------
   const $ = (id)=>document.getElementById(id);
   function setDisabled(id, v){ const el=$(id); if(el) el.disabled = !!v; }
   function log(msg){
@@ -247,26 +251,6 @@ excerpt: ""
   function resetStages(){
     setStageState("boot","pending"); setStageState("data","pending"); setStageState("plot","pending");
   }
-  async function fetchToFS(url, fsPath, {optional=false,label=null}={}){
-    try{
-      // Allow browser HTTP cache (200 first time, 304 thereafter — fast on revisits).
-      const r = await fetch(url);
-      if(!r.ok){
-        if(optional){
-          log(`⚠️ Optional ${label||url} missing: HTTP ${r.status} for ${url}`);
-          return false;
-        }
-        throw new Error(`HTTP ${r.status} for ${url}`);
-      }
-      const buf = new Uint8Array(await r.arrayBuffer());
-      pyodide.FS.writeFile(fsPath, buf);
-      log(`✅ ${label||url} (${(buf.length/1e6).toFixed(2)} MB)`);
-      return true;
-    }catch(e){
-      if(optional){ log(`⚠️ Optional ${label||url} skipped: ` + (e?.message||e)); return false; }
-      throw e;
-    }
-  }
   function clearImage(){
     $("plotImg").style.display = "none";
     $("plotImg").removeAttribute("src");
@@ -275,9 +259,6 @@ excerpt: ""
     $("resultSummary").textContent = "";
     $("downloadPNG").style.display = "none";
   }
-
-  // -------- static dropdown lists (alphabetical) --------
-  const LEVELS = ["level1","level2"];
 
   const CELLS_L1 = [
  'Astrocyte','B_GC','B_mature','B_progenitor','Ciliated','Dendritic_classical',
@@ -341,139 +322,392 @@ excerpt: ""
     }
   }
   populateCells();
+  $("levelSelect").addEventListener("change", populateCells);
 
-  $("levelSelect").addEventListener("change", ()=>{
-    populateCells();
-  });
+  const n2 = (v)=>+v.toFixed(2);
+  const union = (a,b)=> !a ? b : !b ? a : [Math.min(a[0],b[0]), Math.min(a[1],b[1]), Math.max(a[2],b[2]), Math.max(a[3],b[3])];
+  const rgbS = (c)=>"rgb(" + c.slice(0,3).map(x=>Math.round(x*255)).join(",") + ")";
+  const hexRgb = (h)=>[1,3,5].map(i=>parseInt(h.slice(i,i+2),16)/255);
+  const esc = (s)=>String(s).replace(/[&<>"]/g, c=>"&#" + c.charCodeAt(0) + ";");
+  const ctx = document.createElement("canvas").getContext("2d");
+  const tw = (s,fs,b)=>{ ctx.font = (b ? "bold " : "") + fs + "px " + FONT; return ctx.measureText(s).width; };
 
-  // -------- state --------
-  let pyodide=null, FS=null;
-  let booted=false, pngURL=null;
-
-  // -------- boot --------
-  async function boot(){
+  const cache = new Map();
+  async function getFile(url, label, {optional=false, json=false}={}){
     try{
-      setStageState("boot","active");
-      stage(2, "Initializing Pyodide…");
-      log("⏳ Boot: waiting for pyodide.js …");
-      await new Promise((res, rej)=>{
-        const t0=performance.now();
-        (function check(){
-          if(typeof globalThis.loadPyodide==="function") return res();
-          if(performance.now()-t0>20000) return rej(new Error("Timeout waiting for loadPyodide()"));
-          setTimeout(check,100);
-        })();
-      });
-
-      log("⏳ Boot: initializing Pyodide…");
-      pyodide = await globalThis.loadPyodide({ indexURL: "https://cdn.jsdelivr.net/pyodide/v0.26.3/full/" });
-      FS = pyodide.FS;
-      log("✅ Pyodide " + pyodide.version + " loaded.");
-
-      stage(6, "Loading core packages (numpy, pandas, matplotlib)…");
-      log("⏳ Boot: loading core packages (numpy, pandas, matplotlib, micropip) …");
-      await pyodide.loadPackage(["numpy","pandas","matplotlib","micropip"]);
-      log("✅ Core packages loaded.");
-
-      stage(12, "Installing seaborn…");
-      log("⏳ Installing seaborn via micropip …");
-      // Pyodide 0.26.3 doesn't ship seaborn as a built-in package, so install
-      // it via micropip. (Previously tried loading seaborn directly via
-      // loadPackage — that broke boot. Reverted to the safe path.)
-      await pyodide.runPythonAsync(`
-import micropip
-await micropip.install("seaborn")
-      `);
-      log("✅ seaborn installed.");
-      stage(16, "Importing Python libs…");
-
-      await pyodide.runPythonAsync(`
-import sys, io, os, gzip, pickle as pkl, textwrap
-import numpy as np, pandas as pd, seaborn as sns
-import matplotlib as mpl
-mpl.use("Agg")
-import matplotlib.pyplot as plt
-from matplotlib.offsetbox import AnchoredText
-
-plt.rcParams['figure.dpi'] = 150
-
-def add_axes_note(ax, text, loc='upper right', fontsize=8, mono=True, frame=True, max_width=60):
-    wrapped = textwrap.fill(text, width=max_width)
-    kw = dict(size=fontsize)
-    if mono: kw['family'] = 'monospace'
-    at = AnchoredText(wrapped, loc=loc, prop=kw, frameon=frame, borderpad=0.4)
-    if frame:
-        at.patch.set_boxstyle("round,pad=0.3,rounding_size=0.8")
-        at.patch.set_alpha(0.85)
-        at.patch.set_edgecolor('#999')
-        at.patch.set_facecolor('#f8f9fb')
-    ax.add_artist(at)
-    return at
-
-def add_fig_note(fig, text, x=0.01, y=0.99, fontsize=9, mono=True, ha='left', va='top', max_width=120):
-    wrapped = textwrap.fill(text, width=max_width)
-    kw = dict(fontsize=fontsize, ha=ha, va=va)
-    if mono: kw['family'] = 'monospace'
-    fig.text(x, y, wrapped, bbox=dict(boxstyle='round,pad=0.3',
-                                      facecolor='#f8f9fb', edgecolor='#999', alpha=0.85),
-             **kw)
-      `);
-      log("✅ Python libs imported & backend set.");
-      booted = true;
-      setStageState("boot","done");
-      setDisabled("runBtn", false);
-      stage(0, "Ready — choose level/cell and click Explore.");
+      if(!cache.has(url)) cache.set(url, fetch(url).then(async r=>{
+        if(!r.ok) throw new Error(`HTTP ${r.status} for ${url}`);
+        const t = await r.text();
+        return {size: t.length, data: json ? JSON.parse(t) : parseCSV(t)};
+      }));
+      const v = await cache.get(url);
+      log(`✅ ${label} (${(v.size/1e6).toFixed(2)} MB)`);
+      return v.data;
     }catch(e){
-      log("❌ Boot failed: " + (e?.message||e));
-      setStageState("boot","err");
-      stage(0, "Boot failed");
+      cache.delete(url);
+      if(optional){ log(`⚠️ Optional ${label} missing: ${e?.message||e}`); return null; }
+      throw e;
     }
   }
 
-  // -------- run --------
+  function parseCSV(t){
+    let rows;
+    if(t.includes('"')){
+      rows = []; let row = [], f = "", q = false;
+      for(let i=0;i<t.length;i++){
+        const c = t[i];
+        if(q){ if(c === '"'){ if(t[i+1] === '"'){ f += '"'; i++; } else q = false; } else f += c; }
+        else if(c === '"') q = true;
+        else if(c === ","){ row.push(f); f = ""; }
+        else if(c === "\n" || c === "\r"){ if(c === "\r" && t[i+1] === "\n") i++; row.push(f); rows.push(row); row = []; f = ""; }
+        else f += c;
+      }
+      if(f !== "" || row.length){ row.push(f); rows.push(row); }
+    } else rows = t.split(/\r?\n/).map(l=>l.split(","));
+    const head = rows.shift().slice(1), body = rows.filter(r=>r.length > 1 || r[0] !== "");
+    return { index: body.map(r=>r[0]), has: (c)=>head.includes(c),
+             col: (c, num)=>{ const j = head.indexOf(c) + 1; return body.map(r=>num ? (r[j] === "" || r[j] === undefined ? NaN : +r[j]) : r[j]); } };
+  }
+
+  function pyDivmod(x, y){
+    let mod = x % y, div = (x - mod)/y;
+    if(mod && ((y < 0) !== (mod < 0))){ mod += y; div -= 1; }
+    let fd = 0;
+    if(div){ fd = Math.floor(div); if(div - fd > 0.5) fd += 1; }
+    return [fd, mod];
+  }
+  function maxN(lo, hi, nbins){
+    const scale = 10 ** Math.floor(Math.log10((hi - lo)/nbins)), raw = (hi - lo)/nbins;
+    const steps = [0.1,0.2,0.25,0.5,1,2,2.5,5,10,20].map(s=>s*scale);
+    let ticks = [];
+    for(let i = steps.findIndex(s=>s >= raw); i < steps.length; i++){
+      const st = steps[i], best = pyDivmod(lo, st)[0]*st;
+      let [dl, ml] = pyDivmod(lo - best, st), [dh, mh] = pyDivmod(hi - best, st);
+      if(Math.abs(ml/st - 1) < 1e-10) dl += 1;
+      if(!(Math.abs(mh/st) < 1e-10)) dh += 1;
+      ticks = [];
+      for(let k = dl; k <= dh; k++) ticks.push(k*st + best);
+      if(ticks.filter(t=>t <= hi && t >= lo).length >= 2) break;
+    }
+    return ticks;
+  }
+  function scalarFmt(locs){
+    const rint = (y)=>{ const f = Math.floor(y), d = y - f; return d > 0.5 ? f + 1 : d < 0.5 ? f : (f % 2 ? f + 1 : f); };
+    let range = Math.max(...locs) - Math.min(...locs);
+    if(range === 0) range = Math.max(...locs.map(Math.abs)) || 1;
+    const oom = Math.floor(Math.log10(range)), thresh = 1e-3 * 10 ** oom;
+    let sig = Math.max(0, 3 - oom);
+    while(sig >= 0 && Math.max(...locs.map(v=>Math.abs(v - rint(v * 10 ** sig)/10 ** sig))) < thresh) sig--;
+    sig++;
+    return (v)=>(Math.abs(v) < 1e-8 ? 0 : v).toFixed(sig).replace("-", "−");
+  }
+  function autoscale(lo, hi, sticky=[]){
+    const mx = Math.max(Math.abs(lo), Math.abs(hi));
+    if(hi - lo <= mx*1e-15){ if(!lo && !hi){ lo = -0.05; hi = 0.05; } else { lo -= 0.05*Math.abs(lo); hi += 0.05*Math.abs(hi); } }
+    const tol = 1e-5*Math.max(Math.abs(lo), Math.abs(hi), hi - lo), d = 0.05*(hi - lo);
+    const b0 = sticky.filter(s=>s < lo + tol), b1 = sticky.filter(s=>s > hi - tol);
+    return [b0.length ? Math.max(lo - d, ...b0) : lo - d, b1.length ? Math.min(hi + d, ...b1) : hi + d];
+  }
+  function autoTicks(A, ax){
+    const lim = ax === "x" ? A.xl : A.yl, lo = Math.min(...lim), hi = Math.max(...lim);
+    const nb = Math.min(9, Math.max(1, Math.floor((ax === "x" ? A.w/27 : A.h/18))));
+    const raw = maxN(lo, hi, nb), fmt = scalarFmt(raw), tol = 1e-10*(hi - lo);
+    return raw.filter(v=>v >= lo - tol && v <= hi + tol).map(v=>({v, s: fmt(v)}));
+  }
+  function npArgsort(v){
+    const t = v.map((_,i)=>i), sw = (a,b)=>{ const x = t[a]; t[a] = t[b]; t[b] = x; }, stack = [];
+    let pl = 0, pr = v.length - 1;
+    for(;;){
+      while(pr - pl > 15){
+        const pm = pl + ((pr - pl) >> 1);
+        if(v[t[pm]] < v[t[pl]]) sw(pm, pl);
+        if(v[t[pr]] < v[t[pm]]) sw(pr, pm);
+        if(v[t[pm]] < v[t[pl]]) sw(pm, pl);
+        const vp = v[t[pm]];
+        let pi = pl, pj = pr - 1;
+        sw(pm, pj);
+        for(;;){
+          do ++pi; while(v[t[pi]] < vp);
+          do --pj; while(vp < v[t[pj]]);
+          if(pi >= pj) break;
+          sw(pi, pj);
+        }
+        sw(pi, pr - 1);
+        if(pi - pl < pr - pi){ stack.push(pi + 1, pr); pr = pi - 1; } else { stack.push(pl, pi - 1); pl = pi + 1; }
+      }
+      for(let pi = pl + 1; pi <= pr; ++pi){
+        const vi = t[pi], vp = v[vi];
+        let pj = pi;
+        while(pj > pl && vp < v[t[pj - 1]]){ t[pj] = t[pj - 1]; pj--; }
+        t[pj] = vi;
+      }
+      if(!stack.length) break;
+      pr = stack.pop(); pl = stack.pop();
+    }
+    return t;
+  }
+  function desat(rgb, p){
+    const [r,g,b] = rgb, mx = Math.max(r,g,b), mn = Math.min(r,g,b), l = (mx + mn)/2;
+    if(mx === mn) return [r,g,b];
+    let s = l <= 0.5 ? (mx - mn)/(mx + mn) : (mx - mn)/(2 - mx - mn);
+    const rc = (mx - r)/(mx - mn), gc = (mx - g)/(mx - mn), bc = (mx - b)/(mx - mn);
+    const h = (((r === mx ? bc - gc : g === mx ? 2 + rc - bc : 4 + gc - rc)/6) % 1 + 1) % 1;
+    s *= p;
+    const m2 = l <= 0.5 ? l*(1 + s) : l + s - l*s, m1 = 2*l - m2;
+    const f = (x)=>{ x = (x % 1 + 1) % 1; return x < 1/6 ? m1 + (m2 - m1)*x*6 : x < 0.5 ? m2 : x < 2/3 ? m1 + (m2 - m1)*(2/3 - x)*6 : m1; };
+    return [f(h + 1/3), f(h), f(h - 1/3)];
+  }
+  function rdylbu(v){
+    const i = Math.min(255, Math.floor(Math.min(Math.max(v, 0), 1)*256)), x = i/255*10, k = Math.min(9, Math.floor(x)), f = x - k;
+    return rgbS(RDYLBU[k].map((c,j)=>c + (RDYLBU[k+1][j] - c)*f));
+  }
+  function erf(x){
+    const a = Math.abs(x);
+    if(a > 2.5){ let f = 0; for(let k = 60; k >= 1; k--) f = (k/2)/(a + f); return Math.sign(x)*(1 - Math.exp(-a*a)/Math.sqrt(Math.PI)/(a + f)); }
+    let term = a, s = a;
+    for(let k = 1; k < 200; k++){ term *= -a*a/k; const d = term/(2*k + 1); s += d; if(Math.abs(d) < 1e-17) break; }
+    return Math.sign(x)*2/Math.sqrt(Math.PI)*s;
+  }
+  function mwuP(a, b){
+    const n1 = a.length, n2 = b.length, n = n1 + n2, c = a.concat(b);
+    const idx = c.map((_,i)=>i).sort((i,j)=>c[i] - c[j] || i - j), rk = new Array(n);
+    let tie = 0;
+    for(let i = 0; i < n;){
+      let j = i;
+      while(j + 1 < n && c[idx[j+1]] === c[idx[i]]) j++;
+      for(let k = i; k <= j; k++) rk[idx[k]] = (i + j)/2 + 1;
+      tie += (j - i + 1)**3 - (j - i + 1); i = j + 1;
+    }
+    let R1 = 0; for(let k = 0; k < n1; k++) R1 += rk[k];
+    const vU = n > 1 ? n1*n2/12*((n + 1) - tie/(n*(n - 1))) : 0;
+    if(vU <= 0) return 1;
+    const z = (R1 - n1*(n1 + 1)/2 - n1*n2/2)/Math.sqrt(vU);
+    return 2*(1 - 0.5*(1 + erf(Math.abs(z)/Math.SQRT2)));
+  }
+  function stats(v){
+    const n = v.length; if(!n) return null;
+    const m = v.reduce((a,b)=>a + b, 0)/n;
+    const se = n > 1 ? Math.sqrt(v.reduce((a,b)=>a + (b - m)**2, 0)/(n - 1))/Math.sqrt(n) : NaN;
+    return {m, se, lo: m - se, hi: m + se};
+  }
+
+  function text(o){
+    const fs = o.fs, ls = o.ls || 1.2, lh = fs*0.96, ld = fs*0.21;
+    const parts = String(o.s).split("\n").map(l=>l.split(/\$_(.)\$/));
+    const ws = parts.map(p=>p.reduce((a,s,i)=>a + tw(s, i % 2 ? fs*0.7 : fs, o.b), 0));
+    const hd = parts.map(p=>p.length > 1 ? [fs*1.1, fs*0.275] : [lh, ld]), base = [];
+    hd.forEach(([h,d],k)=>base.push(k ? base[k-1] + hd[k-1][1] + Math.max(lh - ld, h - d)*ls : h - d));
+    const W = Math.max(...ws), Wb = o.rot && !o.anchor ? W*1.0167 : W, Ht = base[base.length - 1] + hd[hd.length - 1][1], h0 = base[0];
+    const fx = {left:0, center:0.5, right:1}[o.ha || "left"];
+    const fy = {top:0, center:Ht/2, bottom:Ht, baseline:h0, center_baseline:h0/2}[o.va || "baseline"];
+    let bx = 0, by = 0, tf = "", box;
+    if(!o.rot){ bx = o.x - fx*W; by = o.y - fy; box = [o.x - fx*Wb, by, o.x + (1 - fx)*Wb, by + Ht]; }
+    else if(o.anchor){ bx = -fx*W; by = -fy; tf = `translate(${n2(o.x)} ${n2(o.y)}) rotate(-90)`; box = [o.x + by, o.y - (1 - fx)*Wb, o.x + by + Ht, o.y + fx*Wb]; }
+    else {
+      const L = o.x - fx*Ht, T = o.y - {top:0, center:Wb/2, bottom:Wb}[o.va || "top"];
+      tf = `translate(${n2(L)} ${n2(T + W)}) rotate(-90)`; box = [L, T, L + Ht, T + Wb];
+    }
+    const sh = n2(fs*0.22);
+    const lines = parts.map((p,k)=>`<text x="${n2(bx + fx*(W - ws[k]))}" y="${n2(by + base[k])}">` +
+      p.map((s,i)=>i % 2 ? `<tspan font-size="${n2(fs*0.7)}" dy="${sh}">${esc(s)}</tspan>` : i ? `<tspan dy="${-sh}">${esc(s)}</tspan>` : esc(s)).join("") + `</text>`).join("");
+    return { box, svg: `<g font-size="${fs}"${o.b ? ' font-weight="bold"' : ""} fill="${o.color}"${tf ? ` transform="${tf}"` : ""}>${lines}</g>` };
+  }
+
+  function mkAx(x0, y0, w, h, xl, yl){
+    return {x0, y0, w, h, xl, yl, X: (v)=>x0 + (v - xl[0])/(xl[1] - xl[0])*w, Y: (v)=>y0 + h - (v - yl[0])/(yl[1] - yl[0])*h};
+  }
+  const clip = (A, id)=>`<clipPath id="${id}"><rect x="${n2(A.x0)}" y="${n2(A.y0)}" width="${n2(A.w)}" height="${n2(A.h)}"/></clipPath>`;
+  const rect = (x0, y0, x1, y1, a="")=>`<rect x="${n2(Math.min(x0,x1))}" y="${n2(Math.min(y0,y1))}" width="${n2(Math.abs(x1 - x0))}" height="${n2(Math.abs(y1 - y0))}"${a}/>`;
+  function errPath(A, i, lo, hi, vert){
+    const c = 0.075, P = (x,y)=>vert ? `${n2(A.X(x))} ${n2(A.Y(y))}` : `${n2(A.X(y))} ${n2(A.Y(x))}`;
+    return `M${P(i - c, lo)}L${P(i + c, lo)}M${P(i, lo)}L${P(i, hi)}M${P(i - c, hi)}L${P(i + c, hi)}`;
+  }
+
+  function deco(A, o){
+    const under = [], over = [], x1 = A.x0 + A.w, y1 = A.y0 + A.h, L = 6, P = 3.5;
+    let full = [A.x0, A.y0, x1, y1], lay = full.slice();
+    const add = (t, f)=>{ over.push(t.svg); full = union(full, t.box); lay = union(lay, f ? f(t.box) : t.box); return t.box; };
+    const tick = `stroke="${o.tc}" stroke-width="1.25"`;
+    const grid = (s)=>s === ":" ? `stroke="${GRID}" stroke-width="0.6" stroke-opacity="0.8" stroke-dasharray="0.6 0.99"` : `stroke="${GRID}" stroke-width="0.7" stroke-opacity="0.9"`;
+    const xb = (o.xt || []).map(t=>{
+      const x = A.X(t.v);
+      if(o.gx) under.push(`<path d="M${n2(x)} ${n2(A.y0)}V${n2(y1)}" ${grid(o.gx)}/>`);
+      over.push(`<path d="M${n2(x)} ${n2(y1)}v${L}" ${tick}/>`);
+      return add(text({x, y: y1 + L + P, s: t.s, fs: 9, color: o.tc, ha: "center", va: "top", rot: o.xrot}));
+    });
+    const yb = (o.yt || []).map(t=>{
+      const y = A.Y(t.v), xe = o.yr ? x1 : A.x0, sg = o.yr ? 1 : -1;
+      if(o.gy) under.push(`<path d="M${n2(A.x0)} ${n2(y)}H${n2(x1)}" ${grid(o.gy)}/>`);
+      over.push(`<path d="M${n2(xe)} ${n2(y)}h${sg*L}" ${tick}/>`);
+      return add(text({x: xe + sg*(L + P), y, s: t.s, fs: 9, color: o.tc, ha: o.yr ? "left" : "right", va: "center_baseline"}));
+    });
+    const cx = A.x0 + A.w/2, cy = A.y0 + A.h/2;
+    if(o.xlabel) add(text({x: cx, y: Math.max(y1, ...xb.map(b=>b[3])) + 4, s: o.xlabel, fs: 10, color: o.lc, ha: "center", va: "top"}), (b)=>[cx - 0.5, b[1], cx + 0.5, b[3]]);
+    if(o.ylabel) add(text({x: o.yr ? Math.max(x1, ...yb.map(b=>b[2])) + 4 : Math.min(A.x0, ...yb.map(b=>b[0])) - 4, y: cy, s: o.ylabel, fs: 10,
+      color: o.lc, ha: "center", va: o.yr ? "top" : "bottom", rot: 1, anchor: 1}), (b)=>[b[0], cy - 0.5, b[2], cy + 0.5]);
+    if(o.title) add(text({x: cx, y: A.y0 - 8, s: o.title, fs: 11, b: 1, color: "#111827", ha: "center", va: "baseline"}), (b)=>[cx - 0.5, b[1], cx + 0.5, b[3]]);
+    if(o.sp) over.push(`<path d="M${n2(A.x0)} ${n2(A.y0)}V${n2(y1)}H${n2(x1)}" fill="none" stroke="${o.sc}" stroke-width="0.8"/>`);
+    if(o.outline) over.push(rect(A.x0, A.y0, x1, y1, ` fill="none" stroke="${o.outline}" stroke-width="0.8"`));
+    return {under, over, full, lay};
+  }
+
+  function tight1(W, H, pos, lay){
+    const ml = Math.max(pos[0] - lay[0], 0) + PAD, mr = Math.max(lay[2] - pos[2], 0) + PAD;
+    const mt = Math.max(pos[1] - lay[1], 0) + PAD, mb = Math.max(lay[3] - pos[3], 0) + PAD;
+    return ml + mr < W && mt + mb < H ? {l: ml/W, r: 1 - mr/W, b: mb/H, t: 1 - mt/H} : null;
+  }
+  const header = (W, H, f, s)=>text({x: 0.01*W, y: H - f*H, s, fs: 15, b: 1, color: "#111827", va: "bottom"});
+  const finish = (parts, box)=>({svg: parts.join(""), box: [box[0] - 7.2, box[1] - 7.2, box[2] + 7.2, box[3] + 7.2]});
+
+  function fig1(D){
+    const W = 504, H = 720, xs = D.ov.map(r=>r[1]), ys = D.ov.map(r=>r[2]), nb = D.bars.length, ok = D.bars.filter(Boolean);
+    const xl = autoscale(Math.min(...xs), Math.max(...xs)), yl = autoscale(Math.min(...ys), Math.max(...ys));
+    const bl = autoscale(Math.min(0, ...ok.map(b=>isNaN(b.lo) ? b.m : b.lo)), Math.max(0, ...ok.map(b=>isNaN(b.hi) ? b.m : b.hi)), [0]);
+    const hl = D.ov.find(r=>r[0] === D.cell), fillB = rgbS(desat(hexRgb(ACCENT), 0.75));
+    const build = (p)=>{
+      const x0 = p.l*W, w = (p.r - p.l)*W, top = (1 - p.t)*H, ch = (p.t - p.b)*H/(2 + p.hs), u = ch/5;
+      const A = mkAx(x0, top, w, 7*u, xl, yl), B = mkAx(x0, top + 7*u + p.hs*ch, w, 3*u, [-0.5, nb - 0.5], bl);
+      const dA = deco(A, {xt: autoTicks(A, "x"), yt: autoTicks(A, "y"), tc: "#374151", lc: "#111827", sc: "#9ca3af", sp: 1, gx: ":", gy: ":",
+        xlabel: "Organ specificity", ylabel: "Average proportion"});
+      const dB = deco(B, {xt: D.order.map((s,v)=>({v, s})), xrot: 1, yt: autoTicks(B, "y"), tc: "#374151", lc: "#111827", sc: "#9ca3af", sp: 1, gy: ":",
+        ylabel: "Proportion", title: D.cell});
+      const pts = [`<g fill="#d1d5db" fill-opacity="0.8">${D.ov.map(r=>`<circle cx="${n2(A.X(r[1]))}" cy="${n2(A.Y(r[2]))}" r="2.55"/>`).join("")}</g>`], extra = [];
+      if(hl){
+        const x = A.X(hl[1]), y = A.Y(hl[2]), sp = tw("  " + D.cell, 9, 1) - tw(D.cell, 9, 1);
+        pts.push(`<circle cx="${n2(x)}" cy="${n2(y)}" r="5.92" fill="${ACCENT}" stroke="#000" stroke-width="0.8"/>`);
+        const t1 = text({x: x + sp, y, s: D.cell, fs: 9, b: 1, color: ACCENT, va: "center"});
+        const t2 = text({x: A.X(Math.max(...xs)), y: A.Y(Math.max(...ys)), s: `Organ spec.: ${hl[1].toFixed(2)}\nAverage prop.: ${hl[2].toFixed(2)}`,
+          fs: 8, color: "#6b7280", ha: "right", va: "top"});
+        t1.box[0] -= sp;
+        const b = t2.box;
+        extra.push(t1.svg, rect(b[0] - 3.2, b[1] - 3.2, b[2] + 3.2, b[3] + 3.2, ` rx="3.2" fill="#fafbfc" stroke="${GRID}" stroke-width="0.6"`), t2.svg);
+        for(const bb of [t1.box, t2.box]){ dA.full = union(dA.full, bb); dA.lay = union(dA.lay, bb); }
+      }
+      const bars = D.bars.map((b,i)=>b ? rect(B.X(i - 0.4), B.Y(0), B.X(i + 0.4), B.Y(b.m)) : "").join("");
+      const errs = D.bars.map((b,i)=>b && !isNaN(b.se) ? errPath(B, i, b.lo, b.hi, 1) : "").join("");
+      const parts = [clip(A, "pc1a"), clip(B, "pc1b"), ...dA.under, `<g clip-path="url(#pc1a)">${pts.join("")}</g>`, ...dA.over, ...extra,
+        ...dB.under, `<g clip-path="url(#pc1b)"><g fill="${fillB}" stroke="#000" stroke-width="0.5">${bars}</g>` +
+        `<path d="${errs}" fill="none" stroke="#6b7280" stroke-width="0.8" stroke-linecap="round"/></g>`, ...dB.over];
+      return {A, B, dA, dB, parts};
+    };
+    const r1 = build(DEF), dec = (A, d)=>[A.x0 - d.lay[0], d.lay[2] - A.x0 - A.w, A.y0 - d.lay[1], d.lay[3] - A.y0 - A.h];
+    const a = dec(r1.A, r1.dA), b = dec(r1.B, r1.dB);
+    const ml = Math.max(a[0], b[0], 0) + PAD, mr = Math.max(a[1], b[1], 0) + PAD, mt = Math.max(a[2], 0) + PAD, mb = Math.max(b[3], 0) + PAD;
+    const vs = a[3] + b[2] + PAD, va = (H - mt - mb - vs)/2;
+    const r = ml + mr < W && mt + mb < H && va > 0 ? build({l: ml/W, r: 1 - mr/W, b: mb/H, t: 1 - mt/H, hs: vs/va}) : r1;
+    const h1 = header(W, H, 1.10, "Organ distribution"), parts = [...r.parts, h1.svg];
+    let box = union(union(r.dA.full, r.dB.full), h1.box);
+    if(D.mls.length){
+      const h2 = text({x: 0.01*W, y: H - 1.06*H, s: "curated marker: " + D.mls.join(", "), fs: 10, color: "#374151", va: "bottom"});
+      parts.push(h2.svg); box = union(box, h2.box);
+    }
+    return finish(parts, box);
+  }
+
+  function fig2(D){
+    const rows = D.match, n = rows.length;
+    if(!n) return null;
+    const W = 576, H = n*0.42*72, s = n === 1 ? 1 : 0.2 + 0.2/Math.max(1, n/3 + 0.75);
+    const build = (p)=>{
+      const gx = p.l*W, GW = (p.r - p.l)*W, gy = (1 - p.t)*H, GH = (p.t - p.b)*H;
+      const A = mkAx(gx, gy, 0.65*GW, GH, [-0.5, 3.5], [-0.5, n - 0.5]);
+      const cw = 0.15*GW, chh = s*GH, [bw, bh] = chh > 10*cw ? [cw, 10*cw] : [chh/10, chh];
+      const C = mkAx(gx + 0.85*GW, gy + 0.5*(1 - s)*GH + (chh - bh)/2, bw, bh, [0, 1], [0, 1]);
+      const dA = deco(A, {xt: [[0,"SEN"],[1,"PPV"],[2,"CFS"],[3.5,"score"]].map(([v,s])=>({v, s})), yt: rows.map((r,k)=>({v: n - 1 - k, s: r.name})),
+        tc: "#374151", gx: "-", gy: "-"});
+      const dC = deco(C, {yt: [0, 0.5, 1].map(v=>({v, s: v.toFixed(1)})), yr: 1, tc: "#374151", lc: "#111827", ylabel: "values", outline: "#9ca3af"});
+      const ix0 = A.X(3), ix1 = A.X(3.9), ib = [ix0, A.y0, ix1, A.y0 + A.h];
+      const dots = [0, 1, 2].map(j=>rows.map((r,k)=>{
+        const c = Math.min(Math.max(r.v[j], 0), 1);
+        return c > 0 ? `<circle cx="${n2(A.X(j))}" cy="${n2(A.Y(n - 1 - k))}" r="${n2(Math.sqrt(250*c)/2)}" fill="${rdylbu(r.v[j])}"/>` : "";
+      }).join("")).join("");
+      const bars = rows.map((r,k)=>rect(ix0, A.Y(n - 1 - k + 0.35), ix0 + (ix1 - ix0)*Math.min(Math.max(r.v[3], 0), 1)/1.1, A.Y(n - 1 - k - 0.35))).join("");
+      const grad = `<linearGradient id="pc2g" x1="0" y1="1" x2="0" y2="0">${RDYLBU.map((c,k)=>`<stop offset="${k/10}" stop-color="${rgbS(c)}"/>`).join("")}</linearGradient>`;
+      const parts = [clip(A, "pc2a"), grad, ...dA.under, `<g clip-path="url(#pc2a)" stroke="#000" stroke-width="0.5">${dots}</g>`,
+        rect(...ib, ' fill="#fff"'), `<g fill="${ACCENT}" stroke="#000" stroke-width="0.5">${bars}</g>`, ...dA.over,
+        rect(C.x0, C.y0, C.x0 + C.w, C.y0 + C.h, ' fill="url(#pc2g)"'), ...dC.over];
+      return {pos: [gx, gy, gx + GW, gy + GH], lay: union(union(dA.lay, dC.lay), ib), full: union(union(dA.full, dC.full), ib), parts};
+    };
+    const r1 = build(DEF), p = tight1(W, H, r1.pos, r1.lay), r = p ? build(p) : r1, h = header(W, H, 1.06, "Matching annotation");
+    return finish([...r.parts, h.svg], union(r.full, h.box));
+  }
+
+  function fig3(D){
+    const t = D.tme, cmap = D.cmap;
+    if(!t || !t.has(D.cell) || !t.has("Cancer_Tissue")) return null;
+    const vals = t.col(D.cell, 1), tis = t.col("Cancer_Tissue"), present = new Set(tis);
+    const order = ["Control","Non-malignant disease","Cancer_AdjNorm","Cancer_Blood","Cancer_Tumor","Cancer_Metastasis"].filter(g=>present.has(g));
+    if(!order.length || order.some(g=>!cmap[g])) return null;
+    const grp = (g)=>vals.filter((v,i)=>tis[i] === g && !isNaN(v)), st = order.map(g=>stats(grp(g))), ok = st.filter(Boolean);
+    let xl = autoscale(Math.min(0, ...ok.map(s=>isNaN(s.lo) ? s.m : s.lo)), Math.max(0, ...ok.map(s=>isNaN(s.hi) ? s.m : s.hi)), [0]), br = null;
+    const tv = grp("Cancer_Tumor"), cv = grp("Control");
+    if(tv.length && cv.length){
+      const p = mwuP(tv, cv), mean = (a)=>a.reduce((x,y)=>x + y, 0)/a.length, lfc = Math.log2((mean(tv) + 1e-6)/(mean(cv) + 1e-6));
+      const xr = xl[1] - xl[0] > 0 ? xl[1] - xl[0] : 1, xb = xl[1] + 0.04*xr;
+      br = {y0: order.indexOf("Control"), y1: order.indexOf("Cancer_Tumor"), xb, cap: 0.012*xr, tx: xb + 0.025*xr,
+        s: `log$_2$FC = ${(lfc < 0 ? "-" : "+") + Math.abs(lfc).toFixed(2)}\np = ${isNaN(p) ? "nan" : p < 0.001 ? "<0.001" : p.toFixed(3)}`};
+      xl = [xl[0], xb + 0.32*xr];
+    }
+    const W = 288, H = 158.4, k = order.length, ya = autoscale(-0.4, k - 0.6), yl = br ? [ya[1], ya[0]] : [k - 0.5, -0.5];
+    const build = (p)=>{
+      const A = mkAx(p.l*W, (1 - p.t)*H, (p.r - p.l)*W, (p.t - p.b)*H, xl, yl);
+      const d = deco(A, {xt: autoTicks(A, "x"), yt: order.map((s,v)=>({v, s})), tc: "#000", lc: "#000", sc: "#000", sp: 1, gx: ":", xlabel: D.cell});
+      const bars = st.map((s,i)=>s ? rect(A.X(0), A.Y(i - 0.4), A.X(s.m), A.Y(i + 0.4), ` fill="${rgbS(desat(cmap[order[i]], 0.75))}"`) : "").join("");
+      const errs = st.map((s,i)=>s && !isNaN(s.se) ? errPath(A, i, s.lo, s.hi, 0) : "").join("");
+      const parts = [clip(A, "pc3a"), ...d.under, `<g clip-path="url(#pc3a)"><g stroke="#000" stroke-width="0.5">${bars}</g>` +
+        `<path d="${errs}" fill="none" stroke="#000" stroke-width="0.8" stroke-linecap="round"/></g>`, ...d.over];
+      let full = d.full, lay = d.lay;
+      if(br){
+        const xb = A.X(br.xb), xc = A.X(br.xb - br.cap), ya = A.Y(br.y0), yb = A.Y(br.y1);
+        const tt = text({x: A.X(br.tx), y: A.Y((br.y0 + br.y1)/2), s: br.s, fs: 7, color: "#000", va: "center", ls: 1.3});
+        const lb = [Math.min(xc, xb), Math.min(ya, yb), Math.max(xc, xb), Math.max(ya, yb)];
+        parts.push(`<path d="M${n2(xb)} ${n2(ya)}V${n2(yb)}M${n2(xc)} ${n2(ya)}H${n2(xb)}M${n2(xc)} ${n2(yb)}H${n2(xb)}" fill="none" stroke="#000" stroke-width="0.8" stroke-linecap="round"/>`, tt.svg);
+        full = union(union(full, lb), tt.box); lay = union(union(lay, lb), tt.box);
+      }
+      return {pos: [A.x0, A.y0, A.x0 + A.w, A.y0 + A.h], full, lay, parts};
+    };
+    const r1 = build(DEF), p = tight1(W, H, r1.pos, r1.lay), r = p ? build(p) : r1, h = header(W, H, 1.06, "TME distribution");
+    return finish([...r.parts, h.svg], union(r.full, h.box));
+  }
+
+  async function svgToPng(svg, W, H){
+    const s = Math.min(300/72, Math.sqrt(16e6/(W*H)), 8000/Math.max(W,H));
+    const pw = Math.round(W*s), ph = Math.round(H*s);
+    const url = URL.createObjectURL(new Blob([svg.replace("<svg ", `<svg width="${pw}" height="${ph}" `)], {type:"image/svg+xml"}));
+    try{
+      const img = new Image();
+      await new Promise((ok,no)=>{ img.onload = ok; img.onerror = ()=>no(new Error("SVG render failed")); img.src = url; });
+      const cv = document.createElement("canvas");
+      cv.width = pw; cv.height = ph;
+      const c2 = cv.getContext("2d");
+      c2.fillStyle = "#fff"; c2.fillRect(0, 0, pw, ph);
+      c2.drawImage(img, 0, 0, pw, ph);
+      return await new Promise((ok,no)=>cv.toBlob(b=>b ? ok(b) : no(new Error("PNG encode failed")), "image/png"));
+    } finally { URL.revokeObjectURL(url); }
+  }
+
+  let pngURL = null;
   $("runBtn").addEventListener("click", async ()=>{
-    if(!booted){ alert("Please wait until the setup finishes."); return; }
     clearImage();
     setStageState("data","active");
     setStageState("plot","pending");
-
     const level = $("levelSelect").value.trim();
     const cell  = $("cellSelect").value.trim();
-
+    const cell1 = cell.includes("|") ? cell.split("|")[0] : cell;
+    const base = DATA_BASE + "cell_profile/", tme = base + "cancer_dist/";
     stage(10, "Preparing files …");
     log(`▶️ Explore: level=${level}, cell=${cell}`);
 
-    // derive file paths
-    const baseProfile = DATA_BASE + "cell_profile/";
-    const f_overall = `${baseProfile}overall_${level}.csv`;
-    const f_profile = `${baseProfile}profile_${level}.csv`;
-    const f_match   = `${baseProfile}matching_res.csv`;
-
-    // markers
-    const f_m_l1 = `${baseProfile}marker/Level1_mdic.pkl`;
-    const cell1 = (cell.includes("|") ? cell.split("|")[0] : cell);
-    const f_m_l2 = `${baseProfile}marker/${cell1}_mdic.pkl`;
-
-    // TME (optional)
-    const tme_dir = `${baseProfile}cancer_dist/`;
-    const f_prop  = `${tme_dir}prop_${cell1}.csv`;
-    const f_pval  = `${tme_dir}pval_${cell1}.csv`;
-    const f_cmap  = `${tme_dir}cmapdic_cat.pkl`;
-
+    let F;
     try{
-      // ensure target dir
-      try{ FS.mkdir("/work"); }catch(_){}
-      // Run all 7 fetches in parallel (3 required + 1 marker + 3 optional TME).
-      // Total time = slowest single fetch, not the sum.
-      const f_marker = (level==="level1") ? f_m_l1 : f_m_l2;
-      await Promise.all([
-        fetchToFS(f_overall, "/work/overall.csv",  {label:"overall"}),
-        fetchToFS(f_profile, "/work/profile.csv",  {label:"profile"}),
-        fetchToFS(f_match,   "/work/matching.csv", {label:"matching_res"}),
-        fetchToFS(f_marker,  "/work/marker.pkl",   {label:`${cell1} marker dict`}),
-        fetchToFS(f_prop,    "/work/prop.csv",     {optional:true, label:`TME prop_${cell1}.csv`}),
-        fetchToFS(f_pval,    "/work/pval.csv",     {optional:true, label:`TME pval_${cell1}.csv`}),
-        fetchToFS(f_cmap,    "/work/cmap.pkl",     {optional:true, label:`TME cmapdic_cat.pkl`}),
+      F = await Promise.all([
+        getFile(`${base}overall_${level}.csv`, "overall"),
+        getFile(`${base}profile_${level}.csv`, "profile"),
+        getFile(`${base}matching_res.csv`, "matching_res"),
+        getFile(level === "level1" ? `${base}marker/Level1_mdic.json` : `${base}marker/${cell1}_mdic.json`, `${cell1} marker dict`, {json: true}),
+        getFile(`${tme}prop_${cell1}.csv`, `TME prop_${cell1}.csv`, {optional: true}),
+        getFile(`${tme}pval_${cell1}.csv`, `TME pval_${cell1}.csv`, {optional: true}),
+        getFile(`${tme}cmapdic_cat.json`, "TME cmapdic_cat", {optional: true, json: true}),
       ]);
       setStageState("data","done");
     }catch(e){
@@ -484,415 +718,45 @@ def add_fig_note(fig, text, x=0.01, y=0.99, fontsize=9, mono=True, ha='left', va
     }
 
     setStageState("plot","active");
-    stage(40, "Running Python …");
-
-    // capture staged prints
-    const unhookOut = pyodide.setStdout({
-      batched: (s)=>{ (s||"").split(/\r?\n/).forEach(line=> line && log(line)); }
-    });
-    const unhookErr = pyodide.setStderr({ batched: (s)=>{ s && s.trim() && log("ERR: " + s); } });
-
+    stage(40, "Plotting …");
     try{
-      const code = `
-import io, os, pickle as pkl
-import numpy as np, pandas as pd, seaborn as sns, matplotlib as mpl
-import matplotlib.pyplot as plt
-from matplotlib.lines import Line2D
-from math import isfinite
-
-# helpers are already defined in the session:
-# - add_axes_note
-# - add_fig_note
-
-level = ${JSON.stringify(level)}
-cell  = ${JSON.stringify(cell)}
-cell1 = (cell.split("|")[0] if "|" in cell else cell)
-
-sns.set_theme(style="ticks", context="notebook", font_scale=0.9)
-mpl.rcParams.update({
-    'figure.dpi': 150,
-    'font.family': 'sans-serif',
-    'font.sans-serif': ['Helvetica', 'Arial', 'DejaVu Sans', 'sans-serif'],
-    'axes.edgecolor': '#9ca3af',
-    'axes.linewidth': 0.8,
-    'axes.labelcolor': '#111827',
-    'axes.titlecolor': '#111827',
-    'axes.titleweight': 'semibold',
-    'axes.titlesize': 11,
-    'axes.labelsize': 10,
-    'xtick.color': '#374151',
-    'ytick.color': '#374151',
-    'xtick.labelsize': 9,
-    'ytick.labelsize': 9,
-    'legend.fontsize': 9,
-    'legend.frameon': False,
-    'savefig.facecolor': 'white',
-})
-
-# Site accent colors
-ACCENT = '#3b82f6'
-ACCENT_LIGHT = '#dbeafe'
-GRID_SOFT = '#e5e7eb'
-
-# -------- load markers --------
-mls = []
-try:
-    with open("/work/marker.pkl","rb") as fh:
-        mdic = pkl.load(fh)
-    if cell in mdic:
-        mls = list(mdic[cell])[:10]
-except Exception as e:
-    pass
-
-# -------- I: Organ distribution --------
-overall = pd.read_csv("/work/overall.csv", index_col=0)
-prop    = pd.read_csv("/work/profile.csv", index_col=0).fillna(0)
-
-fig, axes = plt.subplots(2, 1, figsize=(7, 10), gridspec_kw = {'height_ratios':[7,3]})
-
-# scatter (all)
-sns.scatterplot(data=overall, y='avg', x='spec', s=26, linewidth=0,
-                color='#d1d5db', alpha=0.8, ax=axes[0])
-# scatter (highlight)
-if cell in overall.index:
-    sns.scatterplot(data=overall.loc[[cell]], y='avg', x='spec', s=140,
-                    linewidth=0.8, edgecolor='black', color=ACCENT, ax=axes[0])
-    x, y = float(overall.loc[cell, 'spec']), float(overall.loc[cell, 'avg'])
-    axes[0].text(x, y, f"  {cell}", fontsize=9, fontweight='semibold',
-                 ha='left', va='center', color=ACCENT)
-
-# stats note inside left panel
-if cell in overall.index:
-    axes[0].text(overall['spec'].max(), overall['avg'].max(),
-                 f"Organ spec.: {overall.loc[cell,'spec']:.2f}\\nAverage prop.: {overall.loc[cell,'avg']:.2f}",
-                 va='top', ha='right', fontsize=8, color='#6b7280',
-                 bbox=dict(boxstyle='round,pad=0.4', facecolor='#fafbfc',
-                           edgecolor=GRID_SOFT, linewidth=0.6))
-
-axes[0].set_xlabel('Organ specificity')
-axes[0].set_ylabel('Average proportion')
-axes[0].grid(True, linestyle=':', linewidth=0.6, color=GRID_SOFT, alpha=0.8)
-axes[0].set_axisbelow(True)
-
-# bar by organ (ordered by mean of the selected cell)
-if cell in prop.columns:
-    order = prop.groupby('Organ')[cell].mean().sort_values(ascending=False).index
-else:
-    order = prop['Organ'].unique()
-
-sns.barplot(data=prop, y=cell if cell in prop.columns else 'Organ', x='Organ',
-            order=order, ax=axes[1],
-            capsize=.15, errorbar='se', errwidth=0.8, errcolor='#6b7280',
-            linewidth=0.5, edgecolor='black', color=ACCENT)
-axes[1].tick_params(axis='x', rotation=90)
-axes[1].set_xlabel("")
-axes[1].set_ylabel('Proportion')
-axes[1].set_title(cell, pad=8)
-axes[1].grid(True, axis='y', linestyle=':', linewidth=0.6, color=GRID_SOFT, alpha=0.8)
-axes[1].set_axisbelow(True)
-
-# figure header/footer instead of print()
-if mls:
-    mtext = 'curated marker: '+','.join(mls)
-else:
-    mtext = ''
-
-fig.text(0.01, 1.10, "Organ distribution", fontsize=15, fontweight='bold',
-         ha='left', va='bottom', color='#111827')
-if mls:
-    fig.text(0.01, 1.06, f"curated marker: {', '.join(mls)}",
-             fontsize=10, ha='left', va='bottom', color='#374151')
-
-sns.despine()
-plt.tight_layout()
-
-# save fig 1 into buffer
-buf1 = io.BytesIO()
-plt.savefig(buf1, format="png", bbox_inches="tight", dpi=150)
-plt.close(fig)
-
-# -------- II: Matching annotations --------
-mdf = pd.read_csv("/work/matching.csv", index_col=0)
-fig2buf = None
-if 'PANGEA_annotation' in mdf.columns and (cell in set(mdf['PANGEA_annotation'])):
-    mdf1 = (mdf[mdf['PANGEA_annotation']==cell]
-            .drop(columns=['PANGEA_annotation'], errors='ignore')
-            .head(10))
-    metrics = ['SEN','PPV','CFS','score']
-    metrics_scatter = metrics[:-1]
-    metric_bar = metrics[-1]
-
-    n_rows = len(mdf1.index)
-    if n_rows>0:
-        n_cols = len(metrics)
-        n_cols_scatter = len(metrics_scatter)
-
-        x = np.repeat(np.arange(n_cols_scatter), n_rows)
-        y_rows = np.arange(n_rows)[::-1]
-        y = np.tile(y_rows, n_cols_scatter)
-        vals = np.concatenate([mdf1[m].values for m in metrics_scatter])
-
-        # sizes & colors
-        cmap = mpl.cm.RdYlBu_r
-        norm01 = mpl.colors.Normalize(vmin=0.0, vmax=1.0)
-        sizes = 250 * np.clip(vals, 0, 1)
-
-        # row height 0.6 → 0.42 (30% smaller) to tighten the per-row grey
-        # background around each SEN/PPV/CFS dot.
-        fig2, ax = plt.subplots(figsize=(n_cols*2, n_rows*0.42), dpi=150)
-        sc = ax.scatter(x, y, s=sizes, c=vals, cmap=cmap, norm=norm01,
-                        edgecolor="black", linewidth=0.5)
-
-        ax.set_xticks([0,1,2,3.5])
-        ax.set_xticklabels(['SEN','PPV','CFS','score'])
-        ax.set_yticks(y_rows)
-        ax.set_yticklabels(list(mdf1.index))
-
-        ax.set_xlim(-0.5, n_cols-0.5)
-        ax.set_ylim(-0.5, n_rows-0.5)
-
-        sns.despine(bottom=True, left=True)
-        ax.set_axisbelow(True)
-        ax.grid(True, which='major', axis='both',
-                color=GRID_SOFT, linestyle='-', linewidth=0.7, alpha=0.9)
-
-        # inset bar for score
-        last_col_center = n_cols - 1
-        cell_left = last_col_center - 0.5
-        cell_right = last_col_center + 0.5
-        cell_width = cell_right - cell_left
-        pad_x = 0.05 * cell_width
-
-        axin = ax.inset_axes([cell_left + 0.5, -0.5, cell_width - 2*pad_x, n_rows],
-                             transform=ax.transData)
-        bar_vals = np.clip(mdf1[metric_bar].values, 0, 1)
-        axin.barh(y_rows, bar_vals, height=0.7, color=ACCENT,
-                  edgecolor='black', linewidth=0.5)
-        axin.set_ylim(ax.get_ylim()); axin.set_xlim(0,1.1)
-        axin.set_xticks([]); axin.set_yticks([])
-        for sp in axin.spines.values(): sp.set_visible(False)
-
-        plt.gcf().text(0.01, 1.06, "Matching annotation",
-                       fontsize=15, fontweight='bold',
-                       ha='left', va='bottom', color='#111827')
-
-        # colorbar
-        shrink = 1 if n_rows==1 else (0.2 + (0.2 / max(1, n_rows/3 + .75)))
-        cbar = plt.colorbar(sc, ax=ax, pad=0.2, shrink=shrink, aspect=10)
-        cbar.set_label("values")
-        cbar.set_ticks([0,0.5,1.0])
-
-        plt.tight_layout()
-        fig2buf = io.BytesIO()
-        plt.savefig(fig2buf, format="png", bbox_inches="tight", dpi=150)
-        plt.close(fig2)
-
-# -------- III: TME association (optional) --------
-try:
-    has_tme = os.path.exists("/work/prop.csv") and os.path.exists("/work/pval.csv") and os.path.exists("/work/cmap.pkl")
-    fig3buf = None
-    if has_tme:
-        pdf = pd.read_csv("/work/prop.csv", index_col=0)
-        df1 = pd.read_csv("/work/pval.csv", index_col=0)
-        with open("/work/cmap.pkl", "rb") as fh:
-            cmapdic = pkl.load(fh)
-
-        order = ['Control','Non-malignant disease','Cancer_AdjNorm','Cancer_Blood','Cancer_Tumor','Cancer_Metastasis']
-        order = [g for g in order if g in set(pdf.get('Cancer_Tissue',[]))]
-
-        def p_to_stars(p):
-            if pd.isna(p): return "NA"
-            return ("ns" if p >= 0.05 else
-                    "*"  if p >= 0.01 else
-                    "**" if p >= 0.001 else
-                    "***" if p >= 1e-4 else
-                    "****")
-
-        # simple horizontal asterisk brackets (compact)
-        def annotate_barh_stars(ax, value_col, group_col, pval_df, comparisons, order):
-            means = pdf.groupby(group_col)[value_col].mean()
-            xmin, xmax = ax.get_xlim()
-            xr = xmax - xmin if xmax>xmin else float(max(means.max(),1.0))
-            pad  = 0.50 * xr
-            sep  = 0.10 * xr
-            cap  = 0.025* xr
-            doff = 0.03 * xr
-
-            tick_pos = list(ax.get_yticks())
-            tick_lab = [t.get_text() for t in ax.get_yticklabels()]
-            y_center={}
-            if len(tick_pos)==len(tick_lab) and len(tick_pos)>0:
-                y_center = {lab: float(pos) for lab,pos in zip(tick_lab,tick_pos)}
-            if len(y_center)<len(order):
-                rects=[p for p in ax.patches if hasattr(p,"get_y")]
-                if len(rects)>=len(order):
-                    for lab,r in zip(order, rects[:len(order)]):
-                        y_center.setdefault(lab, r.get_y()+0.5*r.get_height())
-                else:
-                    for i,lab in enumerate(order): y_center.setdefault(lab,float(i))
-
-            placed=[]
-            for a,b in comparisons:
-                if (a not in order) or (b not in order): continue
-                # find pval row
-                key=None
-                for k in (f"{a}|{b}", f"{b}|{a}", f"{a} vs {b}", f"{b} vs {a}"):
-                    if k in pval_df.index: key=k; break
-                if key is None: continue
-                p=float(pval_df.loc[key, value_col]) if value_col in pval_df.columns else np.nan
-                stars=p_to_stars(p)
-                y1,y2 = y_center[a], y_center[b]
-                ylow, yhigh = sorted((y1,y2))
-                x_base = max(float(means.get(a,0.0)), float(means.get(b,0.0))) + pad
-                # collision
-                x_br = x_base
-                while any((ylow<=yyh and yhigh>=yyl and x_br < xb + (cap+doff+sep)) for xb,yyl,yyh in placed):
-                    blockers=[xb for xb,yyl,yyh in placed if (ylow<=yyh and yhigh>=yyl)]
-                    x_br = max(x_br, max(blockers) + (cap+doff+sep))
-                placed.append((x_br, ylow, yhigh))
-                # draw
-                ax.plot([x_br, x_br], [ylow, yhigh], color="k", lw=1.0, alpha=1.0, zorder=9, clip_on=False)
-                ax.plot([x_br-cap, x_br], [yhigh, yhigh], color="k", lw=1.0, alpha=1.0, zorder=9, clip_on=False)
-                ax.plot([x_br-cap, x_br], [ylow,  ylow ], color="k", lw=1.0, alpha=1.0, zorder=9, clip_on=False)
-                # star a tad below center for readability
-                ymid = 0.5*(ylow+yhigh) - 0.30*0.5
-                ax.text(x_br+doff, ymid, stars, rotation=270, rotation_mode="anchor",
-                        ha="left", va="center", fontsize=7, fontweight="bold", color="k")
-
-            # widen xlim
-            right_need = [xb + cap + doff for xb,_,_ in placed] or [xmax]
-            ax.set_xlim(xmin, max(xmax, max(right_need) + 0.02*xr))
-
-        # figure
-        fig3, ax3 = plt.subplots(figsize=(4, 2.2), dpi=150)
-        sns.barplot(data=pdf, x=cell, y='Cancer_Tissue', ax=ax3,
-                    palette=cmapdic, order=order, estimator=np.mean,
-                    linewidth=0.5, edgecolor='black',
-                    errorbar='se', capsize=.15, errwidth=0.8, errcolor='black')
-        ax3.grid(True, axis='x', linestyle=':', linewidth=0.6, color=GRID_SOFT, alpha=0.8)
-        ax3.set_axisbelow(True)
-        sns.despine()
-        # Override the global rcParams (axes spines/ticks default to grey
-        # site-wide) so the TME panel reads with high-contrast black axes.
-        for _sp in ('left', 'bottom'):
-            ax3.spines[_sp].set_color('black')
-        ax3.tick_params(axis='both', colors='black')
-        ax3.xaxis.label.set_color('black')
-        ax3.yaxis.label.set_color('black')
-
-        ctrls = [x for x in ['Control','Non-malignant disease','Cancer_AdjNorm'] if x in set(pdf['Cancer_Tissue'])]
-        comps = [('Cancer_Tumor', c) for c in ctrls]
-        # annotate_barh_stars(ax3, cell, 'Cancer_Tissue', df1, comps, order)
-
-        # ---- Cancer_Tumor vs Control: log2FC + Mann-Whitney U p ----
-        # Manual MWU (normal approx + tie correction) — avoids pulling in scipy.
-        from math import erf as _erf, sqrt as _sqrt
-        def _mwu_p(a, b):
-            a = np.asarray(a, dtype=float); a = a[~np.isnan(a)]
-            b = np.asarray(b, dtype=float); b = b[~np.isnan(b)]
-            n1, n2 = len(a), len(b)
-            if n1 == 0 or n2 == 0: return float('nan')
-            n = n1 + n2
-            combined = np.concatenate([a, b])
-            ranks = pd.Series(combined).rank(method='average').to_numpy()
-            R1 = float(ranks[:n1].sum())
-            U1 = R1 - n1*(n1+1)/2.0
-            mean_U = n1*n2/2.0
-            _, cts = np.unique(combined, return_counts=True)
-            tie = float(np.sum(cts**3 - cts))
-            var_U = n1*n2/12.0 * ((n+1) - tie/(n*(n-1))) if n > 1 else 0.0
-            if var_U <= 0: return 1.0
-            z = (U1 - mean_U) / np.sqrt(var_U)
-            return float(2.0 * (1.0 - 0.5*(1.0 + _erf(abs(z)/_sqrt(2.0)))))
-
-        tt_set = set(pdf['Cancer_Tissue'])
-        if 'Cancer_Tumor' in tt_set and 'Control' in tt_set:
-            tv = pdf.loc[pdf['Cancer_Tissue']=='Cancer_Tumor', cell].dropna().values
-            cv = pdf.loc[pdf['Cancer_Tissue']=='Control',     cell].dropna().values
-            if len(tv) > 0 and len(cv) > 0:
-                mwu_p = _mwu_p(tv, cv)
-                # log2FC on group means (small pseudocount to handle zeros)
-                eps = 1e-6
-                lfc = float(np.log2((float(np.mean(tv)) + eps) / (float(np.mean(cv)) + eps)))
-                p_disp = "<0.001" if (np.isfinite(mwu_p) and mwu_p < 0.001) else f"{mwu_p:.3f}"
-                # Bracket connecting the two groups being compared (Control
-                # row ↔ Cancer_Tumor row), with the log2FC + p stats sitting
-                # next to the bracket midpoint.
-                y_ctrl  = order.index('Control')
-                y_tumor = order.index('Cancer_Tumor')
-                xmin, xmax = ax3.get_xlim()
-                xr  = xmax - xmin if xmax > xmin else 1.0
-                x_b = xmax + 0.04 * xr
-                cap = 0.012 * xr
-                _bk = dict(color='black', lw=0.8, clip_on=False, zorder=10)
-                ax3.plot([x_b, x_b], [y_ctrl, y_tumor], **_bk)
-                ax3.plot([x_b - cap, x_b], [y_ctrl,  y_ctrl ], **_bk)
-                ax3.plot([x_b - cap, x_b], [y_tumor, y_tumor], **_bk)
-                ax3.text(x_b + 0.025 * xr, (y_ctrl + y_tumor) / 2,
-                         f"log$_2$FC = {lfc:+.2f}\\np = {p_disp}",
-                         ha='left', va='center', fontsize=7,
-                         color='black', linespacing=1.3, clip_on=False)
-                ax3.set_xlim(xmin, x_b + 0.32 * xr)
-
-        ax3.set_xlabel(cell); ax3.set_ylabel('')
-        plt.gcf().text(0.01, 1.06, "TME distribution",
-                       fontsize=15, fontweight='bold',
-                       ha='left', va='bottom', color='#111827')
-
-        plt.tight_layout()
-        fig3buf = io.BytesIO()
-        plt.savefig(fig3buf, format="png", bbox_inches="tight", dpi=150)
-        plt.close(fig3)
-except: pass
-
-# -------- Combine figs vertically into one PNG --------
-from PIL import Image
-imgs=[]
-for b in (buf1, fig2buf, fig3buf):
-    if b is not None:
-        b.seek(0)
-        imgs.append(Image.open(b).convert("RGBA"))
-
-if not imgs:
-    raise RuntimeError("No figures to display.")
-
-# stack vertically
-width = max(im.width for im in imgs)
-padded = []
-for im in imgs:
-    if im.width<width:
-        pad = Image.new("RGBA", (width, im.height), (255,255,255,0))
-        pad.paste(im, (0,0))
-        padded.append(pad)
-    else:
-        padded.append(im)
-
-total_h = sum(im.height for im in padded) + (len(padded)-1)*20
-out = Image.new("RGBA", (width, total_h), (255,255,255,255))
-y=0
-for i,im in enumerate(padded):
-    out.paste(im, (0,y))
-    y += im.height + (20 if i<len(padded)-1 else 0)
-
-# write final
-with open("/work/explore.png","wb") as fh:
-    bio=io.BytesIO()
-    out.convert("RGB").save(bio, format="PNG")
-    fh.write(bio.getvalue())
-"OK"
-      `;
-      await pyodide.runPythonAsync(code);
+      const [ov, prof, match, mdic, prop, pval, cmap] = F;
+      if(!prof.has(cell)) throw new Error(`'${cell}' not found in profile_${level}.csv`);
+      const spec = ov.col("spec", 1), avg = ov.col("avg", 1);
+      const organ = prof.col("Organ"), pv = prof.col(cell, 1).map(v=>isNaN(v) ? 0 : v), groups = new Map();
+      organ.forEach((o,i)=>{ if(!groups.has(o)) groups.set(o, []); groups.get(o).push(pv[i]); });
+      const keys = [...groups.keys()].sort();
+      const km = keys.map(k=>{ let s = 0, c = 0; for(const v of groups.get(k)){ const y = v - c, t = s + y; c = t - s - y; s = t; } return s/groups.get(k).length; });
+      const ridx = keys.map((_,i)=>keys.length - 1 - i);
+      const order = npArgsort(km.slice().reverse()).map(i=>keys[ridx[i]]).reverse();
+      const ann = match.has("PANGEA_annotation") ? match.col("PANGEA_annotation") : [];
+      const mcols = ["SEN","PPV","CFS","score"].map(c=>match.col(c, 1));
+      const D = {
+        cell, order, bars: order.map(o=>stats(groups.get(o))),
+        ov: ov.index.map((nm,i)=>[nm, spec[i], avg[i]]),
+        mls: (mdic[cell] || []).slice(0, 10),
+        match: ann.map((a,i)=>a === cell ? {name: match.index[i], v: mcols.map(c=>c[i])} : null).filter(Boolean).slice(0, 10),
+        tme: prop && pval && cmap ? prop : null, cmap,
+      };
+      const figs = [fig1(D), fig2(D), fig3(D)].filter(Boolean);
+      const W = Math.max(...figs.map(f=>f.box[2] - f.box[0]));
+      let y = 0;
+      const body = figs.map((f,i)=>{
+        const g = `<g transform="translate(${n2(-f.box[0])} ${n2(y - f.box[1])})">${f.svg}</g>`;
+        y += f.box[3] - f.box[1] + (i < figs.length - 1 ? 9.6 : 0);
+        return g;
+      }).join("");
+      const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${n2(W)} ${n2(y)}" font-family="${FONT}">${body}</svg>`;
       stage(85, "Rendering …");
-
-      const bytes = FS.readFile("/work/explore.png");
-      const blob  = new Blob([bytes], { type: "image/png" });
+      const png = await svgToPng(svg, W, y);
       if(pngURL) URL.revokeObjectURL(pngURL);
-      pngURL = URL.createObjectURL(blob);
+      pngURL = URL.createObjectURL(png);
 
       const safeCell = cell.replace(/[\s/\\&]+/g, "_");
       const outName = `${level}_${safeCell}.png`;
 
       $("plotImg").src = pngURL;
+      $("plotImg").style.width = Math.round(W*150/72) + "px";
       $("plotImg").style.display = "block";
       $("downloadPNG").href = pngURL;
       $("downloadPNG").download = outName;
@@ -914,17 +778,14 @@ with open("/work/explore.png","wb") as fh:
       $("plotImg").style.display = "none";
       $("downloadPNG").style.display = "none";
       log("❌ Run error: " + (e?.message||e));
-    }finally{
-      try{ unhookOut && unhookOut(); }catch(_){}
-      try{ unhookErr && unhookErr(); }catch(_){}
     }
   });
 
-  log("Flow → (auto-boot) → choose level/cell → Explore");
+  log("Flow → choose level/cell → Explore");
   resetStages();
-
-  // Auto-boot: this inline script only runs on the cellplot page.
-  boot();
+  setStageState("boot","done");
+  setDisabled("runBtn", false);
+  stage(0, "Ready — choose level/cell and click Explore.");
 })();
 </script>
 
