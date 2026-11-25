@@ -8,9 +8,6 @@ excerpt: ""
 
 {% raw %}
 
-<!-- Pyodide -->
-<script defer src="https://cdn.jsdelivr.net/pyodide/v0.26.3/full/pyodide.js"></script>
-
 <style>
   .pg-wrap{
     --accent:#3b82f6; --accent-dark:#2563eb; --accent-light:#dbeafe;
@@ -85,12 +82,12 @@ excerpt: ""
   .pg-wrap .result-summary{font-size:14px;color:var(--text);font-weight:500;flex:1;min-width:180px;}
   .pg-wrap .result-summary .stat{color:var(--muted);font-weight:400;font-size:12px;margin-left:6px;}
   .pg-wrap .btn-download{
-    background:var(--ok);border-color:var(--ok);color:#fff;padding:0 10px;height:26px;
+    background:var(--ok);border-color:var(--ok);color:#fff !important;padding:0 10px;height:26px;
     font-size:11px;letter-spacing:.01em;
     display:inline-flex;align-items:center;gap:4px;text-decoration:none;font-weight:500;
     border:1px solid var(--ok);border-radius:5px;transition:background .15s,border-color .15s;
   }
-  .pg-wrap .btn-download:hover{background:var(--ok-dark);border-color:var(--ok-dark);color:#fff;text-decoration:none;}
+  .pg-wrap .btn-download:hover{background:var(--ok-dark);border-color:var(--ok-dark);color:#fff !important;text-decoration:none;}
   .pg-wrap .plot-img{max-width:100%;border:1px solid var(--border);border-radius:6px;background:#fff;display:block;}
 
   .pg-wrap .meta-panel{
@@ -108,6 +105,7 @@ excerpt: ""
     .pg-wrap{margin:8px;}
     .pg-wrap .panel{padding:12px;}
     .pg-wrap .stages{font-size:11px;}
+    .pg-wrap .btn-download{height:auto;min-height:26px;padding:4px 10px;word-break:break-all;}
   }
 
   /* polish v2 */
@@ -255,842 +253,659 @@ excerpt: ""
 
 </div><!-- /.pg-wrap -->
 
+
 <script>
 (function(){
-  // --- config: where the per-cell avg_od / cov_od files live on the site ---
-  const ASSET_BASE = "/assets/data/expression_context_profile/";
-
-  // --- helpers ---
+  const BASE = "/assets/data/expression_context_profile/";
+  const FONT = "'DejaVu Sans', Verdana, sans-serif";
+  const GREY = "#374151";
+  const COL = {Control: "#9ca3af", Cancer: "#dc2626", Other: "#f59e0b"};
+  const ORRD = ["fff7ec","fee8c8","fdd49e","fdbb84","fc8d59","ef6548","d7301f","b30000","7f0000"];
+  const RDBU = ["053061","2166ac","4393c3","92c5de","d1e5f0","f7f7f7","fddbc7","f4a582","d6604d","b2182b","67001f"];
   const $ = (id)=>document.getElementById(id);
-  function setDisabled(id, v){ const el=$(id); if(el) el.disabled = !!v; }
-  function log(msg){
-    const el=$("log"); el.textContent += msg + "\n";
-    const lines = el.textContent.split("\n");
-    if(lines.length>400){ el.textContent = lines.slice(-400).join("\n"); }
-    el.scrollTop = el.scrollHeight;
+  const log = (m)=>{ const el=$("log"); el.textContent += m + "\n"; el.scrollTop = el.scrollHeight; };
+  const stage = (p,m)=>{ $("progBar").value = p; $("progStatus").textContent = m; };
+  const setStage = (s,st)=>{ const el=$("stage-"+s); el.classList.remove("active","done","err"); if(st) el.classList.add(st); };
+  const IDS = ["resultCard","plotImg","plotImgEnrichment","downloadPNG","downloadCSV","downloadEnrichmentPNG"];
+  const hideResult = ()=>{ IDS.forEach(id=>$(id).style.display = "none"); $("resultCard").classList.remove("err"); };
+  const cmp = (a,b)=> a < b ? -1 : a > b ? 1 : 0;
+  const p10 = (k)=> Number("1e" + k);
+  const f2 = (v)=> +v.toFixed(2);
+  const esc = (s)=> String(s).replace(/[&<>"]/g, c=>"&#" + c.charCodeAt(0) + ";");
+  const ctx = document.createElement("canvas").getContext("2d");
+  const tw = (s, size, bold)=>{ ctx.font = (bold ? "bold " : "") + size + "px " + FONT; return ctx.measureText(s).width; };
+
+  const H2F = new Float32Array(65536);
+  for(let h=0; h<65536; h++){
+    const s = h & 0x8000 ? -1 : 1, e = h >> 10 & 31, f = h & 1023;
+    H2F[h] = e === 0 ? s*f*Math.pow(2,-24) : e === 31 ? (f ? NaN : s*Infinity) : s*(1 + f/1024)*Math.pow(2, e - 15);
   }
-  function stage(pct, msg){
-    $("progBar").value = pct;
-    $("progStatus").textContent = msg;
-  }
-  function setStageState(name, state){
-    const el = $("stage-" + name); if(!el) return;
-    el.classList.remove("active","done","err");
-    if(state && state !== "pending") el.classList.add(state);
-  }
-  function resetStages(){
-    setStageState("boot","pending"); setStageState("data","pending"); setStageState("plot","pending");
-  }
-  function hideResultCard(){
-    $("resultCard").style.display = "none";
-    $("resultCard").classList.remove("err");
-    $("resultSummary").textContent = "";
-    $("plotImg").style.display = "none";
-    $("plotImg").removeAttribute("src");
-    $("plotImgEnrichment").style.display = "none";
-    $("plotImgEnrichment").removeAttribute("src");
-    $("downloadPNG").style.display = "none";
-    $("downloadCSV").style.display = "none";
-    $("downloadEnrichmentPNG").style.display = "none";
-  }
-  async function fetchToFS(path, fsPath){
-    const r = await fetch(path);
-    if(!r.ok) throw new Error("HTTP " + r.status + " for " + path);
-    const buf = new Uint8Array(await r.arrayBuffer());
-    pyodide.FS.writeFile(fsPath, buf);
-    return buf.length;
-  }
-  function existsInFS(path){
-    try{ pyodide.FS.stat(path); return true; }catch(_){ return false; }
-  }
-  function clearImage(){
-    $("plotImg").style.display = "none";
-    $("plotImg").removeAttribute("src");
-    $("plotImgEnrichment").style.display = "none";
-    $("plotImgEnrichment").removeAttribute("src");
-    $("resultCard").style.display = "none";
-    $("downloadPNG").style.display = "none";
-    $("downloadCSV").style.display = "none";
-    $("downloadEnrichmentPNG").style.display = "none";
-  }
-  function waitForGlobal(fnName, timeoutMs){
-    return new Promise((resolve, reject)=>{
-      const t0 = performance.now();
-      (function check(){
-        if (globalThis[fnName] != null) return resolve();
-        if (performance.now() - t0 > timeoutMs) return reject(new Error("Timeout waiting for "+fnName));
-        setTimeout(check, 100);
-      })();
+
+  function lut(hex){
+    const c = hex.map(h=>[0,2,4].map(i=>parseInt(h.slice(i, i+2), 16)/255)), n = c.length - 1;
+    return Array.from({length:256}, (_, i)=>{
+      const x = i/255*n, k = Math.min(n - 1, Math.floor(x)), f = x - k;
+      return "#" + c[k].map((v,ch)=>Math.round((v + (c[k+1][ch] - v)*f)*255).toString(16).padStart(2,"0")).join("");
     });
   }
+  const OR = lut(ORRD), RB = lut(RDBU);
+  const cidx = (t)=> Math.max(0, Math.min(255, Math.trunc((t || 0)*256)));
 
-  // --- state ---
-  let pyodide=null, FS=null;
-  let booted=false, assetsLoaded=false, isLoadingAssets=false;
-  let currentCellLoaded=null;
-  let samplesReady=false;             // true once {cell}_samples.npz finished downloading
-  let samplesPromise=null;            // in-flight samples fetch (non-blocking)
-  let pngURL=null, csvURL=null, epngURL=null;
+  async function getBuf(name){ const r = await fetch(BASE + name); if(!r.ok) throw new Error("HTTP " + r.status + " for " + name); return r.arrayBuffer(); }
+  async function getJSON(name){ const r = await fetch(BASE + name); if(!r.ok) throw new Error("HTTP " + r.status + " for " + name); return r.json(); }
 
-  // --- reusable asset loader for a cell type ---
-  async function loadAssetsForCell(cell){
-    if(isLoadingAssets) return;
-    if(!booted){ alert("Please wait until the setup finishes."); return; }
-    if(!cell){ alert("Choose a cell."); return; }
+  function parseNpy(b){
+    const dv = new DataView(b.buffer, b.byteOffset, b.byteLength);
+    const v1 = b[6] === 1, h0 = v1 ? 10 : 12, hl = v1 ? dv.getUint16(8, true) : dv.getUint32(8, true);
+    const hdr = new TextDecoder().decode(b.subarray(h0, h0 + hl));
+    const T = {"<f2":Uint16Array, "|u1":Uint8Array, "<f4":Float32Array, "<f8":Float64Array}[(hdr.match(/'descr':\s*'([^']+)'/) || [])[1]];
+    const shape = ((hdr.match(/'shape':\s*\(([^)]*)\)/) || [])[1] || "").split(",").filter(s=>s.trim()).map(Number);
+    if(!T || !/'fortran_order':\s*True/.test(hdr) && shape.length > 1 && shape[0] > 1) throw new Error("Unsupported array");
+    const off = b.byteOffset + h0 + hl, len = shape.reduce((a,c)=>a*c, 1);
+    return {data: off % T.BYTES_PER_ELEMENT ? new T(b.slice(h0 + hl).buffer, 0, len) : new T(b.buffer, off, len), shape};
+  }
+
+  async function readNpz(buf, want){
+    const b = new Uint8Array(buf), dv = new DataView(buf), out = {};
+    let e = b.length - 22;
+    while(e >= 0 && dv.getUint32(e, true) !== 0x06054b50) e--;
+    if(e < 0) throw new Error("Bad npz");
+    let n = dv.getUint16(e + 10, true), p = dv.getUint32(e + 16, true);
+    if(p === 0xffffffff || n === 0xffff){ const z = Number(dv.getBigUint64(e - 12, true)); n = Number(dv.getBigUint64(z + 32, true)); p = Number(dv.getBigUint64(z + 48, true)); }
+    for(let i=0; i<n; i++){
+      let cs = dv.getUint32(p + 20, true), us = dv.getUint32(p + 24, true), off = dv.getUint32(p + 42, true);
+      const method = dv.getUint16(p + 10, true), nl = dv.getUint16(p + 28, true), xl = dv.getUint16(p + 30, true), cl = dv.getUint16(p + 32, true);
+      const name = new TextDecoder().decode(b.subarray(p + 46, p + 46 + nl)).replace(/\.npy$/, "");
+      for(let x = p + 46 + nl; x < p + 46 + nl + xl; x += 4 + dv.getUint16(x + 2, true)){
+        if(dv.getUint16(x, true) !== 1) continue;
+        let q = x + 4;
+        if(us === 0xffffffff){ us = Number(dv.getBigUint64(q, true)); q += 8; }
+        if(cs === 0xffffffff){ cs = Number(dv.getBigUint64(q, true)); q += 8; }
+        if(off === 0xffffffff) off = Number(dv.getBigUint64(q, true));
+      }
+      p += 46 + nl + xl + cl;
+      if(!want.includes(name)) continue;
+      const start = off + 30 + dv.getUint16(off + 26, true) + dv.getUint16(off + 28, true), raw = b.subarray(start, start + cs);
+      const data = method === 8 ? new Uint8Array(await new Response(new Blob([raw]).stream().pipeThrough(new DecompressionStream("deflate-raw"))).arrayBuffer()) : raw.slice();
+      out[name] = parseNpy(data);
+    }
+    return out;
+  }
+
+  function pwSum(a, i0, n){
+    if(n < 8){ let r = -0; for(let i=0; i<n; i++) r += a[i0 + i]; return r; }
+    if(n <= 128){
+      const r = [a[i0], a[i0+1], a[i0+2], a[i0+3], a[i0+4], a[i0+5], a[i0+6], a[i0+7]];
+      let i = 8;
+      for(; i < n - n % 8; i += 8) for(let k=0; k<8; k++) r[k] += a[i0 + i + k];
+      let res = ((r[0] + r[1]) + (r[2] + r[3])) + ((r[4] + r[5]) + (r[6] + r[7]));
+      for(; i < n; i++) res += a[i0 + i];
+      return res;
+    }
+    let n2 = Math.floor(n / 2); n2 -= n2 % 8;
+    return pwSum(a, i0, n2) + pwSum(a, i0 + n2, n - n2);
+  }
+
+  function argsortQ(v){
+    const n = v.length, a = Int32Array.from({length:n}, (_, i)=>i), st = [], dp = [];
+    const less = (x, y)=> x < y || (y !== y && x === x);
+    const sw = (i, j)=>{ const t = a[i]; a[i] = a[j]; a[j] = t; };
+    const heap = (lo, cnt)=>{
+      const g = (k)=>a[lo + k - 1], s = (k, x)=>{ a[lo + k - 1] = x; };
+      const sift = (l, m, tmp)=>{ let i = l, j = l << 1; while(j <= m){ if(j < m && less(v[g(j)], v[g(j + 1)])) j++; if(less(v[tmp], v[g(j)])){ s(i, g(j)); i = j; j += j; } else break; } s(i, tmp); };
+      for(let l = cnt >> 1; l > 0; --l) sift(l, cnt, g(l));
+      for(let m = cnt; m > 1;){ const tmp = g(m); s(m, g(1)); m--; sift(1, m, tmp); }
+    };
+    let pl = 0, pr = n - 1, cd = 0;
+    for(let x = n; x > 1; x >>= 1) cd++;
+    cd *= 2;
+    for(;;){
+      if(cd < 0) heap(pl, pr - pl + 1);
+      else {
+        while(pr - pl > 15){
+          const pm = pl + ((pr - pl) >> 1);
+          if(less(v[a[pm]], v[a[pl]])) sw(pm, pl);
+          if(less(v[a[pr]], v[a[pm]])) sw(pr, pm);
+          if(less(v[a[pm]], v[a[pl]])) sw(pm, pl);
+          const vp = v[a[pm]];
+          let pi = pl, pj = pr - 1;
+          sw(pm, pj);
+          for(;;){
+            do ++pi; while(less(v[a[pi]], vp));
+            do --pj; while(less(vp, v[a[pj]]));
+            if(pi >= pj) break;
+            sw(pi, pj);
+          }
+          sw(pi, pr - 1);
+          if(pi - pl < pr - pi){ st.push(pi + 1, pr); pr = pi - 1; } else { st.push(pl, pi - 1); pl = pi + 1; }
+          dp.push(--cd);
+        }
+        for(let pi = pl + 1; pi <= pr; ++pi){
+          const vi = a[pi], vp = v[vi];
+          let pj = pi, pk = pi - 1;
+          while(pj > pl && less(vp, v[a[pk]])) a[pj--] = a[pk--];
+          a[pj] = vi;
+        }
+      }
+      if(!st.length) break;
+      pr = st.pop(); pl = st.pop(); cd = dp.pop();
+    }
+    return a;
+  }
+
+  function nargsortDesc(vals){
+    const idx = [], nan = [];
+    vals.forEach((v, i)=>(v !== v ? nan : idx).push(i));
+    idx.reverse();
+    return Array.from(argsortQ(idx.map(i=>vals[i])), k=>idx[k]).reverse().concat(nan);
+  }
+
+  function f32Mean(xs){
+    let s = 0, c = 0;
+    for(const v of xs){ const y = Math.fround(v - c), t = Math.fround(s + y); c = Math.fround(Math.fround(t - s) - y); if(c !== c) c = 0; s = t; }
+    return Math.fround(s / xs.length);
+  }
+  function sem(xs){
+    let n = 0, m = 0, m2 = 0;
+    for(const v of xs){ n++; const o = m; m += (v - o)/n; m2 += (v - m)*(v - o); }
+    return n <= 1 ? 0 : Math.sqrt(m2/(n - 1))/Math.sqrt(n);
+  }
+
+  function PCG64(seed){
+    const M = (a, b)=>Math.imul(a, b) >>> 0;
+    let hc = 0x43b0d7e5, hb = 0x8b51f9dd;
+    const hm = (v)=>{ v = (v ^ hc) >>> 0; hc = M(hc, 0x931e8875); v = M(v, hc); return (v ^ v >>> 16) >>> 0; };
+    const mix = (x, y)=>{ const r = (M(0xca01f9dd, x) - M(0x4973f715, y)) >>> 0; return (r ^ r >>> 16) >>> 0; };
+    const pool = [hm(seed >>> 0), hm(0), hm(0), hm(0)];
+    for(let s=0; s<4; s++) for(let d=0; d<4; d++) if(s !== d) pool[d] = mix(pool[d], hm(pool[s]));
+    const w = [];
+    for(let i=0; i<8; i++){ let v = (pool[i % 4] ^ hb) >>> 0; hb = M(hb, 0x58f38ded); v = M(v, hb); w.push((v ^ v >>> 16) >>> 0); }
+    const limbs = (h0, h1, l0, l1)=>[l0 & 65535, l0 >>> 16, l1 & 65535, l1 >>> 16, h0 & 65535, h0 >>> 16, h1 & 65535, h1 >>> 16];
+    const init = limbs(w[0], w[1], w[2], w[3]), seq = limbs(w[4], w[5], w[6], w[7]);
+    const MUL = [0xf645, 0x9fcc, 0xdf64, 0x4385, 0x5da4, 0x1fc6, 0xed05, 0x2360], inc = [];
+    for(let k=0, c=1; k<8; k++){ inc.push((seq[k] << 1 | c) & 65535); c = seq[k] >>> 15; }
+    const st = [0,0,0,0,0,0,0,0], r = [0,0,0,0,0,0,0,0];
+    const step = ()=>{
+      r.fill(0);
+      for(let i=0; i<8; i++){ const si = st[i]; if(si) for(let j=0; i + j < 8; j++) r[i + j] += si*MUL[j]; }
+      for(let k=0, c=0; k<8; k++){ const t = r[k] + inc[k] + c; st[k] = t % 65536; c = Math.floor(t / 65536); }
+    };
+    step();
+    for(let k=0, c=0; k<8; k++){ const t = st[k] + init[k] + c; st[k] = t & 65535; c = t >>> 16; }
+    step();
+    const next = ()=>{
+      step();
+      let a = ((st[3] << 16 | st[2]) ^ (st[7] << 16 | st[6])) >>> 0, b = ((st[1] << 16 | st[0]) ^ (st[5] << 16 | st[4])) >>> 0, k = st[7] >>> 10;
+      if(k >= 32){ [a, b] = [b, a]; k -= 32; }
+      return k ? [((a >>> k) | (b << (32 - k))) >>> 0, ((b >>> k) | (a << (32 - k))) >>> 0] : [a, b];
+    };
+    let has = false, buf = 0;
+    const u32 = ()=>{ if(has){ has = false; return buf; } const [h, l] = next(); has = true; buf = h; return l; };
+    return {
+      next, u32,
+      dbl(){ const [h, l] = next(); return (h*2097152 + (l >>> 11))*1.1102230246251565e-16; },
+      interval(max){
+        if(max === 0) return 0;
+        let m = max; m |= m >>> 1; m |= m >>> 2; m |= m >>> 4; m |= m >>> 8; m |= m >>> 16;
+        let v; while((v = (u32() & m) >>> 0) > max); return v;
+      },
+    };
+  }
+
+  function pyFixed(x, d){
+    let s = x.toFixed(d);
+    const L = Math.abs(x).toFixed(Math.min(100, d + 60)), dot = L.indexOf(".");
+    if(/^50*$/.test(L.slice(dot + 1 + d)) && +L[dot + d - (d ? 0 : 1)] % 2 === 0) s = (x < 0 ? "-" : "") + L.slice(0, d ? dot + 1 + d : dot);
+    return s;
+  }
+  function npF32(x){
+    if(x !== x) return "";
+    if(!isFinite(x)) return x > 0 ? "inf" : "-inf";
+    if(x === 0) return Object.is(x, -0) ? "-0.0" : "0.0";
+    const a = Math.abs(x), [mt, ex] = a.toExponential(99).split("e"), D = mt.replace(".", "");
+    let v = a;
+    for(let p=1; p<=9; p++){
+      const d = D.slice(0, p), r = D.slice(p), up = r[0] > "5" || r[0] === "5" && (/[1-9]/.test(r.slice(1)) || d[p - 1] % 2 === 1);
+      v = Number(`${up ? +d + 1 : d}e${ex - p + 1}`);
+      if(Math.fround(v) === a) break;
+    }
+    if(x < 0) v = -v;
+    if(a >= 1e-4 && a < 1e16){ const s = String(v); return /[.e]/.test(s) ? s : s + ".0"; }
+    return v.toExponential().replace(/e([+-])(\d)$/, "e$10$2");
+  }
+
+  function divmod(a, b){
+    let m = a % b, d = (a - m)/b;
+    if(m){ if((b < 0) !== (m < 0)){ m += b; d -= 1; } } else m = b < 0 ? -0 : 0;
+    let q;
+    if(d){ q = Math.floor(d); if(d - q > 0.5) q += 1; } else q = a/b < 0 ? -0 : 0;
+    return [q, m];
+  }
+  function nonsing(a, b, ex, tiny = 1e-15){
+    if(!isFinite(a) || !isFinite(b)) return [-ex, ex];
+    if(b < a) [a, b] = [b, a];
+    const m = Math.max(Math.abs(a), Math.abs(b));
+    if(m < 1e6/tiny*2.2250738585072014e-308) return [-ex, ex];
+    if(b - a <= m*tiny) return a === 0 && b === 0 ? [-ex, ex] : [a - ex*Math.abs(a), b + ex*Math.abs(b)];
+    return [a, b];
+  }
+  function autoLim(a, b, sticky){
+    [a, b] = nonsing(a, b, 0.05);
+    const tol = 1e-5*Math.max(Math.abs(a), Math.abs(b), Math.abs(b - a)), d = (b - a)*0.05;
+    const lo = sticky.filter(s=>s < a + tol), hi = sticky.filter(s=>s >= b - tol);
+    let x0 = a - d, x1 = b + d;
+    if(lo.length) x0 = Math.max(x0, Math.max(...lo));
+    if(hi.length) x1 = Math.min(x1, Math.min(...hi));
+    return nonsing(x0, x1, 0.001);
+  }
+  const nbins = (len, size)=> Math.min(9, Math.max(1, Math.floor(len/size)));
+  function maxN(vmin, vmax, nb){
+    [vmin, vmax] = nonsing(vmin, vmax, 1e-13, 1e-14);
+    const dv = Math.abs(vmax - vmin), mv = (vmax + vmin)/2;
+    const off = Math.abs(mv)/dv < 100 ? 0 : Math.sign(mv)*p10(Math.floor(Math.log10(Math.abs(mv))));
+    const scale = p10(Math.floor(Math.log10(dv/nb))), lo = vmin - off, hi = vmax - off, raw = (hi - lo)/nb;
+    const steps = [0.1, 0.2, 0.25, 0.5, 1, 2, 2.5, 5, 10, 20].map(s=>s*scale);
+    let k = steps.findIndex(s=>s >= raw), ticks = [];
+    if(k < 0) k = steps.length - 1;
+    for(; k >= 0; k--){
+      const s = steps[k], best = divmod(lo, s)[0]*s;
+      const tol = off > 0 ? Math.min(0.4999, Math.max(1e-10, Math.pow(10, Math.log10(Math.abs(off)/s) - 12))) : 1e-10;
+      const [d1, m1] = divmod(lo - best, s), [d2, m2] = divmod(hi - best, s);
+      const a = Math.abs(m1/s - 1) < tol ? d1 + 1 : d1, z = Math.abs(m2/s) < tol ? d2 : d2 + 1;
+      ticks = [];
+      for(let t = a; t <= z; t++) ticks.push(t*s + best);
+      if(ticks.filter(t=>t <= hi && t >= lo).length >= 2) break;
+    }
+    return ticks.map(t=>t + off);
+  }
+  function rint(x){ const r = Math.round(x); return r - x === 0.5 && r % 2 !== 0 ? r - 1 : r; }
+  function fmtTicks(locs, vmin, vmax){
+    const vis = locs.filter(v=>v >= vmin && v <= vmax);
+    let oom = 0;
+    if(vis.length){ const m = Math.max(...vis.map(Math.abs)); const o = m ? Math.floor(Math.log10(m)) : 0; if(o <= -5 || o >= 6) oom = o; }
+    const L = locs.map(v=>v/p10(oom)), B = L.length < 2 ? L.concat([vmin/p10(oom), vmax/p10(oom)]) : L;
+    let rg = Math.max(...B) - Math.min(...B);
+    if(rg === 0) rg = Math.max(...B.map(Math.abs));
+    if(rg === 0) rg = 1;
+    const ro = Math.floor(Math.log10(rg)), th = 1e-3*p10(ro);
+    let sig = Math.max(0, 3 - ro);
+    while(sig >= 0 && Math.max(...L.map(v=>Math.abs(v - rint(v*p10(sig))/p10(sig)))) < th) sig--;
+    sig++;
+    return {labels: L.map(v=>pyFixed(Math.abs(v) < 1e-8 ? 0 : v, sig).replace("-", "−")), offset: oom ? ("1e" + oom).replace("-", "−") : ""};
+  }
+  function axisTicks(lo, hi, len, size){
+    const t = maxN(lo, hi, nbins(len, 2*size)), f = fmtTicks(t, lo, hi), e = 1e-10*(hi - lo);
+    return t.map((v, i)=>[v, f.labels[i]]).filter(([v])=>v >= lo - e && v <= hi + e).concat(f.offset ? [[null, f.offset]] : []);
+  }
+
+  function mk(){
+    const p = [], box = [Infinity, Infinity, -Infinity, -Infinity];
+    const fit = (a, b, c, d)=>{ box[0] = Math.min(box[0], a); box[1] = Math.min(box[1], b); box[2] = Math.max(box[2], c); box[3] = Math.max(box[3], d); };
+    return {
+      p, fit,
+      add(s){ p.push(s); },
+      line(x1, y1, x2, y2, c, w, o){ p.push(`<path d="M${f2(x1)} ${f2(y1)}L${f2(x2)} ${f2(y2)}" stroke="${c}" stroke-width="${w}"${o ? ` stroke-opacity="${o}"` : ""}/>`); fit(Math.min(x1, x2), Math.min(y1, y2), Math.max(x1, x2), Math.max(y1, y2)); },
+      t(x, y, s, size, o = {}){
+        const w = tw(s, size, o.bold), dy = {c:0.38, m:0.26, t:0.76, b:-0.24, base:0}[o.v || "c"], a = o.a || "start", k = {start:0, middle:0.5, end:1}[a];
+        const at = `font-size="${size}"${o.bold ? ' font-weight="bold"' : ""}${o.fill ? ` fill="${o.fill}"` : ""}${k ? ` text-anchor="${a}"` : ""}${dy ? ` dy="${dy}em"` : ""}`;
+        if(o.r){ p.push(`<text transform="translate(${f2(x)} ${f2(y)}) rotate(-90)" ${at}>${esc(s)}</text>`); fit(x + (dy - 0.76)*size, y - (1 - k)*w, x + (dy + 0.24)*size, y + k*w); }
+        else { p.push(`<text x="${f2(x)}" y="${f2(y)}" ${at}>${esc(s)}</text>`); fit(x - k*w, y + (dy - 0.76)*size, x + (1 - k)*w, y + (dy + 0.24)*size); }
+        return w;
+      },
+      done(){
+        const pad = 7.2, W = box[2] - box[0] + 2*pad, H = box[3] - box[1] + 2*pad;
+        return {W, H, svg: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="${f2(box[0] - pad)} ${f2(box[1] - pad)} ${f2(W)} ${f2(H)}" font-family="${FONT}">${p.join("")}</svg>`};
+      },
+    };
+  }
+  function yAxis(S, x0, y0, h, ticks, size, label, lsize){
+    let mw = 0;
+    for(const [v, s] of ticks){
+      if(v === null){ S.t(x0, y0 - 1, s, size, {v:"b", fill:GREY}); continue; }
+      const y = y0 + h - v*h;
+      S.line(x0 - 2, y, x0, y, GREY, 0.8);
+      mw = Math.max(mw, S.t(x0 - 3, y, s, size, {a:"end", fill:GREY}));
+    }
+    const lines = label.split("\n"), ax = x0 - 3 - mw - 4;
+    lines.forEach((s, i)=>S.t(ax - (lines.length - 1 - i)*0.76*lsize*1.2, y0 + h/2, s, lsize, {a:"middle", r:1, v:"b", fill:GREY}));
+  }
+
+  function dotFigure(gene, cell, P, bar){
+    const {organs, diseases, A, C} = P, nO = organs.length, nD = diseases.length, S = mk();
+    const FW = Math.max(3, 0.15*nD + 1.5)*72, FH = Math.max(2, 0.19*nO + 0.5), H = (bar ? FH + 1.8 : FH)*72;
+    const title = `${gene} expression in ${cell}`;
+    let vmax = -Infinity;
+    for(const v of A) if(v > vmax) vmax = v;
+    vmax = Math.max(isFinite(vmax) ? vmax : 1, 1e-6);
+    const LT = ["0","0.25","0.5","0.75","1"];
+    let x0 = 0.125*FW, w = 0.775*FW, y0 = 0.12*H, h = 0.77*H, cell2 = 0;
+    if(bar){ cell2 = 0.77*H/2.55; h = FH*2*cell2/(FH + 1.4); }
+    else {
+      const cb = axisTicks(0, vmax, 0.09*h, 5).map(t=>tw(t[1], 5)), legW = 7.65 + Math.max(...LT.map(s=>tw(s, 4.5)));
+      const left = 1 + Math.max(...organs.map(s=>tw(s, 6))) + 10.8;
+      const right = Math.max(0.058*w + 2.3 + Math.max(0, ...cb), 0.05*w + legW, tw(title, 9, 1) - w, 0) + 10.8;
+      const top = 22 + 0.76*9 + 10.8, bot = 1 + Math.max(...diseases.map(s=>tw(s, 5.5))) + 10.8;
+      if(FW - left - right > 0 && H - top - bot > 0){ x0 = left; w = FW - left - right; y0 = top; h = H - top - bot; }
+    }
+    const cw = w/nD, rh = h/nO;
+    let cells = "", dots = "";
+    for(let i=0; i<nO; i++) for(let j=0; j<nD; j++){
+      const k = i*nD + j;
+      if(A[k] !== A[k]) continue;
+      cells += `<rect x="${f2(x0 + j*cw)}" y="${f2(y0 + i*rh)}" width="${f2(cw)}" height="${f2(rh)}"/>`;
+      const r = Math.sqrt(Math.min(1, Math.max(0, C[k]))*75)/2;
+      if(r > 0) dots += `<circle cx="${f2(x0 + (j + 0.5)*cw)}" cy="${f2(y0 + (i + 0.5)*rh)}" r="${f2(r)}" fill="${OR[cidx(A[k]/vmax)]}"/>`;
+    }
+    S.add(`<g shape-rendering="crispEdges"><rect x="${f2(x0)}" y="${f2(y0)}" width="${f2(w)}" height="${f2(h)}" fill="#e5e7eb"/><g fill="#fafbfc">${cells}</g></g><g stroke="#000" stroke-width="0.4">${dots}</g>`);
+    S.fit(x0, y0, x0 + w, y0 + h);
+    organs.forEach((s, i)=>S.t(x0 - 1, y0 + (i + 0.5)*rh, s, 6, {a:"end", fill:GREY}));
+    diseases.forEach((s, j)=>S.t(x0 + (j + 0.5)*cw, y0 + h + 1, s, 5.5, {a:"end", r:1, v:"m", fill:GREY}));
+    S.t(x0, y0 - 22, title, 9, {bold:1, fill:"#111827", v:"base"});
+
+    const cx = x0 + 1.05*w, cww = 0.008*w, cy = y0 + 0.07*h, ch = 0.09*h;
+    S.add(`<defs><linearGradient id="ctxcb" x1="0" y1="1" x2="0" y2="0">${ORRD.map((c, k)=>`<stop offset="${k/8}" stop-color="#${c}"/>`).join("")}</linearGradient></defs><rect x="${f2(cx)}" y="${f2(cy)}" width="${f2(cww)}" height="${f2(ch)}" fill="url(#ctxcb)"/>`);
+    S.fit(cx, cy, cx + cww, cy + ch);
+    for(const [v, s] of axisTicks(0, vmax, ch, 5)){
+      if(v === null){ S.t(cx + cww, cy - 1, s, 5, {v:"b", fill:GREY}); continue; }
+      const y = cy + ch - v/vmax*ch;
+      S.line(cx + cww, y, cx + cww + 1.5, y, GREY, 0.8);
+      S.t(cx + cww + 2.3, y, s, 5, {fill:GREY});
+    }
+    S.t(cx - 2, cy + ch/2, "mean exp.", 4.5, {a:"middle", r:1, v:"b", fill:GREY});
+    const lh = 0.45 + 5*4.275 + 4*1.575, lx = x0 + 1.05*w, ly = y0 + h - lh;
+    [0, 0.25, 0.5, 0.75, 1].forEach((s, k)=>{
+      const y = ly + 0.225 + k*5.85 + 2.1375;
+      S.add(`<circle cx="${f2(lx + 1.125)}" cy="${f2(y)}" r="${f2(Math.sqrt(Math.max(s*75*0.22, 0.5))/2)}" fill="#9ca3af" stroke="#000" stroke-width="0.3"/>`);
+      S.t(lx + 7.425, y, LT[k], 4.5);
+    });
+    S.t(x0 + 1.044*w, ly + lh/2, "coverage", 4.5, {a:"middle", r:1, v:"m", fill:GREY});
+
+    if(bar){
+      const by = y0 + h + 0.55*cell2, bh = 2.8*cell2/(FH + 1.4), n = bar.labels.length, bw = w/n;
+      let dmin = 0, dmax = 0;
+      bar.means.forEach((m, i)=>{ dmin = Math.min(dmin, m - bar.sems[i]); dmax = Math.max(dmax, m + bar.sems[i]); });
+      bar.pts.forEach(([, y])=>{ dmin = Math.min(dmin, y); dmax = Math.max(dmax, y); });
+      const [lo, hi] = autoLim(dmin, dmax, [0]), Y = (v)=>by + bh - (v - lo)/(hi - lo)*bh, X = (v)=>x0 + (v + 0.5)*bw;
+      let bars = "", eb = "", pts = "";
+      bar.means.forEach((m, i)=>{
+        bars += `<rect x="${f2(X(i - 0.39))}" y="${f2(Y(Math.max(m, 0)))}" width="${f2(0.78*bw)}" height="${f2(Math.abs(Y(m) - Y(0)))}" fill="${bar.colors[i]}"/>`;
+        const xc = f2(X(i)), y1 = f2(Y(m - bar.sems[i])), y2 = f2(Y(m + bar.sems[i]));
+        eb += `M${xc} ${y1}V${y2}M${f2(xc - 1.2)} ${y1}h2.4M${f2(xc - 1.2)} ${y2}h2.4`;
+      });
+      bar.pts.forEach(([x, y, c])=>{ pts += `<circle cx="${f2(X(x))}" cy="${f2(Y(y))}" r="1.32" fill="${c}"/>`; });
+      S.add(`<rect x="${f2(x0)}" y="${f2(by)}" width="${f2(w)}" height="${f2(bh)}" fill="#fff"/><g fill-opacity="0.55" stroke="#000" stroke-opacity="0.55" stroke-width="0.4">${bars}</g><path d="${eb}" fill="none" stroke="#000" stroke-width="0.5"/><path d="M${f2(x0)} ${f2(by)}V${f2(by + bh)}H${f2(x0 + w)}" fill="none" stroke="#9ca3af" stroke-width="0.5"/><g fill-opacity="0.95" stroke="#000" stroke-opacity="0.95" stroke-width="0.3">${pts}</g>`);
+      S.fit(x0, by, x0 + w, by + bh);
+      yAxis(S, x0, by, bh, axisTicks(lo, hi, bh, 5).map(([v, s])=>[v === null ? null : (v - lo)/(hi - lo), s]), 5, "mean expression", 6);
+      bar.labels.forEach((s, i)=>S.t(X(i), by + bh + 1, s, 4.5, {a:"end", r:1, v:"m", fill:GREY}));
+      const items = ["Control","Cancer","Other"], lw = 2 + 4.5 + 4 + Math.max(...items.map(s=>tw(s, 5))), gx = x0 + w - 2.5 - lw, gy = by + 2.5;
+      items.forEach((s, k)=>{
+        const y = gy + 1 + k*6.25 + 2.375;
+        S.add(`<rect x="${f2(gx + 1)}" y="${f2(y - 1.75)}" width="4.5" height="3.5" fill="${COL[s]}"/>`);
+        S.t(gx + 9.5, y, s, 5);
+      });
+    }
+    return S.done();
+  }
+
+  function enrFigure(gene, cell, res){
+    const FW = 388.8, FH = 158.4, S = mk(), cw = 0.87/2.24, ch = 0.6/4.21, nrm = ch*4/2.43, rows = [];
+    let top = 0.78;
+    [1.6, 0.18, 0.10, 0.55].forEach((r, k)=>{ if(k) top -= 0.07*ch; rows.push([FH*(1 - top), FH*r*nrm]); top -= r*nrm; });
+    res.forEach(([r, col, label], c)=>{
+      const x0 = FW*(0.10 + c*1.24*cw), w = FW*cw, n = r.n, X = (v)=>x0 + v/n*w;
+      const panel = (y0, h, data, color, op, ylab, ls, ts)=>{
+        let mn = 0, mx = 0;
+        for(const v of data){ if(v < mn) mn = v; if(v > mx) mx = v; }
+        const [lo, hi] = autoLim(mn, mx, []), Y = (v)=>y0 + h - (v - lo)/(hi - lo)*h;
+        let pf = `M${f2(X(0))} ${f2(Y(0))}`, pl = "";
+        data.forEach((v, i)=>{ pf += `L${f2(X(i))} ${f2(Y(v))}`; pl += `${i ? "L" : "M"}${f2(X(i))} ${f2(Y(v))}`; });
+        S.line(x0, Y(0), x0 + w, Y(0), "#9ca3af", 0.4);
+        S.add(`<path d="${pf}L${f2(X(n - 1))} ${f2(Y(0))}Z" fill="${color}" fill-opacity="${op}"/>` + (ylab === "ES" ? `<path d="${pl}" fill="none" stroke="${color}" stroke-width="1.1" stroke-linejoin="round"/>` : ""));
+        S.add(`<path d="M${f2(x0)} ${f2(y0)}V${f2(y0 + h)}H${f2(x0 + w)}" fill="none" stroke="#9ca3af" stroke-width="0.5"/>`);
+        S.fit(x0, y0, x0 + w, y0 + h);
+        yAxis(S, x0, y0, h, axisTicks(lo, hi, h, ts).map(([v, s])=>[v === null ? null : (v - lo)/(hi - lo), s]), ts, ylab, ls);
+      };
+      let [y0, h] = rows[0];
+      panel(y0, h, r.running, col, 0.18, "ES", 7, 6);
+      S.t(x0, y0 - 0.04*h, label, 7, {bold:1, fill:"#111827", v:"b"});
+      [`NES=${r.nes >= 0 ? "+" : "-"}${pyFixed(Math.abs(r.nes), 2)}`, `FDR=${!isFinite(r.fdr) ? "n/a" : r.fdr < 0.001 ? "<0.001" : pyFixed(r.fdr, 3)}`]
+        .forEach((s, i)=>S.t(x0 + 0.985*w, y0 + 0.05*h + i*0.76*6*1.3, s, 6, {a:"end", v:"t", fill:GREY}));
+      [y0, h] = rows[1];
+      let miss = "", hit = "";
+      r.sh.forEach((v, i)=>{ const d = `<path d="M${f2(X(i))} ${f2(y0)}v${f2(h)}"/>`; if(v) hit += d; else miss += d; });
+      S.add(`<g stroke="#9ca3af" stroke-width="0.5" stroke-opacity="0.7">${miss}</g><g stroke="#000" stroke-width="0.5" stroke-opacity="0.95">${hit}</g>`);
+      S.line(x0, y0, x0 + w, y0, "#9ca3af", 0.4); S.line(x0, y0 + h, x0 + w, y0 + h, "#9ca3af", 0.4);
+      [y0, h] = rows[2];
+      let vm = 0, g = "";
+      for(const v of r.sm) vm = Math.max(vm, Math.abs(v));
+      vm = vm || 1;
+      for(let i=0; i<n;){
+        const c0 = RB[cidx((r.sm[i] + vm)/(2*vm))];
+        let j = i + 1;
+        while(j < n && RB[cidx((r.sm[j] + vm)/(2*vm))] === c0) j++;
+        g += `<rect x="${f2(X(i))}" y="${f2(y0)}" width="${f2(X(j) - X(i))}" height="${f2(h)}" fill="${c0}"/>`;
+        i = j;
+      }
+      S.add(`<g shape-rendering="crispEdges">${g}</g>`);
+      [y0, h] = rows[3];
+      panel(y0, h, r.sm, "#9ca3af", 0.6, "Rank\n(z-score)", 6.5, 5.5);
+      S.t(x0 + w/2, y0 + h + 4, `samples (n=${n})`, 6.5, {a:"middle", v:"t", fill:GREY});
+    });
+    S.t(FW*0.535, FH*0.06, `${gene} expression in ${cell}`, 8.5, {a:"middle", bold:1, fill:"#111827", v:"t"});
+    return S.done();
+  }
+
+  function enrich(values, hits, nperm, seed){
+    const n = values.length, m = Float64Array.from(values);
+    const mu = pwSum(m, 0, n)/n, sd = Math.sqrt(pwSum(m.map(v=>(v - mu)*(v - mu)), 0, n)/n);
+    for(let i=0; i<n; i++) m[i] = sd > 0 ? (m[i] - mu)/sd : m[i] - mu;
+    const order = Array.from({length:n}, (_, i)=>i).sort((a, b)=>(-m[a]) - (-m[b]));
+    const sm = Float32Array.from(order, i=>m[i]), sh = Uint8Array.from(order, i=>hits[i] ? 1 : 0), w = Float64Array.from(sm, Math.abs);
+    let nh = 0;
+    for(const h of sh) nh += h;
+    const running = new Float64Array(n);
+    let es = 0;
+    if(nh > 0 && nh < n){
+      const hw = [];
+      for(let i=0; i<n; i++) if(sh[i]) hw.push(w[i]);
+      const s = pwSum(hw, 0, hw.length);
+      if(s !== 0){
+        let acc = 0, best = -1, miss = -1/(n - nh);
+        for(let i=0; i<n; i++){ acc += sh[i] ? w[i]/s : miss; running[i] = acc; if(Math.abs(acc) > best){ best = Math.abs(acc); es = acc; } }
+      }
+    }
+    const nul = new Float64Array(nperm);
+    if(nh > 0 && nh < n){
+      const rng = PCG64(seed), row = new Uint8Array(n), prod = new Float64Array(n), miss = -1/(n - nh);
+      for(let p=0; p<nperm; p++){
+        row.set(sh);
+        for(let i=n - 1; i>=0; i--){ const j = rng.interval(i), t = row[i]; row[i] = row[j]; row[j] = t; }
+        for(let i=0; i<n; i++) prod[i] = row[i] ? w[i] : 0;
+        let s = pwSum(prod, 0, n);
+        if(s === 0) s = 1;
+        let acc = 0, best = -1, val = 0;
+        for(let i=0; i<n; i++){ acc += row[i] ? w[i]/s : miss; if(Math.abs(acc) > best){ best = Math.abs(acc); val = acc; } }
+        nul[p] = val;
+      }
+    }
+    const pos = [], neg = [];
+    for(const v of nul) (v >= 0 ? pos : neg).push(v >= 0 ? v : -v);
+    const dp = Math.max(pos.length ? pwSum(pos, 0, pos.length)/pos.length : 1, 1e-12), dn = Math.max(neg.length ? pwSum(neg, 0, neg.length)/neg.length : 1, 1e-12);
+    return {n, running, sm, sh, nes: es >= 0 ? es/dp : es/dn, nul: Array.from(nul, v=>v >= 0 ? v/dp : v/dn), fdr: NaN};
+  }
+  function fdr(x, nul, obs){
+    if(!isFinite(x)) return NaN;
+    const up = x >= 0, side = (v)=>up ? v >= 0 : v < 0, tail = (v)=>up ? v >= x : v <= x;
+    const ssn = nul.filter(side), sso = obs.filter(side);
+    if(!ssn.length || !sso.length) return 1;
+    const num = ssn.filter(tail).length/ssn.length, den = sso.filter(tail).length/sso.length;
+    return Math.min(den === 0 ? num : num/den, 1);
+  }
+
+  function layout(g, sortMode){
+    const {avg, cov, org, dis} = cur, nOd = org.length;
+    const a = new Float32Array(nOd), c = new Float32Array(nOd), sig = new Float32Array(nOd), F255 = Math.fround(1/255);
+    const nz = (v)=> v !== v ? 0 : v === Infinity ? 3.4028234663852886e38 : v === -Infinity ? -3.4028234663852886e38 : v;
+    for(let i=0; i<nOd; i++){ a[i] = H2F[avg.data[g*nOd + i]]; c[i] = Math.fround(cov.data[g*nOd + i]*F255); sig[i] = Math.fround(nz(a[i])*nz(c[i])); }
+    const agg = (keys, vals)=>{
+      const uniq = [...new Set(keys)].sort(cmp), pos = new Map(uniq.map((k, i)=>[k, i])), out = new Float32Array(uniq.length);
+      keys.forEach((k, i)=>{ const j = pos.get(k); out[j] = out[j] + vals[i]; });
+      return {uniq, out};
+    };
+    let organs, rest;
+    if(sortMode === "expression"){
+      const o1 = agg(org, sig.map((s, i)=>dis[i] === "Control" ? s : 0)), o2 = agg(org, sig);
+      const pr = Array.from(o1.out, v=>v > 0 ? -v : Infinity), se = Array.from(o2.out, v=>-v);
+      organs = o1.uniq.map((_, i)=>i).sort((x, y)=>(pr[x] - pr[y]) || (se[x] - se[y]) || 0).map(i=>o1.uniq[i]);
+      const d = agg(dis, sig);
+      rest = Array.from(argsortQ(Array.from(d.out, v=>-v)), i=>d.uniq[i]).filter(x=>x !== "Control");
+    } else {
+      organs = [...new Set(org)].sort(cmp);
+      rest = [...new Set(dis)].filter(x=>x !== "Control").sort(cmp);
+    }
+    const diseases = (dis.includes("Control") ? ["Control"] : []).concat(rest), nD = diseases.length;
+    const oi = new Map(organs.map((o, i)=>[o, i])), di = new Map(diseases.map((d, j)=>[d, j]));
+    const A = new Float32Array(organs.length*nD).fill(NaN), C = new Float32Array(organs.length*nD).fill(NaN);
+    for(let k=0; k<nOd; k++){ const i = oi.get(org[k]), j = di.get(dis[k]); if(i !== undefined && j !== undefined){ A[i*nD + j] = a[k]; C[i*nD + j] = c[k]; } }
+    return {organs, diseases, A, C};
+  }
+
+  function barData(g){
+    const nS = cur.so.length, col = new Float32Array(nS), groups = new Map();
+    for(let s=0; s<nS; s++) col[s] = H2F[smp.data[g*nS + s]];
+    cur.so.forEach((k, s)=>{ if(!groups.has(k)) groups.set(k, []); groups.get(k).push(col[s]); });
+    const keys = [...groups.keys()].sort(cmp), means = keys.map(k=>f32Mean(groups.get(k)));
+    const rng = PCG64(42), lo = -0.18, rg = 0.18 - lo, out = {labels:[], means:[], sems:[], colors:[], pts:[], col};
+    nargsortDesc(means).forEach((gi, i)=>{
+      const k = keys[gi], d = k.includes("@") ? k.slice(k.indexOf("@") + 1) : "";
+      const c = d === "Control" ? COL.Control : /^(Tumor|Metastasis)/.test(d) ? COL.Cancer : COL.Other;
+      out.labels.push(k); out.means.push(means[gi]); out.sems.push(sem(groups.get(k))); out.colors.push(c);
+      for(const v of groups.get(k)) out.pts.push([i + (lo + rg*rng.dbl()), v, c]);
+    });
+    return out;
+  }
+
+  async function svgToPng(svg, W, H){
+    const s = Math.min(300/72, Math.sqrt(12e6/(W*H)), 8000/Math.max(W, H)), pw = Math.round(W*s), ph = Math.round(H*s);
+    const url = URL.createObjectURL(new Blob([svg.replace("<svg ", `<svg width="${pw}" height="${ph}" `)], {type:"image/svg+xml"}));
     try{
-      isLoadingAssets = true;
-      setDisabled("runBtn", true);
-      clearImage();
-      setStageState("data","active");
-      setStageState("plot","pending");
+      const img = new Image();
+      await new Promise((ok, no)=>{ img.onload = ok; img.onerror = ()=>no(new Error("SVG render failed")); img.src = url; });
+      const cv = document.createElement("canvas");
+      cv.width = pw; cv.height = ph;
+      const c2 = cv.getContext("2d");
+      c2.fillStyle = "#fff"; c2.fillRect(0, 0, pw, ph);
+      c2.drawImage(img, 0, 0, pw, ph);
+      return await new Promise((ok, no)=>cv.toBlob(b=>b ? ok(b) : no(new Error("PNG encode failed")), "image/png"));
+    } finally { URL.revokeObjectURL(url); }
+  }
+  const urls = {};
+  function setDownload(id, imgId, blob, name, W){
+    if(urls[id]) URL.revokeObjectURL(urls[id]);
+    urls[id] = URL.createObjectURL(blob);
+    $(id).href = urls[id]; $(id).download = name; $(id).textContent = `⬇ Download ${name}`; $(id).style.display = "inline-flex";
+    if(imgId){ $(imgId).src = urls[id]; $(imgId).style.width = Math.round(W*150/72) + "px"; $(imgId).style.display = "block"; }
+  }
 
-      // 1) context bundle (small, REQUIRED) — gates the Run button.
-      // 2) samples bundle (larger, OPTIONAL) — fetched in background; bar plot
-      //    appears only if it finishes before the user clicks Run, or on the
-      //    next click after it lands.
-      try { pyodide.FS.unlink("/work/context.npz"); } catch(_) {}
-      try { pyodide.FS.unlink("/work/samples.npz"); } catch(_) {}
-      samplesReady = false;
-      samplesPromise = null;
+  let genes = null, geneIdx = null, cur = null, smp = null, smpP = null, seq = 0, timer = null;
 
-      stage(20, `Fetching ${cell} context …`);
-      const sz = await fetchToFS(ASSET_BASE + `${cell}_context.npz`, "/work/context.npz");
-      log(`✅ ${cell}_context.npz (${(sz/1e6).toFixed(2)} MB) — dotplot ready`);
-
-      // Kick off samples fetch in the background (no await).
-      samplesPromise = fetchToFS(ASSET_BASE + `${cell}_samples.npz`, "/work/samples.npz")
-        .then(sz2 => {
-          // Only adopt result if user hasn't switched cells in the meantime.
-          if (currentCellLoaded === cell) {
-            samplesReady = true;
-            log(`✅ ${cell}_samples.npz (${(sz2/1e6).toFixed(2)} MB) — bar plot enabled`);
-          }
-        })
-        .catch(() => {
-          if (currentCellLoaded === cell) {
-            log(`ℹ️ no ${cell}_samples.npz on the server — bar plot will be skipped`);
-          }
-        });
-
-      assetsLoaded = true;
-      currentCellLoaded = cell;
-      setDisabled("runBtn", false);
-      setStageState("data","done");
+  async function loadCell(cell){
+    const my = ++seq;
+    cur = null; smp = null; smpP = null;
+    $("runBtn").disabled = true; hideResult();
+    setStage("data","active"); setStage("plot",null);
+    stage(20, `Fetching ${cell} context …`);
+    try{
+      const [buf, meta] = await Promise.all([getBuf(`${cell}_context.npz`), getJSON(`${cell}_meta.json`)]);
+      const z = await readNpz(buf, ["avg_od","cov_od_u8"]);
+      if(my !== seq) return;
+      const od = meta.od_index, at = (s)=>s.indexOf("@");
+      cur = {cell, avg: z.avg_od, cov: z.cov_od_u8, org: od.map(s=>at(s) < 0 ? s : s.slice(0, at(s))), dis: od.map(s=>at(s) < 0 ? "" : s.slice(at(s) + 1)), so: meta.sample_o_d};
+      log(`✅ ${cell}_context.npz (${(buf.byteLength/1e6).toFixed(2)} MB) — dotplot ready`);
+      smpP = getBuf(`${cell}_samples.npz`)
+        .then(async b=>{ const s = await readNpz(b, ["sample_avg"]); if(my === seq){ smp = s.sample_avg; log(`✅ ${cell}_samples.npz (${(b.byteLength/1e6).toFixed(2)} MB) — bar plot enabled`); } })
+        .catch(()=>{ if(my === seq) log(`ℹ️ no ${cell}_samples.npz on the server — bar plot will be skipped`); });
+      $("runBtn").disabled = false;
+      setStage("data","done");
       stage(45, `Assets for '${cell}' ready (sample data still loading in background).`);
     }catch(e){
+      if(my !== seq) return;
       log("❌ Asset load failed: " + (e?.message||e));
-      assetsLoaded = false;
-      currentCellLoaded = null;
-      setDisabled("runBtn", true);
-      setStageState("data","err");
-      stage(0, "Asset load failed");
-    }finally{
-      isLoadingAssets = false;
+      setStage("data","err"); stage(0, "Asset load failed");
     }
   }
 
-  // --- boot (auto-run on page load) ---
   async function boot(){
     try{
-      setStageState("boot","active");
-      stage(2, "Initializing Pyodide…");
-      log("⏳ Boot: waiting for pyodide.js …");
-
-      // Cache-warm: kick off the initial cell's data fetch IN PARALLEL with
-      // Pyodide loading. When loadAssetsForCell runs after boot the npz files
-      // are already in the browser HTTP cache, so its explicit fetch is
-      // ~instant. Saves ~1–3 s on first-load wall time.
-      const _initialCell = $("cellSelect").value.trim();
-      if (_initialCell) {
-        fetch(ASSET_BASE + `${_initialCell}_context.npz`).catch(()=>{});
-        fetch(ASSET_BASE + `${_initialCell}_samples.npz`).catch(()=>{});
-        log(`⏳ Pre-fetching ${_initialCell} (parallel to Pyodide boot)…`);
-      }
-
-      await waitForGlobal("loadPyodide", 20000);
-
-      log("⏳ Boot: initializing Pyodide…");
-      pyodide = await globalThis.loadPyodide({ indexURL: "https://cdn.jsdelivr.net/pyodide/v0.26.3/full/" });
-      FS = pyodide.FS;
-      log("✅ Pyodide " + pyodide.version + " loaded.");
-      try{ FS.mkdir("/work"); }catch(_){}
-
-      stage(5, "Loading Python packages (numpy, pandas, matplotlib)…");
-      await pyodide.loadPackage(["numpy","pandas","matplotlib"]);
-      log("✅ Packages loaded.");
-
-      stage(8, "Importing Python libs…");
-      await pyodide.runPythonAsync(`
-import sys, io, os, gzip, pickle as pkl
-import numpy as np, pandas as pd
-import matplotlib as mpl
-mpl.use("Agg")
-import matplotlib.pyplot as plt
-print("numpy", np.__version__)
-print("pandas", pd.__version__)
-print("matplotlib", mpl.__version__)
-      `);
-      log("✅ Python libs imported & backend set.");
-      booted = true;
-      setStageState("boot","done");
-
-      const initialCell = $("cellSelect").value.trim();
-      log(`🔄 Auto-load assets for initial cell: ${initialCell}`);
-      await loadAssetsForCell(initialCell);
+      setStage("boot","active"); stage(5, "Loading gene list …");
+      genes = await getJSON("genes.json");
+      geneIdx = new Map();
+      genes.forEach((g, i)=>{ if(!geneIdx.has(g)) geneIdx.set(g, i); });
+      setStage("boot","done");
+      await loadCell($("cellSelect").value.trim());
     }catch(e){
       log("❌ Boot failed: " + (e?.message||e));
-      setStageState("boot","err");
-      stage(0, "Boot failed");
+      setStage("boot","err"); stage(0, "Boot failed");
     }
   }
 
-  // --- AUTO-RELOAD when cell changes ---
-  let cellReloadTimer=null;
   $("cellSelect").addEventListener("change", ()=>{
-    if(!booted) return;
-    const cell = $("cellSelect").value.trim();
-    // immediately invalidate, prevents Run with stale data
-    assetsLoaded = false;
-    setDisabled("runBtn", true);
-    setStageState("data","active");
-    setStageState("plot","pending");
-    log(`🔁 Cell changed → reloading assets for '${cell}' …`);
-    clearTimeout(cellReloadTimer);
-    cellReloadTimer = setTimeout(()=> loadAssetsForCell(cell), 150);
+    if(!genes) return;
+    cur = null; $("runBtn").disabled = true;
+    setStage("data","active"); setStage("plot",null);
+    log(`🔁 Cell changed → reloading assets for '${$("cellSelect").value.trim()}' …`);
+    clearTimeout(timer);
+    timer = setTimeout(()=>loadCell($("cellSelect").value.trim()), 150);
   });
 
-  // --- run plot ---
   $("runBtn").addEventListener("click", async ()=>{
-    if(!assetsLoaded){ alert("Please wait until the assets finish loading."); return; }
-    const cell = $("cellSelect").value.trim();
-    const gene = $("geneInput").value.trim();
-    const sortMode = $("sortSelect").value.trim();
+    const cell = $("cellSelect").value.trim(), gene = $("geneInput").value.trim(), sortMode = $("sortSelect").value.trim();
+    if(!cur || cur.cell !== cell){ alert("Please wait until the assets finish loading."); return; }
     if(!gene){ alert("Enter a gene symbol."); return; }
-
-    // If sample-level data is still streaming in the background, wait for it
-    // so the bar plot is included. Without this, fast-clicking users on bigger
-    // cells (Mural/Ductal/T&NK) would see only the dotplot.
-    if (samplesPromise && !samplesReady) {
-      stage(48, "Waiting for sample-level data …");
-      log("⏳ samples.npz still loading — waiting before plot …");
-      try { await samplesPromise; } catch(_) { /* 404 etc. handled in catch */ }
-    }
-
+    if(smpP && !smp){ stage(48, "Waiting for sample-level data …"); log("⏳ samples.npz still loading — waiting before plot …"); await smpP; }
+    if(!cur || cur.cell !== cell) return;
     stage(50, "Plotting …");
-    log(`▶️ Plot: cell=${cell}, gene=${gene}, sort=${sortMode}, samples=${samplesReady}`);
-    clearImage();
-    setStageState("plot","active");
-
-    const unhookOut = pyodide.setStdout({
-      batched: (s)=>{
-        (s||"").split(/\r?\n/).forEach(line=>{
-          if(!line) return;
-          if(line.startsWith("__STAGE__:")){
-            const p = line.split(":");
-            const pct = parseInt(p[1]||"50",10);
-            const msg = p.slice(2).join(":") || "Working…";
-            stage(pct, msg);
-          }else{
-            log(line);
-          }
-        });
-      }
-    });
-    const unhookErr = pyodide.setStderr({ batched: (s)=>{ s && s.trim() && log("ERR: " + s); } });
-
+    log(`▶️ Plot: cell=${cell}, gene=${gene}, sort=${sortMode}, samples=${!!smp}`);
+    hideResult(); setStage("plot","active");
     try{
-      // Two-phase render: dotplot first (Phase A) so it paints fast,
-      // enrichment compute second (Phase B) — it kicks off only after
-      // the dotplot is already on screen.
-      const codeA = `
-import os, io, gzip, sys
-import numpy as np, pandas as pd
-import matplotlib as mpl
-mpl.use("Agg")
-import matplotlib.pyplot as plt
-
-def stage(pct, msg):
-    print(f"__STAGE__:{pct}:{msg}")
-    sys.stdout.flush()
-
-# ---- aesthetic constants (matched to dotplot_organ_disease.py) ----
-EMPTY_FILL    = "#e5e7eb"
-PRESENT_FILL  = "#fafbfc"
-DOT_EDGE      = "black"
-SIZE_FACTOR   = 75
-LEG_DOT_SCALE = 0.22
-LEG_SIZES     = [0, 0.25, 0.5, 0.75, 1.0]
-CELL_W = 0.15
-CELL_H = 0.19
-PAD_W  = 1.5
-PAD_H  = 0.5
-
-# bar plot
-CANCER_PREFIXES = ("Tumor", "Metastasis")
-COLOR_CONTROL   = "#9ca3af"
-COLOR_CANCER    = "#dc2626"
-COLOR_OTHER     = "#f59e0b"
-
-def disease_color(d):
-    if d == "Control": return COLOR_CONTROL
-    if any(d.startswith(p) for p in CANCER_PREFIXES): return COLOR_CANCER
-    return COLOR_OTHER
-
-cell      = ${JSON.stringify(cell)}
-gene      = ${JSON.stringify(gene)}
-sort_mode = ${JSON.stringify(sortMode)}
-has_sample = ${samplesReady ? "True" : "False"}
-cmap_name = "OrRd"
-
-# ---- load compressed npz bundle (cached per cell across runs) ----
-# A persistent dict in globals() lets us skip npz load + index parsing when the
-# user hits Run repeatedly with different genes on the same cell.
-stage(55, "Reading bundle …")
-if "_ctx_cache" not in globals():
-    _ctx_cache = {"cell": None}
-if _ctx_cache.get("cell") != cell:
-    _z = np.load("/work/context.npz", allow_pickle=True)
-    od_arr = _z["od_index"]
-    # split "Organ@Disease" once, vectorized
-    _split = np.array([s.split("@", 1) if isinstance(s, str) else (str(s).split("@", 1)) for s in od_arr])
-    _ctx_cache = {
-        "cell":     cell,
-        "genes":    _z["genes"],
-        "od_index": od_arr,
-        "avg_od":   _z["avg_od"],          # float16
-        "cov_od":   _z["cov_od_u8"],       # uint8
-        "organs":   _split[:, 0].astype(str),
-        "diseases": _split[:, 1].astype(str),
-    }
-genes_arr        = _ctx_cache["genes"]
-od_index_arr     = _ctx_cache["od_index"]
-organs_per_od    = _ctx_cache["organs"]
-diseases_per_od  = _ctx_cache["diseases"]
-avg_od_full      = _ctx_cache["avg_od"]
-cov_od_full      = _ctx_cache["cov_od"]
-
-if gene not in genes_arr:
-    raise ValueError(f"gene '{gene}' not found in {cell} (n_genes={genes_arr.size:,})")
-g_idx = int(np.where(genes_arr == gene)[0][0])
-
-# Pull only the gene's column from each matrix (cheap — float16 / uint8).
-avg_col = avg_od_full[:, g_idx].astype(np.float32)
-cov_col = cov_od_full[:, g_idx].astype(np.float32) * np.float32(1.0/255.0)
-
-diseases_all = np.unique(diseases_per_od)
-
-# ---- ordering (pure numpy, no pandas groupby) ----
-stage(63, "Computing layout …")
-sig = np.nan_to_num(avg_col) * np.nan_to_num(cov_col)
-
-# Sum signal per organ and per disease in one shot via numpy bincount-style accumulation
-def _agg_sum(keys, values):
-    uniq, inv = np.unique(keys, return_inverse=True)
-    out = np.zeros(uniq.size, dtype=np.float32)
-    np.add.at(out, inv, values.astype(np.float32))
-    return uniq, out
-
-if sort_mode == "expression":
-    # Organ rows are ordered primarily by their Control-sample signal so the
-    # baseline (non-disease) expression dominates the layout. Organs absent
-    # from Control fall back to their total-signal rank, appended after.
-    is_ctrl_od    = (diseases_per_od == "Control")
-    sig_ctrl_only = sig * is_ctrl_od                       # signal contribution from Control rows only
-    o_uniq, o_ctrl_sum = _agg_sum(organs_per_od, sig_ctrl_only)
-    _,      o_total    = _agg_sum(organs_per_od, sig)
-    has_ctrl_organ     = o_ctrl_sum > 0
-    # Sort: organs with Control first (by Control signal desc), then the rest
-    # (no Control coverage) by total signal desc — keeps every organ ordered
-    # by *something* meaningful instead of randomly trailing.
-    primary   = np.where(has_ctrl_organ, -o_ctrl_sum, np.inf)
-    secondary = -o_total
-    rank      = np.lexsort((secondary, primary))
-    organs    = o_uniq[rank].tolist()
-    d_uniq, d_sum = _agg_sum(diseases_per_od, sig)
-    order = np.argsort(-d_sum)
-    rest = [str(d) for d in d_uniq[order] if d != "Control"]
-else:
-    organs = sorted(np.unique(organs_per_od).tolist())
-    rest   = sorted(d for d in diseases_all if d != "Control")
-control = ["Control"] if "Control" in diseases_all else []
-diseases = control + rest
-
-# ---- pivot via direct numpy indexing (skips pandas DataFrame.pivot) ----
-o_to_idx = {o: i for i, o in enumerate(organs)}
-d_to_idx = {d: j for j, d in enumerate(diseases)}
-n_o, n_d = len(organs), len(diseases)
-A = np.full((n_o, n_d), np.nan, dtype=np.float32)
-C = np.full((n_o, n_d), np.nan, dtype=np.float32)
-for i_od, (o, d) in enumerate(zip(organs_per_od, diseases_per_od)):
-    ii = o_to_idx.get(o); jj = d_to_idx.get(d)
-    if ii is None or jj is None:
-        continue
-    A[ii, jj] = avg_col[i_od]
-    C[ii, jj] = cov_col[i_od]
-
-# ---- optionally read sample-level data from the separate samples.npz ----
-sample_df = None
-if has_sample and os.path.exists("/work/samples.npz"):
-    try:
-        stage(70, "Reading sample-level data …")
-        _smp = np.load("/work/samples.npz", allow_pickle=True)
-        # samples.npz uses the same gene order as context.npz (built that way at conversion).
-        sample_col = _smp["sample_avg"][:, g_idx].astype(np.float32)
-        sample_df = pd.DataFrame({
-            gene:       sample_col,
-            "Organ":    [str(x) for x in _smp["sample_organ"]],
-            "disease":  [str(x) for x in _smp["sample_disease"]],
-            "o@d":      [str(x) for x in _smp["sample_o_d"]],
-        }, index=[str(x) for x in _smp["sample_id"]])
-    except Exception as _e:
-        print(f"ℹ️ skipping bar plot — {_e}")
-        sample_df = None
-
-# ---- figure ----
-stage(75, "Drawing dotplot …")
-# ---- Original vertically-stacked layout: dotplot on top, barplot below ----
-# Lower the width floor so small-disease cells (e.g. Astrocyte, Neutrophil) get
-# a tight figure instead of being stretched to 5 in. Height floor stays so very
-# few-organ cells still have room for the title + colorbar.
-fig_w = max(3.0, CELL_W * n_d + PAD_W)
-fig_h_dot = max(2.0, CELL_H * n_o + PAD_H)
-if sample_df is not None:
-    fig_h_bar = 1.4
-    fig = plt.figure(figsize=(fig_w, fig_h_dot + fig_h_bar + 0.4), dpi=150)
-    gs = fig.add_gridspec(2, 1, height_ratios=[fig_h_dot, fig_h_bar], hspace=0.55)
-    ax = fig.add_subplot(gs[0])
-    ax_bar = fig.add_subplot(gs[1])
-else:
-    fig, ax = plt.subplots(figsize=(fig_w, fig_h_dot), dpi=150)
-    ax_bar = None
-ax.set_facecolor("white")
-
-present_mask = ~np.isnan(A)
-pres_y, pres_x = np.where(present_mask)
-
-# Background lattice as a SINGLE imshow (was n_o*n_d Rectangle add_patch calls).
-import matplotlib.colors as _mcolors
-_bg = present_mask.astype(np.int8)   # 0 = NaN cell, 1 = present
-_bg_cmap = _mcolors.ListedColormap([EMPTY_FILL, PRESENT_FILL])
-ax.imshow(_bg, cmap=_bg_cmap, vmin=0, vmax=1,
-          interpolation="nearest", aspect="auto",
-          extent=[-0.5, n_d - 0.5, n_o - 0.5, -0.5], zorder=0)
-
-cov_vals = np.clip(C[pres_y, pres_x], 0, 1)
-avg_vals = A[pres_y, pres_x]
-vmax = max(float(np.nanmax(avg_vals)) if np.isfinite(avg_vals).any() else 1.0, 1e-6)
-sc = ax.scatter(pres_x, pres_y, s=cov_vals * SIZE_FACTOR, c=avg_vals,
-                cmap=cmap_name, vmin=0, vmax=vmax,
-                edgecolor=DOT_EDGE, linewidth=0.4, zorder=2)
-
-ax.set_xticks(range(n_d)); ax.set_xticklabels(diseases, rotation=90, fontsize=5.5)
-ax.set_yticks(range(n_o)); ax.set_yticklabels(organs, fontsize=6)
-ax.set_xlim(-0.5, n_d - 0.5)
-ax.set_ylim(n_o - 0.5, -0.5)
-ax.tick_params(length=0, colors="#374151", pad=1)
-for sp in ax.spines.values(): sp.set_visible(False)
-
-ax.set_title(f"{gene} expression in {cell}", fontsize=9, weight="semibold",
-             color="#111827", pad=22, loc="left")
-
-# ---- compact colorbar — pinned top-right; label on the LEFT (vertical) ----
-cax = ax.inset_axes([1.05, 0.84, 0.008, 0.09])
-cbar = fig.colorbar(sc, cax=cax)
-cbar.ax.yaxis.set_label_position("left")
-cbar.set_label("mean exp.", fontsize=4.5, color="#374151", labelpad=2)
-cbar.ax.tick_params(labelsize=5, colors="#374151", length=1.5, pad=0.8)
-cbar.outline.set_visible(False)
-
-# ---- coverage legend (no built-in title) — bigger pad, tight rows ----
-leg_handles = [plt.scatter([], [], s=max(s * SIZE_FACTOR * LEG_DOT_SCALE, 0.5),
-                           c="#9ca3af", edgecolor=DOT_EDGE, linewidth=0.3)
-               for s in LEG_SIZES]
-leg = ax.legend(leg_handles, [f"{s:g}" for s in LEG_SIZES],
-                loc="lower left",
-                bbox_to_anchor=(1.05, 0.0),
-                fontsize=4.5, frameon=False,
-                labelspacing=0.35, borderpad=0.05,
-                handletextpad=1.2, handlelength=0.4,
-                borderaxespad=0.0)
-
-fig.canvas.draw()
-leg_bbox = leg.get_window_extent().transformed(ax.transAxes.inverted())
-y_center = (leg_bbox.y0 + leg_bbox.y1) / 2.0
-ax.text(1.044, y_center, "coverage", rotation=90, fontsize=4.5,
-        color="#374151", ha="center", va="center", transform=ax.transAxes)
-
-# ---- bar + strip plot below the dotplot (per-sample expression by o@d) ----
-if ax_bar is not None and sample_df is not None:
-    stage(85, "Drawing barplot …")
-    agg = sample_df.groupby("o@d")[gene].agg(["mean", "sem"]).sort_values("mean", ascending=False)
-    od_order  = agg.index.tolist()
-    mean_vals = agg["mean"].values
-    se_vals   = np.nan_to_num(agg["sem"].values, nan=0.0)
-    x_pos = np.arange(len(od_order))
-    bar_colors = [disease_color(od.split("@", 1)[1] if "@" in od else "") for od in od_order]
-
-    ax_bar.bar(x_pos, mean_vals, yerr=se_vals, color=bar_colors,
-               edgecolor="black", linewidth=0.4, width=0.78,
-               alpha=0.55, zorder=1,
-               error_kw=dict(ecolor="black", elinewidth=0.5, capsize=1.2, capthick=0.5))
-
-    rng = np.random.default_rng(42)
-    JIT = 0.18
-    for i, od in enumerate(od_order):
-        sub = sample_df.loc[sample_df["o@d"] == od, gene].values.astype(float)
-        if len(sub) == 0:
-            continue
-        x_jit = i + rng.uniform(-JIT, JIT, size=len(sub))
-        ax_bar.scatter(x_jit, sub, c=bar_colors[i], edgecolor="black",
-                       linewidth=0.3, s=7, zorder=3, alpha=0.95)
-
-    ax_bar.set_xticks(x_pos)
-    ax_bar.set_xticklabels(od_order, rotation=90, fontsize=4.5)
-    ax_bar.set_xlim(-0.5, len(od_order) - 0.5)
-    ax_bar.set_ylabel("mean expression", fontsize=6, color="#374151")
-    ax_bar.tick_params(axis="y", labelsize=5, colors="#374151", length=2, pad=1)
-    ax_bar.tick_params(axis="x", length=0, colors="#374151", pad=1)
-    for sp in ("top", "right"): ax_bar.spines[sp].set_visible(False)
-    for sp in ("left", "bottom"):
-        ax_bar.spines[sp].set_color("#9ca3af"); ax_bar.spines[sp].set_linewidth(0.5)
-    ax_bar.legend(handles=[
-        plt.Rectangle((0, 0), 1, 1, color=COLOR_CONTROL, label="Control"),
-        plt.Rectangle((0, 0), 1, 1, color=COLOR_CANCER,  label="Cancer"),
-        plt.Rectangle((0, 0), 1, 1, color=COLOR_OTHER,   label="Other"),
-    ], loc="upper right", fontsize=5, frameon=False,
-        handlelength=0.9, handleheight=0.7, labelspacing=0.3, borderpad=0.2)
-
-plt.tight_layout()
-
-stage(92, "Saving PNG …")
-buf = io.BytesIO()
-plt.savefig(buf, format="png", bbox_inches="tight", dpi=150, facecolor="white")
-plt.close(fig)
-open("/plot.png","wb").write(buf.getbuffer())
-
-stage(94, "Saving CSV …")
-F_ix, G_ix = np.meshgrid(np.arange(n_o), np.arange(n_d), indexing="ij")
-df_out = pd.DataFrame({
-    "organ":           [organs[i]   for i in F_ix.ravel()],
-    "disease":         [diseases[j] for j in G_ix.ravel()],
-    "mean_expression": A.ravel(),
-    "coverage":        C.ravel(),
-})
-df_out.to_csv("/plot.csv", index=False)
-
-print("DONE_A", n_o, "organs ×", n_d, "diseases")
-"OK"
-      `;
-
-      // Phase B uses globals from Phase A (sample_df, cell, gene, COLOR_*,
-      // os, io, np, pd, plt, mpl, stage). All persist across runPythonAsync.
-      const codeB = `
-# ---- GSEA-style enrichment plot (only when sample-level data is available) ----
-# Disease and tumor contrasts share one ranked-by-expression metric (z-scored
-# across samples). Layout: disease ES + rug LEFT, tumor ES + rug RIGHT, with
-# a shared rank-gradient + ranked-metric panel underneath spanning both cols.
-#
-# NES (effect-size) is computed from a small permutation null (n_perms=200)
-# as ES / mean(|same-signed null peak ES|), Subramanian 2005.
-# p-value is a two-sided Mann-Whitney U test on the per-sample expression
-# values between hit and non-hit samples — well-calibrated for any n,
-# unlike the GSEA permutation p which floors at 1/n_perms with large n.
-# q-value is BH-adjustment of (p_disease, p_tumor) for this gene.
-try: os.unlink("/plot_enrichment.png")
-except FileNotFoundError: pass
-
-if sample_df is not None and len(sample_df) >= 8:
-    stage(95, "Computing enrichment …")
-
-    def _running_es(hit_mask, w, n, n_hit):
-        if n_hit == 0 or n_hit == n: return 0.0, np.zeros(n), 0
-        hit_w_sum = float(w[hit_mask].sum())
-        if hit_w_sum == 0: return 0.0, np.zeros(n), 0
-        steps = np.where(hit_mask, w / hit_w_sum, -1.0 / (n - n_hit))
-        running = np.cumsum(steps)
-        peak = int(np.argmax(np.abs(running)))
-        return float(running[peak]), running, peak
-
-    def _fmt_pq(v):
-        if not np.isfinite(v): return "n/a"
-        if v < 0.001: return "<0.001"
-        return f"{v:.3f}"
-
-    def _gsea_fdr(nes_obs, all_null_nes, all_obs_nes):
-        # GSEA-style FDR on pooled NES distributions across all contrasts.
-        if not np.isfinite(nes_obs): return float("nan")
-        if nes_obs >= 0:
-            ssn = all_null_nes[all_null_nes >= 0]
-            sso = all_obs_nes[all_obs_nes >= 0]
-            if ssn.size == 0 or sso.size == 0: return 1.0
-            num   = float((ssn >= nes_obs).sum()) / ssn.size
-            denom = float((sso >= nes_obs).sum()) / sso.size
-        else:
-            ssn = all_null_nes[all_null_nes < 0]
-            sso = all_obs_nes[all_obs_nes < 0]
-            if ssn.size == 0 or sso.size == 0: return 1.0
-            num   = float((ssn <= nes_obs).sum()) / ssn.size
-            denom = float((sso <= nes_obs).sum()) / sso.size
-        if denom == 0: return float(min(num, 1.0))
-        return float(min(num / denom, 1.0))
-
-    def _enrich(values, hits, n_perms=200, rng_seed=42):
-        n = values.size
-        metric = values.astype(np.float64)
-        mu = float(np.nanmean(metric)); sigma = float(np.nanstd(metric))
-        if sigma > 0: metric = (metric - mu) / sigma
-        else:        metric = metric - mu
-        order = np.argsort(-metric, kind="stable")
-        sorted_metric = metric[order].astype(np.float32)
-        sorted_hits = hits[order]
-        n_hit = int(sorted_hits.sum())
-        w = np.abs(sorted_metric).astype(np.float64)
-        es, running, peak = _running_es(sorted_hits, w, n, n_hit)
-        null = np.zeros(n_perms, dtype=np.float64)
-        if 0 < n_hit < n and n_perms > 0:
-            rng = np.random.default_rng(rng_seed)
-            shuf = np.tile(sorted_hits, (n_perms, 1))
-            shuf = rng.permuted(shuf, axis=1)
-            sums = (shuf.astype(np.float64) * w[None, :]).sum(axis=1)
-            sums[sums == 0] = 1.0
-            miss_step = -1.0 / (n - n_hit)
-            steps = np.where(shuf, w[None, :] / sums[:, None], miss_step)
-            run_all = np.cumsum(steps, axis=1)
-            peak_idx = np.argmax(np.abs(run_all), axis=1)
-            null = run_all[np.arange(n_perms), peak_idx]
-        pos = null[null >= 0]; neg = null[null < 0]
-        denom_pos = max(float(pos.mean()) if pos.size > 0 else 1.0, 1e-12)
-        denom_neg = max(float(abs(neg).mean()) if neg.size > 0 else 1.0, 1e-12)
-        nes = float(es / denom_pos) if es >= 0 else float(es / denom_neg)
-        nes_null = np.where(null >= 0, null / denom_pos, null / denom_neg)
-        return dict(running=running, sorted_metric=sorted_metric, sorted_hits=sorted_hits,
-                    es=es, peak=peak, nes=nes, nes_null=nes_null,
-                    n_hit=n_hit, n=n, fdr=float("nan"))
-
-    expr_s     = sample_df[gene].values.astype(np.float32)
-    diseases_s = sample_df["disease"].astype(str).values
-    is_disease = diseases_s != "Control"
-    is_tumor   = np.array([d.startswith("Tumor") or d.startswith("Metastasis")
-                           for d in diseases_s])
-
-    # Skip enrichment if either contrast is degenerate (all-hit or no-hit).
-    skip_enrichment = (is_disease.all() or (~is_disease).all()
-                       or is_tumor.all()   or (~is_tumor).all())
-    if skip_enrichment:
-        print("ℹ️ enrichment skipped (no contrast — all samples on one side)")
-    else:
-        res_dis = _enrich(expr_s, is_disease, n_perms=200, rng_seed=42)
-        res_tum = _enrich(expr_s, is_tumor,   n_perms=200, rng_seed=43)
-        # Pool NES distributions across both contrasts → GSEA-style FDR.
-        all_null = np.concatenate([res_dis["nes_null"], res_tum["nes_null"]])
-        all_obs  = np.array([res_dis["nes"], res_tum["nes"]], dtype=np.float64)
-        res_dis["fdr"] = _gsea_fdr(res_dis["nes"], all_null, all_obs)
-        res_tum["fdr"] = _gsea_fdr(res_tum["nes"], all_null, all_obs)
-
-        stage(97, "Drawing enrichment …")
-        _FONT = {"family": "sans-serif"}
-
-        # Two truly-independent enrichment columns (each with its own gradient
-        # and ranked metric, so the left + right read as 2 self-contained plots).
-        # Shorter Y than before — the per-column metric/gradient lets the figure
-        # be more compact vertically.
-        fig_e = plt.figure(figsize=(5.4, 2.2), dpi=150)
-        LEFT_E, RIGHT_E = 0.10, 0.97
-        gs_e = fig_e.add_gridspec(
-            4, 2,
-            height_ratios=[1.6, 0.18, 0.10, 0.55],
-            width_ratios=[1, 1],
-            hspace=0.07, wspace=0.24,
-            top=0.78, bottom=0.18, left=LEFT_E, right=RIGHT_E,
-        )
-        # Disease column (left)
-        ax_es_d = fig_e.add_subplot(gs_e[0, 0])
-        ax_h_d  = fig_e.add_subplot(gs_e[1, 0], sharex=ax_es_d)
-        ax_g_d  = fig_e.add_subplot(gs_e[2, 0], sharex=ax_es_d)
-        ax_m_d  = fig_e.add_subplot(gs_e[3, 0], sharex=ax_es_d)
-        # Tumor column (right)
-        ax_es_t = fig_e.add_subplot(gs_e[0, 1])
-        ax_h_t  = fig_e.add_subplot(gs_e[1, 1], sharex=ax_es_t)
-        ax_g_t  = fig_e.add_subplot(gs_e[2, 1], sharex=ax_es_t)
-        ax_m_t  = fig_e.add_subplot(gs_e[3, 1], sharex=ax_es_t)
-
-        def _draw_es(ax, res, color, label):
-            n = res["n"]; running = res["running"]; x = np.arange(n)
-            ax.plot(x, running, color=color, linewidth=1.1, zorder=3)
-            ax.fill_between(x, 0, running, color=color, alpha=0.18, zorder=2)
-            ax.axhline(0, color="#9ca3af", linewidth=0.4, zorder=0)
-            fdr_str = _fmt_pq(res["fdr"])
-            ax.text(0.0, 1.04, label, fontsize=7, va="bottom", ha="left",
-                    transform=ax.transAxes, color="#111827", weight="bold", **_FONT)
-            ax.text(0.985, 0.95,
-                    f"NES={res['nes']:+.2f}\\nFDR={fdr_str}",
-                    fontsize=6, va="top", ha="right",
-                    transform=ax.transAxes, color="#374151",
-                    linespacing=1.3, **_FONT)
-            ax.set_ylabel("ES", fontsize=7, color="#374151", **_FONT)
-            ax.tick_params(axis="y", labelsize=6, colors="#374151", length=2, pad=1)
-            ax.tick_params(axis="x", length=0, colors="#374151")
-            plt.setp(ax.get_xticklabels(), visible=False)
-            ax.set_xlim(0, n)
-            for sp in ("top", "right"): ax.spines[sp].set_visible(False)
-            for sp in ("left", "bottom"):
-                ax.spines[sp].set_color("#9ca3af"); ax.spines[sp].set_linewidth(0.5)
-
-        def _draw_rug(ax, res):
-            # Two-tone rug — grey ticks for non-hits, black ticks for hits on
-            # top so the smaller group still reads through when one side dominates.
-            n = res["n"]
-            sh = res["sorted_hits"]
-            miss_x = np.where(~sh)[0]
-            hit_x  = np.where(sh)[0]
-            ax.vlines(miss_x, 0, 1, color=COLOR_CONTROL, linewidth=0.5, alpha=0.7,  zorder=1)
-            ax.vlines(hit_x,  0, 1, color="black",        linewidth=0.5, alpha=0.95, zorder=2)
-            ax.set_xlim(0, n); ax.set_ylim(0, 1)
-            ax.set_yticks([]); ax.set_xticks([])
-            plt.setp(ax.get_xticklabels(), visible=False)
-            for sp in ("top", "bottom"):
-                ax.spines[sp].set_visible(True)
-                ax.spines[sp].set_color("#9ca3af"); ax.spines[sp].set_linewidth(0.4)
-            for sp in ("left", "right"): ax.spines[sp].set_visible(False)
-
-        def _draw_grad(ax, sm, n):
-            img = np.asarray(sm).reshape(1, -1)
-            vmax = float(np.nanmax(np.abs(img))) or 1.0
-            ax.imshow(img, aspect="auto", cmap="RdBu_r", vmin=-vmax, vmax=vmax,
-                      extent=[0, n, 0, 1], interpolation="nearest")
-            ax.set_xlim(0, n); ax.set_ylim(0, 1)
-            ax.set_xticks([]); ax.set_yticks([])
-            plt.setp(ax.get_xticklabels(), visible=False)
-            for sp in ax.spines.values(): sp.set_visible(False)
-
-        def _draw_metric_e(ax, sm, n):
-            x = np.arange(n)
-            ax.fill_between(x, 0, sm, color="#9ca3af", alpha=0.6, linewidth=0)
-            ax.axhline(0, color="#9ca3af", linewidth=0.4)
-            ax.set_ylabel("Rank\\n(z-score)", fontsize=6.5, color="#374151", **_FONT)
-            ax.set_xlabel(f"samples (n={n})", fontsize=6.5, color="#374151", **_FONT)
-            ax.tick_params(labelsize=5.5, colors="#374151", length=2, pad=1)
-            ax.set_xlim(0, n)
-            for sp in ("top", "right"): ax.spines[sp].set_visible(False)
-            for sp in ("left", "bottom"):
-                ax.spines[sp].set_color("#9ca3af"); ax.spines[sp].set_linewidth(0.5)
-
-        # left: disease
-        _draw_es(ax_es_d, res_dis, COLOR_OTHER,  "Disease enrichment")
-        _draw_rug(ax_h_d, res_dis)
-        _draw_grad(ax_g_d, res_dis["sorted_metric"], res_dis["n"])
-        _draw_metric_e(ax_m_d, res_dis["sorted_metric"], res_dis["n"])
-
-        # right: tumor
-        _draw_es(ax_es_t, res_tum, COLOR_CANCER, "Tumor enrichment")
-        _draw_rug(ax_h_t, res_tum)
-        _draw_grad(ax_g_t, res_tum["sorted_metric"], res_tum["n"])
-        _draw_metric_e(ax_m_t, res_tum["sorted_metric"], res_tum["n"])
-
-        fig_e.suptitle(f"{gene} expression in {cell}",
-                       fontsize=8.5, weight="bold",
-                       color="#111827",
-                       x=(LEFT_E + RIGHT_E) / 2, y=0.94,
-                       ha="center", **_FONT)
-
-        buf2 = io.BytesIO()
-        plt.savefig(buf2, format="png", bbox_inches="tight", dpi=150, facecolor="white")
-        plt.close(fig_e)
-        open("/plot_enrichment.png", "wb").write(buf2.getbuffer())
-
-print("DONE_B")
-"OK"
-      `;
-
-      // ---- PHASE A: dotplot + barplot + CSV — display ASAP ----
-      await pyodide.runPythonAsync(codeA);
-
-      const pngBytes = FS.readFile("/plot.png");
-      const pngBlob  = new Blob([pngBytes], { type: "image/png" });
-      if(pngURL) URL.revokeObjectURL(pngURL);
-      pngURL = URL.createObjectURL(pngBlob);
-
-      const csvBytes = FS.readFile("/plot.csv");
-      const csvBlob  = new Blob([csvBytes], { type: "text/csv" });
-      if(csvURL) URL.revokeObjectURL(csvURL);
-      csvURL = URL.createObjectURL(csvBlob);
-
-      const safeCell = cell.replace(/[\s/\\&]+/g, "_");
-      const safeGene = gene.replace(/[\s/\\&]+/g, "_");
-      const pngName = `${safeCell}_${safeGene}_context.png`;
-      const csvName = `${safeCell}_${safeGene}_context.csv`;
-
-      $("plotImg").src = pngURL;
-      $("plotImg").style.display = "block";
-      $("downloadPNG").href = pngURL;
-      $("downloadPNG").download = pngName;
-      $("downloadPNG").textContent = `⬇ Download ${pngName}`;
-      $("downloadPNG").style.display = "inline-flex";
-      $("downloadCSV").href = csvURL;
-      $("downloadCSV").download = csvName;
-      $("downloadCSV").textContent = `⬇ Download ${csvName}`;
-      $("downloadCSV").style.display = "inline-flex";
-
-      // Hide stale enrichment image until Phase B repopulates it (or fails).
-      $("plotImgEnrichment").style.display = "none";
-      $("downloadEnrichmentPNG").style.display = "none";
-
-      $("resultSummary").innerHTML = `${cell} · ${gene} <span class="stat">organ × disease context</span>`;
-      $("resultCard").classList.remove("err");
+      const g = geneIdx.get(gene);
+      if(g === undefined) throw new Error(`gene '${gene}' not found in ${cell} (n_genes=${genes.length.toLocaleString("en-US")})`);
+      const P = layout(g, sortMode), bar = smp ? barData(g) : null;
+      const fig = dotFigure(gene, cell, P, bar), png = await svgToPng(fig.svg, fig.W, fig.H);
+      const lines = ["organ,disease,mean_expression,coverage"], q = (s)=>/[",\n\r]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+      P.organs.forEach((o, i)=>P.diseases.forEach((d, j)=>lines.push([q(o), q(d), npF32(P.A[i*P.diseases.length + j]), npF32(P.C[i*P.diseases.length + j])].join(","))));
+      const safe = (s)=>s.replace(/[\s/\\&]+/g, "_"), stem = `${safe(cell)}_${safe(gene)}`;
+      setDownload("downloadPNG", "plotImg", png, `${stem}_context.png`, fig.W);
+      setDownload("downloadCSV", null, new Blob([lines.join("\n") + "\n"], {type:"text/csv"}), `${stem}_context.csv`);
+      $("resultSummary").innerHTML = `${esc(cell)} · ${esc(gene)} <span class="stat">organ × disease context</span>`;
       $("resultCard").style.display = "block";
-      setStageState("plot","done");
+      setStage("plot","done");
       stage(85, "Dotplot ready · computing enrichment …");
       log("✅ Dotplot rendered — computing enrichment …");
-
-      // Yield to the browser event loop so the dotplot actually paints before
-      // Phase B (matplotlib + permutation) starts blocking the main thread.
-      // Two double-rAF + setTimeout to be sure the paint fires.
-      await new Promise(r => requestAnimationFrame(()=> requestAnimationFrame(()=> setTimeout(r, 0))));
-
-      // ---- PHASE B: enrichment compute + render ----
-      try {
-        await pyodide.runPythonAsync(codeB);
-        try {
-          const epngBytes = FS.readFile("/plot_enrichment.png");
-          const epngBlob  = new Blob([epngBytes], { type: "image/png" });
-          if(epngURL) URL.revokeObjectURL(epngURL);
-          epngURL = URL.createObjectURL(epngBlob);
-          const epngName = `${safeCell}_${safeGene}_enrichment.png`;
-          $("plotImgEnrichment").src = epngURL;
-          $("plotImgEnrichment").style.display = "block";
-          $("downloadEnrichmentPNG").href = epngURL;
-          $("downloadEnrichmentPNG").download = epngName;
-          $("downloadEnrichmentPNG").textContent = `⬇ Download ${epngName}`;
-          $("downloadEnrichmentPNG").style.display = "inline-flex";
-          log("✅ Enrichment ready.");
-        } catch(_) {
-          // No enrichment file (degenerate contrast or no sample data) — silent.
+      await new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(()=>setTimeout(r, 0))));
+      try{
+        if(bar && bar.col.length >= 8){
+          const ds = cur.so.map(s=>s.slice(s.indexOf("@") + 1)), isD = ds.map(d=>d !== "Control"), isT = ds.map(d=>/^(Tumor|Metastasis)/.test(d));
+          if(isD.every(Boolean) || !isD.some(Boolean) || isT.every(Boolean) || !isT.some(Boolean)) log("ℹ️ enrichment skipped (no contrast — all samples on one side)");
+          else {
+            const rd = enrich(bar.col, isD, 200, 42), rt = enrich(bar.col, isT, 200, 43), nul = rd.nul.concat(rt.nul), obs = [rd.nes, rt.nes];
+            rd.fdr = fdr(rd.nes, nul, obs); rt.fdr = fdr(rt.nes, nul, obs);
+            const ef = enrFigure(gene, cell, [[rd, COL.Other, "Disease enrichment"], [rt, COL.Cancer, "Tumor enrichment"]]);
+            setDownload("downloadEnrichmentPNG", "plotImgEnrichment", await svgToPng(ef.svg, ef.W, ef.H), `${stem}_enrichment.png`, ef.W);
+            log("✅ Enrichment ready.");
+          }
         }
-      } catch(eb) {
-        log("⚠️ Enrichment failed: " + (eb?.message||eb));
-      }
-
+      }catch(eb){ log("⚠️ Enrichment failed: " + (eb?.message||eb)); }
       stage(100, "Done");
     }catch(e){
-      stage(0, "Error");
-      setStageState("plot","err");
-      $("resultSummary").innerHTML = `${e?.message || e}`;
+      stage(0, "Error"); setStage("plot","err");
+      $("resultSummary").textContent = e?.message || String(e);
       $("resultCard").classList.add("err");
       $("resultCard").style.display = "block";
-      $("plotImg").style.display = "none";
-      $("downloadPNG").style.display = "none";
-      $("downloadCSV").style.display = "none";
       log("❌ Run error: " + (e?.message||e));
-    }finally{
-      try{ unhookOut && unhookOut(); }catch(_){}
-      try{ unhookErr && unhookErr(); }catch(_){}
     }
   });
 
-  log("Flow → (auto-boot) → choose cell (auto-loads) → Explore");
-  resetStages();
-
-  // Auto-boot: this inline script only runs on the contextplot page.
   boot();
 })();
 </script>
