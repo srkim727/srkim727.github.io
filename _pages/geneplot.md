@@ -92,6 +92,12 @@ excerpt: ""
   }
   .pg-wrap .btn-download:hover{background:var(--ok-dark);border-color:var(--ok-dark);color:#fff !important;text-decoration:none;}
   .pg-wrap .plot-img{max-width:100%;border:1px solid var(--border);border-radius:6px;background:#fff;display:block;}
+  .pg-wrap .suggest{
+    display:none;position:absolute;top:100%;z-index:20;margin-top:2px;min-width:160px;overflow:hidden;
+    background:#fff;border:1px solid var(--border-strong);border-radius:6px;box-shadow:0 4px 12px rgba(0,0,0,.08);color:var(--text);
+  }
+  .pg-wrap .suggest div{padding:5px 10px;cursor:pointer;}
+  .pg-wrap .suggest div.on{background:var(--accent-light);}
 
   /* Info meta-panel */
   .pg-wrap .meta-panel{
@@ -164,9 +170,10 @@ excerpt: ""
       </select>
     </label>
 
-    <label class="inline-ctl" style="flex:1;min-width:240px;">
+    <label class="inline-ctl" style="flex:1;min-width:240px;position:relative;">
       <span>Genes</span>
-      <input id="geneInput" type="text" placeholder="CD3D,KRT5,PTPRC" style="flex:1;min-width:200px;">
+      <input id="geneInput" type="text" placeholder="CD3D,KRT5,PTPRC" autocomplete="off" style="flex:1;min-width:200px;">
+      <div class="suggest" id="geneSuggest"></div>
     </label>
 
     <button class="btn btn-primary" id="runBtn" type="button" disabled>Explore</button>
@@ -227,7 +234,7 @@ excerpt: ""
   const setStage = (s,st)=>{ const el=$("stage-"+s); el.classList.remove("active","done","err"); if(st) el.classList.add(st); };
   const ctx = document.createElement("canvas").getContext("2d");
   const textW = (s)=>{ ctx.font = "10px " + FONT; return ctx.measureText(s).width; };
-  let fdic=null, geneIdx=null, cur=null, seq=0, timer=null, pngURL=null, csvURL=null;
+  let fdic=null, geneIdx=null, gsort=null, cur=null, seq=0, timer=null, pngURL=null, csvURL=null;
 
   function hideResult(){
     for(const id of ["resultCard","plotImg","downloadPNG","downloadCSV"]) $(id).style.display = "none";
@@ -371,6 +378,7 @@ excerpt: ""
       fdic = await r.json();
       geneIdx = new Map();
       fdic.gene.forEach((g,i)=>{ if(!geneIdx.has(g)) geneIdx.set(g,i); });
+      gsort = [...geneIdx.keys()].map(g=>[g.toUpperCase(), g]).sort((a,b)=>a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0);
       setStage("boot","done");
       await loadCell($("cellSelect").value.trim());
     }catch(e){
@@ -441,6 +449,44 @@ excerpt: ""
       $("resultCard").style.display = "block";
       log("❌ Run error: " + (e?.message||e));
     }
+  });
+
+  const gi = $("geneInput"), sg = $("geneSuggest");
+  let sel = 0;
+  function token(){
+    const v = gi.value, c = gi.selectionStart ?? v.length, s = v.lastIndexOf(",", c - 1) + 1, e = v.indexOf(",", c);
+    return {v, s, e: e < 0 ? v.length : e};
+  }
+  function pick(g){
+    const {v, s, e} = token(), c = s + g.length;
+    gi.value = v.slice(0, s) + g + v.slice(e);
+    gi.setSelectionRange(c, c);
+    sg.style.display = "none";
+  }
+  function suggest(){
+    const {v, s, e} = token(), q = v.slice(s, e).trim().toUpperCase(), hits = [];
+    if(q && gsort) for(const [u, g] of gsort){ if(u.startsWith(q)){ hits.push(g); if(hits.length === 8) break; } }
+    sg.textContent = ""; sel = 0;
+    if(!hits.length || (hits.length === 1 && hits[0].toUpperCase() === q)){ sg.style.display = "none"; return; }
+    hits.forEach((g, i)=>{
+      const d = document.createElement("div");
+      d.textContent = g; if(!i) d.className = "on";
+      d.addEventListener("mousedown", (ev)=>{ ev.preventDefault(); pick(g); });
+      sg.appendChild(d);
+    });
+    sg.style.left = gi.offsetLeft + "px"; sg.style.display = "block";
+  }
+  gi.addEventListener("input", suggest);
+  gi.addEventListener("blur", ()=>{ sg.style.display = "none"; });
+  gi.addEventListener("keydown", (ev)=>{
+    const it = sg.children, n = it.length;
+    if(sg.style.display !== "block" || !n) return;
+    if(ev.key === "ArrowDown" || ev.key === "ArrowUp"){
+      ev.preventDefault(); it[sel].className = "";
+      sel = (sel + (ev.key === "ArrowDown" ? 1 : n - 1)) % n; it[sel].className = "on";
+    }
+    else if(ev.key === "Enter" || ev.key === "Tab"){ ev.preventDefault(); pick(it[sel].textContent); }
+    else if(ev.key === "Escape") sg.style.display = "none";
   });
 
   boot();
