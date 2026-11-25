@@ -75,10 +75,8 @@ excerpt: ""
     padding:12px 14px;border-radius:8px;
     background:var(--err-light);border:1px solid var(--err-border);
   }
-  .pg-wrap .result-card .result-head{
-    display:flex;align-items:center;justify-content:space-between;gap:12px;
-    flex-wrap:wrap;margin-bottom:10px;
-  }
+  .pg-wrap .result-card .result-head{margin-bottom:10px;}
+  .pg-wrap .dl-row{display:flex;flex-wrap:wrap;gap:8px;margin-top:8px;}
   .pg-wrap .result-summary{font-size:14px;color:var(--text);font-weight:500;flex:1;min-width:180px;}
   .pg-wrap .result-summary .stat{color:var(--muted);font-weight:400;font-size:12px;margin-left:6px;}
   .pg-wrap .btn-download{
@@ -212,9 +210,11 @@ excerpt: ""
   <div class="result-card" id="resultCard" style="display:none;">
     <div class="result-head">
       <div class="result-summary" id="resultSummary"></div>
-      <a class="btn-download" id="downloadPNG" download="plot.png" style="display:none;">⬇ Download PNG</a>
-      <a class="btn-download" id="downloadCSV" download="plot.csv" style="display:none;">⬇ Download CSV</a>
-      <a class="btn-download" id="downloadEnrichmentPNG" download="enrichment.png" style="display:none;">⬇ Download enrichment</a>
+      <div class="dl-row">
+        <a class="btn-download" id="downloadPNG" download="plot.png" style="display:none;">⬇ Download PNG</a>
+        <a class="btn-download" id="downloadCSV" download="plot.csv" style="display:none;">⬇ Download CSV</a>
+        <a class="btn-download" id="downloadEnrichmentPNG" download="enrichment.png" style="display:none;">⬇ Download enrichment</a>
+      </div>
     </div>
     <img class="plot-img" id="plotImg" alt="plot" style="display:none;">
     <img class="plot-img" id="plotImgEnrichment" alt="enrichment plot" style="display:none;margin-top:12px;">
@@ -572,60 +572,46 @@ excerpt: ""
 
   function dotFigure(gene, cell, P, bar){
     const {organs, diseases, A, C} = P, nO = organs.length, nD = diseases.length, S = mk();
-    const FW = Math.max(3, 0.15*nD + 1.5)*72, FH = Math.max(2, 0.19*nO + 0.5), H = (bar ? FH + 1.8 : FH)*72;
-    const title = `${gene} expression in ${cell}`;
-    let vmax = -Infinity;
+    const w = 0.775*Math.max(3, 0.15*nD + 1.5)*72, cw = w/nD, h = Math.max(14*nO, 115), rh = h/nO, fd = Math.min(9.5, 0.85*cw);
+    const LT = ["0","0.25","0.5","0.75","1"], xr = w + 10, cx = xr + 11, ch = 45, ly = h - 55;
+    let vmax = -Infinity, cells = "", dots = "", ld = 0;
     for(const v of A) if(v > vmax) vmax = v;
     vmax = Math.max(isFinite(vmax) ? vmax : 1, 1e-6);
-    const LT = ["0","0.25","0.5","0.75","1"];
-    let x0 = 0.125*FW, w = 0.775*FW, y0 = 0.12*H, h = 0.77*H, cell2 = 0;
-    if(bar){ cell2 = 0.77*H/2.55; h = FH*2*cell2/(FH + 1.4); }
-    else {
-      const cb = axisTicks(0, vmax, 0.09*h, 5).map(t=>tw(t[1], 5)), legW = 7.65 + Math.max(...LT.map(s=>tw(s, 4.5)));
-      const left = 1 + Math.max(...organs.map(s=>tw(s, 6))) + 10.8;
-      const right = Math.max(0.058*w + 2.3 + Math.max(0, ...cb), 0.05*w + legW, tw(title, 9, 1) - w, 0) + 10.8;
-      const top = 22 + 0.76*9 + 10.8, bot = 1 + Math.max(...diseases.map(s=>tw(s, 5.5))) + 10.8;
-      if(FW - left - right > 0 && H - top - bot > 0){ x0 = left; w = FW - left - right; y0 = top; h = H - top - bot; }
-    }
-    const cw = w/nD, rh = h/nO;
-    let cells = "", dots = "";
     for(let i=0; i<nO; i++) for(let j=0; j<nD; j++){
       const k = i*nD + j;
       if(A[k] !== A[k]) continue;
-      cells += `<rect x="${f2(x0 + j*cw)}" y="${f2(y0 + i*rh)}" width="${f2(cw)}" height="${f2(rh)}"/>`;
+      cells += `<rect x="${f2(j*cw)}" y="${f2(i*rh)}" width="${f2(cw)}" height="${f2(rh)}"/>`;
       const r = Math.sqrt(Math.min(1, Math.max(0, C[k]))*75)/2;
-      if(r > 0) dots += `<circle cx="${f2(x0 + (j + 0.5)*cw)}" cy="${f2(y0 + (i + 0.5)*rh)}" r="${f2(r)}" fill="${OR[cidx(A[k]/vmax)]}"/>`;
+      if(r > 0) dots += `<circle cx="${f2((j + 0.5)*cw)}" cy="${f2((i + 0.5)*rh)}" r="${f2(r)}" fill="${OR[cidx(A[k]/vmax)]}"/>`;
     }
-    S.add(`<g shape-rendering="crispEdges"><rect x="${f2(x0)}" y="${f2(y0)}" width="${f2(w)}" height="${f2(h)}" fill="#e5e7eb"/><g fill="#fafbfc">${cells}</g></g><g stroke="#000" stroke-width="0.4">${dots}</g>`);
-    S.fit(x0, y0, x0 + w, y0 + h);
-    organs.forEach((s, i)=>S.t(x0 - 1, y0 + (i + 0.5)*rh, s, 6, {a:"end", fill:GREY}));
-    diseases.forEach((s, j)=>S.t(x0 + (j + 0.5)*cw, y0 + h + 1, s, 5.5, {a:"end", r:1, v:"m", fill:GREY}));
-    S.t(x0, y0 - 22, title, 9, {bold:1, fill:"#111827", v:"base"});
+    S.add(`<g shape-rendering="crispEdges"><rect width="${f2(w)}" height="${f2(h)}" fill="#e5e7eb"/><g fill="#fafbfc">${cells}</g></g><g stroke="#000" stroke-width="0.4">${dots}</g>`);
+    S.fit(0, 0, w, h);
+    organs.forEach((s, i)=>S.t(-2, (i + 0.5)*rh, s, 9.5, {a:"end", fill:GREY}));
+    diseases.forEach((s, j)=>{ ld = Math.max(ld, S.t((j + 0.5)*cw, h + 2, s, fd, {a:"end", r:1, v:"m", fill:GREY})); });
+    S.t(0, -16, `${gene} expression in ${cell}`, 14, {bold:1, fill:"#111827", v:"base"});
 
-    const cx = x0 + 1.05*w, cww = 0.008*w, cy = y0 + 0.07*h, ch = 0.09*h;
-    S.add(`<defs><linearGradient id="ctxcb" x1="0" y1="1" x2="0" y2="0">${ORRD.map((c, k)=>`<stop offset="${k/8}" stop-color="#${c}"/>`).join("")}</linearGradient></defs><rect x="${f2(cx)}" y="${f2(cy)}" width="${f2(cww)}" height="${f2(ch)}" fill="url(#ctxcb)"/>`);
-    S.fit(cx, cy, cx + cww, cy + ch);
-    for(const [v, s] of axisTicks(0, vmax, ch, 5)){
-      if(v === null){ S.t(cx + cww, cy - 1, s, 5, {v:"b", fill:GREY}); continue; }
-      const y = cy + ch - v/vmax*ch;
-      S.line(cx + cww, y, cx + cww + 1.5, y, GREY, 0.8);
-      S.t(cx + cww + 2.3, y, s, 5, {fill:GREY});
+    S.add(`<defs><linearGradient id="ctxcb" x1="0" y1="1" x2="0" y2="0">${ORRD.map((c, k)=>`<stop offset="${k/8}" stop-color="#${c}"/>`).join("")}</linearGradient></defs><rect x="${f2(cx)}" width="6" height="${ch}" fill="url(#ctxcb)"/>`);
+    S.fit(cx, 0, cx + 6, ch);
+    for(const [v, s] of axisTicks(0, vmax, ch, 8.5)){
+      if(v === null){ S.t(cx + 6, -2, s, 8.5, {v:"b", fill:GREY}); continue; }
+      const y = ch - v/vmax*ch;
+      S.line(cx + 6, y, cx + 8, y, GREY, 0.8);
+      S.t(cx + 9.5, y, s, 8.5, {fill:GREY});
     }
-    S.t(cx - 2, cy + ch/2, "mean exp.", 4.5, {a:"middle", r:1, v:"b", fill:GREY});
-    const lh = 0.45 + 5*4.275 + 4*1.575, lx = x0 + 1.05*w, ly = y0 + h - lh;
+    S.t(xr + 8, ch/2, "mean exp.", 8, {a:"middle", r:1, v:"b", fill:GREY});
     [0, 0.25, 0.5, 0.75, 1].forEach((s, k)=>{
-      const y = ly + 0.225 + k*5.85 + 2.1375;
-      S.add(`<circle cx="${f2(lx + 1.125)}" cy="${f2(y)}" r="${f2(Math.sqrt(Math.max(s*75*0.22, 0.5))/2)}" fill="#9ca3af" stroke="#000" stroke-width="0.3"/>`);
-      S.t(lx + 7.425, y, LT[k], 4.5);
+      const y = ly + 5.5 + 11*k;
+      S.add(`<circle cx="${f2(cx + 4.4)}" cy="${f2(y)}" r="${f2(Math.max(Math.sqrt(s*75)/2, 0.35))}" fill="#9ca3af" stroke="#000" stroke-width="0.4"/>`);
+      S.t(cx + 13, y, LT[k], 8);
     });
-    S.t(x0 + 1.044*w, ly + lh/2, "coverage", 4.5, {a:"middle", r:1, v:"m", fill:GREY});
+    S.t(xr + 8, ly + 27.5, "coverage", 8, {a:"middle", r:1, v:"b", fill:GREY});
 
     if(bar){
-      const by = y0 + h + 0.55*cell2, bh = 2.8*cell2/(FH + 1.4), n = bar.labels.length, bw = w/n;
+      const by = h + 2 + ld + 18, bh = 110, n = bar.labels.length, bw = w/n, fb = Math.min(8.5, 0.85*bw);
       let dmin = 0, dmax = 0;
       bar.means.forEach((m, i)=>{ dmin = Math.min(dmin, m - bar.sems[i]); dmax = Math.max(dmax, m + bar.sems[i]); });
       bar.pts.forEach(([, y])=>{ dmin = Math.min(dmin, y); dmax = Math.max(dmax, y); });
-      const [lo, hi] = autoLim(dmin, dmax, [0]), Y = (v)=>by + bh - (v - lo)/(hi - lo)*bh, X = (v)=>x0 + (v + 0.5)*bw;
+      const [lo, hi] = autoLim(dmin, dmax, [0]), Y = (v)=>by + bh - (v - lo)/(hi - lo)*bh, X = (v)=>(v + 0.5)*bw;
       let bars = "", eb = "", pts = "";
       bar.means.forEach((m, i)=>{
         bars += `<rect x="${f2(X(i - 0.39))}" y="${f2(Y(Math.max(m, 0)))}" width="${f2(0.78*bw)}" height="${f2(Math.abs(Y(m) - Y(0)))}" fill="${bar.colors[i]}"/>`;
@@ -633,26 +619,25 @@ excerpt: ""
         eb += `M${xc} ${y1}V${y2}M${f2(xc - 1.2)} ${y1}h2.4M${f2(xc - 1.2)} ${y2}h2.4`;
       });
       bar.pts.forEach(([x, y, c])=>{ pts += `<circle cx="${f2(X(x))}" cy="${f2(Y(y))}" r="1.32" fill="${c}"/>`; });
-      S.add(`<rect x="${f2(x0)}" y="${f2(by)}" width="${f2(w)}" height="${f2(bh)}" fill="#fff"/><g fill-opacity="0.55" stroke="#000" stroke-opacity="0.55" stroke-width="0.4">${bars}</g><path d="${eb}" fill="none" stroke="#000" stroke-width="0.5"/><path d="M${f2(x0)} ${f2(by)}V${f2(by + bh)}H${f2(x0 + w)}" fill="none" stroke="#9ca3af" stroke-width="0.5"/><g fill-opacity="0.95" stroke="#000" stroke-opacity="0.95" stroke-width="0.3">${pts}</g>`);
-      S.fit(x0, by, x0 + w, by + bh);
-      yAxis(S, x0, by, bh, axisTicks(lo, hi, bh, 5).map(([v, s])=>[v === null ? null : (v - lo)/(hi - lo), s]), 5, "mean expression", 6);
-      bar.labels.forEach((s, i)=>S.t(X(i), by + bh + 1, s, 4.5, {a:"end", r:1, v:"m", fill:GREY}));
-      const items = ["Control","Cancer","Other"], lw = 2 + 4.5 + 4 + Math.max(...items.map(s=>tw(s, 5))), gx = x0 + w - 2.5 - lw, gy = by + 2.5;
-      items.forEach((s, k)=>{
-        const y = gy + 1 + k*6.25 + 2.375;
-        S.add(`<rect x="${f2(gx + 1)}" y="${f2(y - 1.75)}" width="4.5" height="3.5" fill="${COL[s]}"/>`);
-        S.t(gx + 9.5, y, s, 5);
+      S.add(`<g fill-opacity="0.55" stroke="#000" stroke-opacity="0.55" stroke-width="0.4">${bars}</g><path d="${eb}" fill="none" stroke="#000" stroke-width="0.5"/><path d="M0 ${f2(by)}V${f2(by + bh)}H${f2(w)}" fill="none" stroke="#9ca3af" stroke-width="0.5"/><g fill-opacity="0.95" stroke="#000" stroke-opacity="0.95" stroke-width="0.3">${pts}</g>`);
+      S.fit(0, by, w, by + bh);
+      yAxis(S, 0, by, bh, axisTicks(lo, hi, bh, 8.5).map(([v, s])=>[v === null ? null : (v - lo)/(hi - lo), s]), 8.5, "mean expression", 10);
+      bar.labels.forEach((s, i)=>S.t(X(i), by + bh + 2, s, fb, {a:"end", r:1, v:"m", fill:GREY}));
+      ["Control","Cancer","Other"].forEach((s, k)=>{
+        const y = by + 5.3 + k*10.6;
+        S.add(`<rect x="${f2(xr)}" y="${f2(y - 3)}" width="7.5" height="6" fill="${COL[s]}"/>`);
+        S.t(xr + 12.5, y, s, 8.5);
       });
     }
     return S.done();
   }
 
   function enrFigure(gene, cell, res){
-    const FW = 388.8, FH = 158.4, S = mk(), cw = 0.87/2.24, ch = 0.6/4.21, nrm = ch*4/2.43, rows = [];
-    let top = 0.78;
-    [1.6, 0.18, 0.10, 0.55].forEach((r, k)=>{ if(k) top -= 0.07*ch; rows.push([FH*(1 - top), FH*r*nrm]); top -= r*nrm; });
+    const S = mk(), w = 140, G = 58, rows = [];
+    let top = 46;
+    [95, 9, 6, 42].forEach((h)=>{ rows.push([top, h]); top += h + 2.5; });
     res.forEach(([r, col, label], c)=>{
-      const x0 = FW*(0.10 + c*1.24*cw), w = FW*cw, n = r.n, X = (v)=>x0 + v/n*w;
+      const x0 = c*(w + G), n = r.n, X = (v)=>x0 + v/n*w;
       const panel = (y0, h, data, color, op, ylab, ls, ts)=>{
         let mn = 0, mx = 0;
         for(const v of data){ if(v < mn) mn = v; if(v > mx) mx = v; }
@@ -666,10 +651,10 @@ excerpt: ""
         yAxis(S, x0, y0, h, axisTicks(lo, hi, h, ts).map(([v, s])=>[v === null ? null : (v - lo)/(hi - lo), s]), ts, ylab, ls);
       };
       let [y0, h] = rows[0];
-      panel(y0, h, r.running, col, 0.18, "ES", 7, 6);
-      S.t(x0, y0 - 0.04*h, label, 7, {bold:1, fill:"#111827", v:"b"});
+      panel(y0, h, r.running, col, 0.18, "ES", 11, 10);
+      S.t(x0, y0 - 5, label, 11.5, {bold:1, fill:"#111827", v:"b"});
       [`NES=${r.nes >= 0 ? "+" : "-"}${pyFixed(Math.abs(r.nes), 2)}`, `FDR=${!isFinite(r.fdr) ? "n/a" : r.fdr < 0.001 ? "<0.001" : pyFixed(r.fdr, 3)}`]
-        .forEach((s, i)=>S.t(x0 + 0.985*w, y0 + 0.05*h + i*0.76*6*1.3, s, 6, {a:"end", v:"t", fill:GREY}));
+        .forEach((s, i)=>S.t(x0 + 0.985*w, y0 + 0.05*h + i*0.76*10*1.3, s, 10, {a:"end", v:"t", fill:GREY}));
       [y0, h] = rows[1];
       let miss = "", hit = "";
       r.sh.forEach((v, i)=>{ const d = `<path d="M${f2(X(i))} ${f2(y0)}v${f2(h)}"/>`; if(v) hit += d; else miss += d; });
@@ -688,10 +673,10 @@ excerpt: ""
       }
       S.add(`<g shape-rendering="crispEdges">${g}</g>`);
       [y0, h] = rows[3];
-      panel(y0, h, r.sm, "#9ca3af", 0.6, "Rank\n(z-score)", 6.5, 5.5);
-      S.t(x0 + w/2, y0 + h + 4, `samples (n=${n})`, 6.5, {a:"middle", v:"t", fill:GREY});
+      panel(y0, h, r.sm, "#9ca3af", 0.6, "Rank\n(z-score)", 10, 9);
+      S.t(x0 + w/2, y0 + h + 4, `samples (n=${n})`, 10.5, {a:"middle", v:"t", fill:GREY});
     });
-    S.t(FW*0.535, FH*0.06, `${gene} expression in ${cell}`, 8.5, {a:"middle", bold:1, fill:"#111827", v:"t"});
+    S.t(w + G/2, 4, `${gene} expression in ${cell}`, 14, {a:"middle", bold:1, fill:"#111827", v:"t"});
     return S.done();
   }
 
