@@ -577,7 +577,7 @@ excerpt: ""
     let vmax = -Infinity, cells = "", dots = "", ld = 0;
     for(const v of A) if(v > vmax) vmax = v;
     vmax = Math.max(isFinite(vmax) ? vmax : 1, 1e-6);
-    for(let i=0; i<nO; i++) for(let j=0; j<nD; j++){
+    for(let i=0; i < nO; i++) for(let j=0; j < nD; j++){
       const k = i*nD + j;
       if(A[k] !== A[k]) continue;
       cells += `<rect x="${f2(j*cw)}" y="${f2(i*rh)}" width="${f2(cw)}" height="${f2(rh)}"/>`;
@@ -664,7 +664,7 @@ excerpt: ""
       let vm = 0, g = "";
       for(const v of r.sm) vm = Math.max(vm, Math.abs(v));
       vm = vm || 1;
-      for(let i=0; i<n;){
+      for(let i=0; i < n;){
         const c0 = RB[cidx((r.sm[i] + vm)/(2*vm))];
         let j = i + 1;
         while(j < n && RB[cidx((r.sm[j] + vm)/(2*vm))] === c0) j++;
